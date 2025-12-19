@@ -1,166 +1,188 @@
 import sys
 import asyncio
 import logging
-import os
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    CallbackQueryHandler, 
-    ContextTypes, 
-    ConversationHandler, 
-    MessageHandler, 
-    filters
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, 
+    ContextTypes, ConversationHandler, MessageHandler, filters
 )
-from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID
+from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID # .env se ID layega
 from gmail_service import get_last_email, create_and_send_email
+from auth_server import run_flask_server, get_redirect_uri, get_credentials_path # Import from File 1
+from google_auth_oauthlib.flow import Flow
 
-# --- LOGGING SETUP ---
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
-# --- FAKE WEB SERVER FOR RENDER (KEEP ALIVE) ---
-# Ye hissa Render ko "Dhoka" dene ke liye hai taake wo Port Error na de
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is Alive and Running!")
-
-def start_fake_server():
-    port = int(os.environ.get("PORT", 10000))  # Render ka diya hua Port uthayega
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    print(f"🌍 Fake Server started on Port {port} to keep Render happy.")
-    server.serve_forever()
-# -----------------------------------------------
+# --- LOGGING ---
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # --- STATES ---
+# Sending States
 RECIPIENT, SUBJECT, BODY = range(3)
+# Reading States
+ASK_SENDER_EMAIL = range(3, 4)
 
-# --- HELPER FUNCTION: MAIN MENU ---
-def get_main_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("📩 Read Last Email", callback_data="read_email")],
-        [InlineKeyboardButton("✍️ Compose New Email", callback_data="start_sending_process")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+# --- AUTH HELPER ---
+def get_login_link():
+    """Generates the Google Login Link"""
+    creds_file = get_credentials_path()
+    if not creds_file: return None
+    
+    flow = Flow.from_client_secrets_file(
+        creds_file,
+        scopes=['https://www.googleapis.com/auth/gmail.modify'],
+        redirect_uri=get_redirect_uri()
+    )
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    return auth_url
 
-# --- COMMAND HANDLERS ---
+# --- MAIN MENU ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
     user_id = update.message.from_user.id
+    
+    # 🔒 SECURITY CHECK (Sirf Owner use kar sake)
+    if str(user_id) != str(OWNER_TELEGRAM_ID):
+        await update.message.reply_text("🚫 **Access Denied!** You are not the owner.")
+        return
 
-    if user_id == OWNER_TELEGRAM_ID:
-        await update.message.reply_text("Hello! I am your Email Assistant 2.0")
-        await update.message.reply_text(
-            "How can I assist you today, Sir?",
-            reply_markup=get_main_menu_keyboard()
-        )
+    keyboard = [
+        [InlineKeyboardButton("📤 Send Email", callback_data="menu_send")],
+        [InlineKeyboardButton("📩 Read Email", callback_data="menu_read")]
+    ]
+    await update.message.reply_text(
+        "👋 **Welcome Boss!**\nHow can I help you with your emails today?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.message.from_user.id) != str(OWNER_TELEGRAM_ID): return
+    
+    link = get_login_link()
+    if link:
+        keyboard = [[InlineKeyboardButton("🔗 Login via Google", url=link)]]
+        await update.message.reply_text("👇 **Click below to login:**", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await update.message.reply_text("🚫 **Access Denied:** You are not authorized to use this assistant.", parse_mode="Markdown")
+        await update.message.reply_text("❌ Error: credentials.json not found.")
 
-async def read_email_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- READ FLOW ---
+async def read_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.from_user.id != OWNER_TELEGRAM_ID: return
     
-    await query.edit_message_text("🔄 **Accessing Gmail Server...**\nPlease wait while I fetch your latest email.", parse_mode="Markdown")
-    
-    try:
-        email_text = get_last_email()
-        await query.message.reply_text(
-            email_text, 
-            reply_markup=get_main_menu_keyboard(),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        await query.message.reply_text(f"⚠️ **Error:** Could not fetch email.\n`{e}`", parse_mode="Markdown")
+    keyboard = [
+        [InlineKeyboardButton("🕒 Read Last Email (Inbox)", callback_data="read_latest")],
+        [InlineKeyboardButton("🔍 Specific Sender", callback_data="read_specific")]
+    ]
+    await query.edit_message_text("🧐 **What would you like to read?**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-# --- CONVERSATION HANDLER (SENDING EMAIL) ---
+async def fetch_latest_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("⏳ **Checking Inbox...**")
+    
+    email_content = get_last_email() # Default logic
+    
+    if email_content == "AUTH_ERROR":
+         await query.edit_message_text("⚠️ **Login Required.** Use /login")
+    elif email_content:
+        await query.edit_message_text(f"📩 **Latest Email:**\n\n{email_content}", parse_mode="Markdown")
+    else:
+        await query.edit_message_text("📭 **Inbox is Empty.**")
+
+# -- Specific Sender Logic --
+async def ask_sender_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("👤 **Please type the Sender's Email Address:**\n(e.g., hr@company.com)")
+    return ASK_SENDER_EMAIL
+
+async def fetch_specific_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sender_email = update.message.text.strip()
+    await update.message.reply_text(f"🔍 **Searching emails from:** `{sender_email}`...", parse_mode="Markdown")
+    
+    # Updated Service Call
+    email_content = get_last_email(query=f"from:{sender_email}")
+    
+    if email_content == "AUTH_ERROR":
+        await update.message.reply_text("⚠️ **Session Expired.** Please /login again.")
+    elif email_content:
+        await update.message.reply_text(f"📩 **Latest Email from {sender_email}:**\n\n{email_content}", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ **No emails found** from `{sender_email}`.")
+    
+    return ConversationHandler.END
+
+# --- SEND FLOW ---
 async def start_sending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.from_user.id != OWNER_TELEGRAM_ID: return ConversationHandler.END
-
-    await query.edit_message_text(
-        "📝 **New Email Composition**\n\n**Step 1/3:** Please enter the **Recipient's Email Address**:\n(Type /cancel to abort)", 
-        parse_mode="Markdown"
-    )
+    await query.edit_message_text("✍️ **Recipient's Email Address:**\n(Type /cancel to stop)")
     return RECIPIENT
 
 async def get_recipient(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    email_address = update.message.text.strip()
-    context.user_data['to_email'] = email_address
-    
-    await update.message.reply_text(
-        f"✅ **Recipient Set:** `{email_address}`\n\n**Step 2/3:** Please enter the **Subject** of the email:", 
-        parse_mode="Markdown"
-    )
+    context.user_data['to'] = update.message.text
+    await update.message.reply_text("📝 **Subject:**")
     return SUBJECT
 
 async def get_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    subject_text = update.message.text
-    context.user_data['subject'] = subject_text
-    
-    await update.message.reply_text(
-        f"✅ **Subject Set:** `{subject_text}`\n\n**Step 3/3:** Please type the **Message Body**:", 
-        parse_mode="Markdown"
-    )
+    context.user_data['sub'] = update.message.text
+    await update.message.reply_text("💬 **Message Body:**")
     return BODY
 
-async def get_body_and_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    body_text = update.message.text
-    to_email = context.user_data['to_email']
-    subject = context.user_data['subject']
-
-    await update.message.reply_text("🚀 **Sending your email via Gmail API...**")
+async def send_email_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    to = context.user_data['to']
+    sub = context.user_data['sub']
+    body = update.message.text
     
-    try:
-        status_message = create_and_send_email(to_email, subject, body_text)
-        final_msg = f"✅ **Success!**\n\n{status_message}"
-    except Exception as e:
-        final_msg = f"❌ **Failed to send email.**\nError: {str(e)}"
-
-    await update.message.reply_text(final_msg, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text("🚀 **Sending...**")
+    result = create_and_send_email(to, sub, body)
+    await update.message.reply_text(result)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚫 **Operation Cancelled.**", reply_markup=get_main_menu_keyboard())
+    await update.message.reply_text("❌ Operation Cancelled.")
     return ConversationHandler.END
 
-# --- MAIN EXECUTION ---
+# --- RUNNER ---
 if __name__ == "__main__":
     if sys.platform.startswith("win"):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    # --- 1. Fake Server Start Karna (Alag Thread mein) ---
-    # Ye background mein chalta rahega taake Render khush rahe
-    threading.Thread(target=start_fake_server, daemon=True).start()
-    # -----------------------------------------------------
-
-    print("✅ Professional Bot 2.0 is Starting...")
     
-    t_request = HTTPXRequest(connect_timeout=60.0, read_timeout=60.0)
-    app = ApplicationBuilder().token(BOT_TOKEN).request(t_request).build()
+    # 1. Start Flask Auth Server in Background
+    threading.Thread(target=run_flask_server, daemon=True).start()
+    
+    # 2. Start Telegram Bot
+    print("✅ Bot Started...")
+    app = ApplicationBuilder().token(BOT_TOKEN).request(HTTPXRequest(connect_timeout=60, read_timeout=60)).build()
 
-    email_conversation = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_sending, pattern="^start_sending_process$")],
+    # Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("login", login_command))
+    
+    # Conversation: Send Email
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(start_sending, pattern="^menu_send$")],
         states={
             RECIPIENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_recipient)],
             SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_subject)],
-            BODY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_body_and_send)],
+            BODY: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_email_final)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
-    )
+    ))
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(email_conversation)
-    app.add_handler(CallbackQueryHandler(read_email_handler, pattern="^read_email$"))
+    # Conversation: Read Specific Email
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_sender_email, pattern="^read_specific$")],
+        states={
+            ASK_SENDER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_specific_email)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    ))
 
-    print("✅ Bot is Running via Long Polling...")
+    # Simple Handlers
+    app.add_handler(CallbackQueryHandler(read_menu_handler, pattern="^menu_read$"))
+    app.add_handler(CallbackQueryHandler(fetch_latest_email, pattern="^read_latest$"))
+
     app.run_polling()
