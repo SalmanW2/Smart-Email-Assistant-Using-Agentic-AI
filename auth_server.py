@@ -26,26 +26,33 @@ def get_redirect_uri():
         return "https://smart-email-assistant-using-agentic-ai.onrender.com/oauth2callback"
     return "http://localhost:10000/oauth2callback"
 
-# --- MISSING FUNCTION ADDED HERE 👇 ---
+# --- MISSING FUNCTION ADDED HERE ---
 def get_login_link():
     """Generates the Google Login Link"""
     creds_file = get_credentials_path()
     if not creds_file: return None
     
-    flow = Flow.from_client_secrets_file(
-        creds_file,
-        scopes=SCOPES,
-        redirect_uri=get_redirect_uri()
-    )
-    # 'prompt=consent' zaroori hai taake refresh token mile
-    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-    return auth_url
-# --------------------------------------
+    try:
+        flow = Flow.from_client_secrets_file(
+            creds_file,
+            scopes=SCOPES,
+            redirect_uri=get_redirect_uri()
+        )
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        return auth_url
+    except Exception as e:
+        print(f"Error generating link: {e}")
+        return None
 
 # --- SELF PING (JAGANE WALA CODE) ---
 def keep_alive():
+    """
+    Ye function har 14 minute baad khud ko ping karega
+    taake Render bot ko sulaye nahi.
+    """
     url = "https://smart-email-assistant-using-agentic-ai.onrender.com"
     
+    # Agar Localhost par hain to ping karne ki zaroorat nahi
     if not os.environ.get("RENDER"):
         print("🏠 Running Locally - Self Ping Disabled.")
         return
@@ -58,6 +65,7 @@ def keep_alive():
             print(f"🔔 Pinged Self: Status {response.status_code}")
         except Exception as e:
             print(f"❌ Ping Failed: {e}")
+# ------------------------------------
 
 @app.route('/')
 def home():
@@ -93,5 +101,8 @@ def oauth2callback():
 
 def run_flask_server():
     port = int(os.environ.get("PORT", 10000))
+    
+    # Background mein Ping shuru karo
     threading.Thread(target=keep_alive, daemon=True).start()
+    
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
