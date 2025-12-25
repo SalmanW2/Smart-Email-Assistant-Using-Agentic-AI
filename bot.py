@@ -22,27 +22,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- CONVERSATION STATES ---
-# 1. Manual Send
 RECIPIENT, SUBJECT, BODY = range(3)
-# 2. Search Email
 ASK_SENDER_EMAIL = range(3, 4)
-# 3. AI Reply Agent
 WAITING_FOR_INSTRUCTION = range(4, 5)
 
 # --- GLOBAL MEMORY ---
 last_checked_email_id = None 
 
 # ==============================================================================
-#   HELPER FUNCTIONS (UI & AUTH)
+#   HELPER FUNCTIONS
 # ==============================================================================
 
 def is_user_authenticated():
-    """Checks if valid credentials exist."""
     creds = get_credentials()
     return creds is not None and creds.valid
 
 def get_dashboard_keyboard():
-    """Main Menu Buttons"""
     keyboard = [
         [InlineKeyboardButton("📩 Inbox Overview", callback_data="menu_read")],
         [InlineKeyboardButton("✍️ Compose Email", callback_data="menu_send")]
@@ -50,68 +45,66 @@ def get_dashboard_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_login_keyboard(auth_link):
-    """Login Button"""
     keyboard = [[InlineKeyboardButton("🔗 Connect Gmail Account", url=auth_link)]]
     return InlineKeyboardMarkup(keyboard)
 
 # ==============================================================================
-#   AUTO-CHECKER JOB (The Heartbeat 💓)
+#   AUTO-CHECKER JOB (The Brain 🧠)
 # ==============================================================================
 
 async def check_new_emails_job(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_email_id
     
-    # --- 1. AUTHENTICATION CHECK ---
+    # 1. AUTH CHECK
     if not is_user_authenticated():
-        # Check agar humne pehle hi warning bhej di hai (taake spam na ho)
         if not context.bot_data.get('auth_warning_sent'):
             link = get_login_link()
             if link:
                 try:
                     await context.bot.send_message(
                         chat_id=OWNER_TELEGRAM_ID,
-                        text="⚠️ **Session Expired!**\nYour Gmail access has triggered a security logout. Please login again to receive emails.",
+                        text="⚠️ **Session Expired!**\nPlease login again to continue.",
                         reply_markup=get_login_keyboard(link),
                         parse_mode="Markdown"
                     )
-                    # Flag set karo taake agle minute dubara msg na jaye
                     context.bot_data['auth_warning_sent'] = True
                 except Exception as e:
-                    logger.error(f"Failed to send auth warning: {e}")
+                    logger.error(f"Auth warning error: {e}")
         return
     else:
-        # Agar login sahi hai, to warning flag reset kar do
         context.bot_data['auth_warning_sent'] = False
 
-    # --- 2. NEW EMAIL CHECK ---
+    # 2. NEW EMAIL CHECK
     try:
         latest_id = get_latest_message_id()
         
-        # First Run (Initialize)
         if last_checked_email_id is None:
             last_checked_email_id = latest_id
             return
 
-        # Compare IDs
         if latest_id and latest_id != last_checked_email_id:
             last_checked_email_id = latest_id
             
+            # Fetch FULL Details (Body included)
             details = get_email_details(latest_id)
             if not details: return
 
-            # Save Data for AI Context
+            # Save Context for AI
             context.bot_data['last_email_id'] = latest_id
-            context.bot_data['last_email_body'] = details['snippet']
+            context.bot_data['last_email_body'] = details['body'] # Using FULL BODY now
             context.bot_data['last_sender'] = details['sender_email']
 
-            # --- WORD COUNT LOGIC ---
-            word_count = len(details['snippet'].split())
+            # --- WORD COUNT LOGIC (Updated) ---
+            # Count words in the ACTUAL body, not snippet
+            word_count = len(details['body'].split())
+            
             msg_text = ""
             keyboard = []
 
-            if word_count > 100:
-                # > 100 Words: Show AI Summary + Read Full Button
-                summary = summarize_email(details['snippet'])
+            # Threshold: 50 Words
+            if word_count > 50:
+                # > 50 Words: Use AI Summary on FULL BODY
+                summary = summarize_email(details['body'])
                 msg_text = (
                     f"🚨 **NEW EMAIL (AI Summary)**\n\n"
                     f"👤 **From:** `{details['sender_view']}`\n"
@@ -120,15 +113,15 @@ async def check_new_emails_job(context: ContextTypes.DEFAULT_TYPE):
                 )
                 keyboard.append([InlineKeyboardButton("📄 Read Full Email", callback_data="read_full_auto")])
             else:
-                # < 100 Words: Show Full Body directly
+                # < 50 Words: Show Full Body directly
                 msg_text = (
                     f"🚨 **NEW EMAIL**\n\n"
                     f"👤 **From:** `{details['sender_view']}`\n"
                     f"📌 **Subject:** `{details['subject']}`\n\n"
-                    f"📝 **Body:**\n{details['snippet']}"
+                    f"📝 **Body:**\n{details['body']}"
                 )
 
-            # Common Buttons (Draft Reply & Ignore)
+            # Common Buttons
             keyboard.append([InlineKeyboardButton("✍️ Draft Reply (AI)", callback_data="start_ai_reply")])
             keyboard.append([InlineKeyboardButton("🚫 Ignore", callback_data="ignore_notification")])
 
@@ -143,60 +136,41 @@ async def check_new_emails_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Auto-Check Error: {e}")
 
 # ==============================================================================
-#   COMMAND HANDLERS
+#   HANDLERS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry Point: Checks Auth First"""
     if str(update.message.from_user.id) != str(OWNER_TELEGRAM_ID): return
-
     if is_user_authenticated():
-        await update.message.reply_text(
-            "👋 **Welcome Boss!**\n\nAI Agent is online and monitoring your inbox. 🕵️", 
-            reply_markup=get_dashboard_keyboard(),
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("👋 **Boss! System Online.** 🕵️", reply_markup=get_dashboard_keyboard(), parse_mode="Markdown")
     else:
         link = get_login_link()
-        if link:
-            await update.message.reply_text(
-                "👋 **Welcome!**\nTo start using the Agent, please connect your Gmail account.",
-                reply_markup=get_login_keyboard(link),
-                parse_mode="Markdown"
-            )
+        if link: await update.message.reply_text("👋 **Welcome!** Please login.", reply_markup=get_login_keyboard(link))
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) != str(OWNER_TELEGRAM_ID): return
     link = get_login_link()
-    if link:
-        await update.message.reply_text(
-            "👇 **Click below to Login:**", 
-            reply_markup=get_login_keyboard(link),
-            parse_mode="Markdown"
-        )
+    if link: await update.message.reply_text("👇 **Login:**", reply_markup=get_login_keyboard(link))
 
-# ==============================================================================
-#   CALLBACKS: NOTIFICATION ACTIONS
-# ==============================================================================
-
+# --- NOTIFICATION ACTIONS ---
 async def ignore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Dismissed.")
     await query.delete_message()
 
 async def read_full_auto_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows full email when requested"""
     query = update.callback_query
     await query.answer()
     
+    # Use saved ID to fetch fresh details or use cached body
     email_id = context.bot_data.get('last_email_id')
-    details = get_email_details(email_id)
+    details = get_email_details(email_id) # Fetch again to be safe
     
     if details:
         text = (
             f"📄 **FULL EMAIL**\n\n"
             f"👤 **From:** `{details['sender_view']}`\n"
-            f"📝 **Body:**\n{details['snippet']}"
+            f"📝 **Body:**\n{details['body']}"
         )
         keyboard = [
             [InlineKeyboardButton("✍️ Draft Reply (AI)", callback_data="start_ai_reply")],
@@ -206,54 +180,34 @@ async def read_full_auto_handler(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await query.edit_message_text("❌ Error: Email not found.")
 
-# ==============================================================================
-#   🤖 AI REPLY CONVERSATION
-# ==============================================================================
-
+# --- AI REPLY FLOW ---
 async def start_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     sender = context.bot_data.get('last_sender')
     if not sender:
-        await query.edit_message_text("⚠️ Context lost. Please use manual send.")
+        await query.edit_message_text("⚠️ Context lost.")
         return ConversationHandler.END
-
     context.user_data['reply_to'] = sender
-    
-    await query.edit_message_text(
-        f"🤖 **AI Agent Active**\nReplying to: `{sender}`\n\n"
-        f"🗣️ **What should I say?**\n(e.g., 'Say thanks', 'Decline politely', 'Ask for meeting')",
-        parse_mode="Markdown"
-    )
+    await query.edit_message_text(f"🤖 **AI Agent Active**\nReplying to: `{sender}`\n\n🗣️ **What should I say?**", parse_mode="Markdown")
     return WAITING_FOR_INSTRUCTION
 
 async def generate_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_instruction = update.message.text
     original_email = context.bot_data.get('last_email_body', '')
     
-    await update.message.reply_text("⏳ **Drafting Reply...**")
-    
-    # AI Magic 🪄
+    await update.message.reply_text("⏳ **Drafting...**")
     draft = generate_draft_reply(original_email, user_instruction)
     
     context.user_data['draft_body'] = draft
     context.user_data['draft_sub'] = "Re: (AI Reply)"
 
-    msg = (
-        f"🧐 **REVIEW DRAFT**\n"
-        f"-------------------\n"
-        f"{draft}\n"
-        f"-------------------\n"
-        f"Choose action:"
-    )
-    
+    msg = f"🧐 **REVIEW DRAFT**\n-------------------\n{draft}\n-------------------\nChoose action:"
     keyboard = [
         [InlineKeyboardButton("🚀 Send Now", callback_data="send_draft_now")],
         [InlineKeyboardButton("✏️ Edit Manual", callback_data="edit_draft_manual")],
         [InlineKeyboardButton("🔄 Try Again", callback_data="retry_ai_draft")]
     ]
-    
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard))
     return WAITING_FOR_INSTRUCTION
 
@@ -266,63 +220,67 @@ async def handle_draft_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         to = context.user_data.get('reply_to')
         sub = context.user_data.get('draft_sub')
         body = context.user_data.get('draft_body')
-        
         await query.edit_message_text(f"🚀 **Sending...**")
         result = create_and_send_email(to, sub, body)
         await query.edit_message_text(f"{result}\n\n✅ **Done!**")
         return ConversationHandler.END
-
     elif action == "edit_draft_manual":
-        # Jump to manual body input
-        await query.edit_message_text("✏️ **Type the full email body below:**")
+        await query.edit_message_text("✏️ **Type full email body:**")
         return BODY 
-
     elif action == "retry_ai_draft":
-        await query.edit_message_text("🗣️ **Give me new instructions:**")
+        await query.edit_message_text("🗣️ **New instructions:**")
         return WAITING_FOR_INSTRUCTION
 
-# ==============================================================================
-#   STANDARD HANDLERS (Read/Send)
-# ==============================================================================
-
+# --- STANDARD FLOWS ---
 async def read_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("🕒 Last Email", callback_data="read_latest")],
-        [InlineKeyboardButton("🔍 Specific Sender", callback_data="read_specific")]
-    ]
-    await query.edit_message_text("📂 **Inbox Options:**", reply_markup=InlineKeyboardMarkup(keyboard))
+    keyboard = [[InlineKeyboardButton("🕒 Last Email", callback_data="read_latest")]]
+    await query.edit_message_text("📂 **Options:**", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def fetch_latest_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     if not is_user_authenticated():
-        link = get_login_link()
-        await query.edit_message_text("⚠️ **Session Expired.**", reply_markup=get_login_keyboard(link))
+        await query.edit_message_text("⚠️ Session Expired.")
+        return
+    
+    # Use get_email_details instead of get_last_email for consistency
+    msg_id = get_latest_message_id()
+    if not msg_id:
+        await query.edit_message_text("📭 Empty.")
         return
 
-    content = get_last_email()
-    if content and content != "AUTH_ERROR":
-        # Add AI context
-        context.bot_data['last_email_id'] = get_latest_message_id()
+    details = get_email_details(msg_id)
+    if details:
+        context.bot_data['last_email_id'] = msg_id
+        context.bot_data['last_email_body'] = details['body']
+        context.bot_data['last_sender'] = details['sender_email']
+        
+        # Display logic similar to notification
+        text_display = details['body'][:500] + "..." if len(details['body']) > 500 else details['body']
         
         keyboard = [
             [InlineKeyboardButton("✍️ Draft Reply (AI)", callback_data="start_ai_reply")],
             [InlineKeyboardButton("🔙 Menu", callback_data="menu_read")]
         ]
-        await query.edit_message_text(content, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+        display_text = (
+            f"📩 **Latest Email**\n"
+            f"👤 **From:** `{details['sender_view']}`\n"
+            f"📌 **Subject:** `{details['subject']}`\n\n"
+            f"{text_display}"
+        )
+        await query.edit_message_text(display_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await query.edit_message_text("📭 Empty or Error.")
+        await query.edit_message_text("❌ Error fetching.")
 
-# --- MANUAL SEND FLOW ---
+# --- MANUAL SEND ---
 async def start_sending_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not is_user_authenticated():
-        link = get_login_link()
-        await query.edit_message_text("⚠️ Please Login.", reply_markup=get_login_keyboard(link))
+        await query.edit_message_text("⚠️ Please Login.")
         return ConversationHandler.END
     await query.edit_message_text("✍️ **Recipient:**")
     return RECIPIENT
@@ -338,11 +296,9 @@ async def get_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BODY
 
 async def send_email_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This handles both Manual Send AND 'Edit Draft'
     to = context.user_data.get('to') or context.user_data.get('reply_to')
     sub = context.user_data.get('sub') or context.user_data.get('draft_sub', 'No Subject')
     body = update.message.text
-    
     await update.message.reply_text("🚀 **Sending...**")
     result = create_and_send_email(to, sub, body)
     await update.message.reply_text(result, reply_markup=get_dashboard_keyboard())
@@ -350,22 +306,6 @@ async def send_email_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Cancelled.", reply_markup=get_dashboard_keyboard())
-    return ConversationHandler.END
-
-# --- SEARCH FLOW (Stub for Specific Sender) ---
-async def ask_sender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("🔍 **Enter Sender Email:**")
-    return ASK_SENDER_EMAIL
-
-async def fetch_specific(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    sender = update.message.text
-    content = get_last_email(query=f"from:{sender}")
-    if content:
-        await update.message.reply_text(content, parse_mode="Markdown")
-    else:
-        await update.message.reply_text("❌ Not found.")
     return ConversationHandler.END
 
 # ==============================================================================
@@ -377,17 +317,15 @@ if __name__ == "__main__":
     
     threading.Thread(target=run_flask_server, daemon=True).start()
     
-    print("✅ Bot Started (Agentic + Secure Mode)...")
+    print("✅ Bot Started (Final Version)...")
     app = ApplicationBuilder().token(BOT_TOKEN).request(HTTPXRequest(connect_timeout=60, read_timeout=60)).build()
 
     if app.job_queue:
         app.job_queue.run_repeating(check_new_emails_job, interval=60, first=10)
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login_command))
     
-    # AI Conversation
     ai_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_ai_reply, pattern="^start_ai_reply$")],
         states={
@@ -401,7 +339,6 @@ if __name__ == "__main__":
     )
     app.add_handler(ai_handler)
 
-    # Manual Send Conversation
     send_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_sending_manual, pattern="^menu_send$")],
         states={
@@ -413,13 +350,6 @@ if __name__ == "__main__":
     )
     app.add_handler(send_handler)
 
-    # Read Handlers
-    app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(ask_sender, pattern="^read_specific$")],
-        states={ASK_SENDER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, fetch_specific)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    ))
-    
     app.add_handler(CallbackQueryHandler(read_menu_handler, pattern="^menu_read$"))
     app.add_handler(CallbackQueryHandler(fetch_latest_email, pattern="^read_latest$"))
     app.add_handler(CallbackQueryHandler(read_full_auto_handler, pattern="^read_full_auto$"))

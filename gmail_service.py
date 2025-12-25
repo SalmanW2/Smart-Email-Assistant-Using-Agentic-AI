@@ -1,142 +1,135 @@
-import os.path
+import os
 import base64
-import logging
-from email.mime.text import MIMEText
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+import logging
 
-# --- LOGGING ---
+# Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+TOKEN_FILE = 'token.json'
 
 def get_credentials():
     creds = None
-    # 1. Pehle Local File check karo (Fresh Login)
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # 2. Phir Render Secret check karo (Backup)
-    elif os.path.exists("/etc/secrets/token.json"):
-        creds = Credentials.from_authorized_user_file("/etc/secrets/token.json", SCOPES)
-
-    # Token Refresh Logic
-    if creds and creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            # Save refreshed token locally
-            with open("token.json", "w") as token_file:
-                token_file.write(creds.to_json())
-        except Exception as e:
-            logger.error(f"❌ Token Refresh Failed: {e}")
-            return None
-
-    if not creds or not creds.valid:
-        return None
-
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
     return creds
 
-def get_gmail_service():
+def get_service():
     creds = get_credentials()
-    if not creds: return None
-    return build('gmail', 'v1', credentials=creds)
+    if creds and creds.valid:
+        return build('gmail', 'v1', credentials=creds)
+    return None
 
-# --- NEW: LIGHTWEIGHT CHECKER ---
 def get_latest_message_id():
-    """Sirf Latest Email ki ID lata hai (Data bachat ke liye)"""
+    """Sirf Latest Email ki ID lata hai (Fast check ke liye)"""
+    service = get_service()
+    if not service: return None
     try:
-        service = get_gmail_service()
-        if not service: return None
-        
-        # Sirf 1 ID mangwao
-        results = service.users().messages().list(userId='me', labelIds=['INBOX'], maxResults=1).execute()
+        results = service.users().messages().list(userId='me', maxResults=1).execute()
         messages = results.get('messages', [])
-        
-        if messages:
-            return messages[0]['id']
-        return None
-    except Exception as e:
-        logger.error(f"Check Error: {e}")
-        return None
-
-# --- NEW: DETAILS FETCHING ---
-def get_email_details(msg_id):
-    """Specific ID ki detail lata hai"""
-    try:
-        service = get_gmail_service()
-        if not service: return None
-        
-        msg = service.users().messages().get(userId='me', id=msg_id).execute()
-        payload = msg['payload']
-        headers = payload['headers']
-
-        subject = "No Subject"
-        sender = "Unknown"
-        sender_email = ""
-
-        for h in headers:
-            if h['name'] == 'Subject': subject = h['value']
-            if h['name'] == 'From': 
-                sender = h['value']
-                # Email address extract karna (<email@com>)
-                if "<" in sender:
-                    sender_email = sender.split("<")[1].strip(">")
-                else:
-                    sender_email = sender
-
-        snippet = msg.get('snippet', '')
-        
-        return {
-            "sender_view": sender,
-            "sender_email": sender_email,
-            "subject": subject,
-            "snippet": snippet
-        }
-    
-    except Exception as e:
-        return None
-
-# --- OLD FUNCTIONS (STILL NEEDED) ---
-def get_last_email(query='label:INBOX'):
-    # (Ye function manual check ke liye abhi bhi use hoga)
-    # Isay wesa hi rehne do jesa pichli baar tha
-    try:
-        service = get_gmail_service()
-        if not service: return "AUTH_ERROR"
-
-        results = service.users().messages().list(userId='me', q=query, maxResults=1).execute()
-        messages = results.get('messages', [])
-
         if not messages: return None
+        return messages[0]['id']
+    except Exception as e:
+        logger.error(f"Error fetching ID: {e}")
+        return None
 
-        msg = service.users().messages().get(userId='me', id=messages[0]['id']).execute()
+# --- NEW: BODY DECODER FUNCTION 🕵️‍♂️ ---
+def parse_email_body(payload):
+    """
+    Ye function email ke andar ghus kar 'text/plain' body dhoondta hai.
+    """
+    body = ""
+    if 'parts' in payload:
+        for part in payload['parts']:
+            if part['mimeType'] == 'text/plain':
+                data = part['body'].get('data')
+                if data:
+                    body = base64.urlsafe_b64decode(data).decode()
+                    return body
+            # Agar nested parts hain (multipart/alternative)
+            if 'parts' in part:
+                return parse_email_body(part)
+    elif 'body' in payload:
+        data = payload['body'].get('data')
+        if data:
+            body = base64.urlsafe_b64decode(data).decode()
+    return body
+
+def get_email_details(msg_id):
+    """Email ki poori details (Sender, Subject, Full Body) lata hai"""
+    service = get_service()
+    if not service: return None
+    
+    try:
+        msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
         payload = msg['payload']
-        headers = payload['headers']
+        headers = payload.get('headers', [])
 
         subject = "No Subject"
         sender = "Unknown"
+        
         for h in headers:
             if h['name'] == 'Subject': subject = h['value']
             if h['name'] == 'From': sender = h['value']
 
+        # Snippet (Preview)
         snippet = msg.get('snippet', '')
-        return f"👤 **From:** `{sender}`\n📌 **Subject:** `{subject}`\n📝 **Body:** {snippet}..."
-    except Exception as e:
-        return f"Error: {str(e)}"
 
-def create_and_send_email(to_email, subject, body_text):
-    try:
-        service = get_gmail_service()
-        if not service: return "AUTH_ERROR"
+        # Full Body Extraction
+        full_body = parse_email_body(payload)
         
+        # Agar full body na mile to snippet use kar lo
+        if not full_body:
+            full_body = snippet
+
+        # Sender Name Safai
+        sender_view = sender.split("<")[0].strip().replace('"', '')
+
+        return {
+            'id': msg_id,
+            'sender_email': sender,     # Reply ke liye (with <email>)
+            'sender_view': sender_view, # Dikhane ke liye (Name only)
+            'subject': subject,
+            'snippet': snippet,         # Notification ke liye
+            'body': full_body           # AI Summary ke liye (FULL TEXT)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching details: {e}")
+        return None
+
+def get_last_email(query=None):
+    """Telegram command ke liye text format banata hai"""
+    # (Ye function abhi use nahi ho raha naye logic mein, but rakh lo crash na ho)
+    msg_id = get_latest_message_id()
+    if not msg_id: return None
+    details = get_email_details(msg_id)
+    if not details: return None
+    
+    return (
+        f"📩 **Latest Email**\n\n"
+        f"👤 **From:** `{details['sender_view']}`\n"
+        f"📌 **Subject:** `{details['subject']}`\n\n"
+        f"{details['body'][:500]}..." # Sirf 500 chars dikhao
+    )
+
+def create_and_send_email(to, subject, body_text):
+    service = get_service()
+    if not service: return "⚠️ Auth Error: Login required."
+    
+    try:
         message = MIMEText(body_text)
-        message['to'] = to_email
+        message['to'] = to
         message['subject'] = subject
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
         
-        body = {'raw': raw_message}
-        service.users().messages().send(userId='me', body=body).execute()
-        return "Email Sent Successfully! ✅"
+        service.users().messages().send(userId='me', body={'raw': raw_message}).execute()
+        return "✅ Email Sent Successfully!"
     except Exception as e:
-        return f"Failed: {str(e)}"
+        return f"❌ Failed to send: {str(e)}"
+    
+from email.mime.text import MIMEText
