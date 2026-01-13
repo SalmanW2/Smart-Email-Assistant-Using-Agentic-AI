@@ -59,7 +59,7 @@ def keep_alive():
 
     print(f"⏰ Self-Ping started for: {url}")
     while True:
-        time.sleep(840)  # 14 Minutes
+        time.sleep(300)  # 05 Minutes
         try:
             response = requests.get(url)
             print(f"🔔 Pinged Self: Status {response.status_code}")
