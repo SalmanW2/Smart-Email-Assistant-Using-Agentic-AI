@@ -2,20 +2,25 @@ import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+# Load Environment Variables
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
 
+# --- CONFIGURATION ---
 if API_KEY:
     genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
 else:
-    model = None
-    print("❌ GEMINI_API_KEY Missing")
+    print("❌ Error: GEMINI_API_KEY not found in .env")
+
+# Model Setup (Flash is fast & free)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 def summarize_email(email_body):
-    """Summarizes long emails into 3 bullet points."""
-    if not model: return "⚠️ AI Error: API Key Missing."
+    """
+    Summarizes long emails into 3 bullet points.
+    """
+    if not API_KEY: return "⚠️ AI Error: API Key Missing."
     
     try:
         prompt = (
@@ -28,8 +33,10 @@ def summarize_email(email_body):
         return f"❌ AI Error: {str(e)}"
 
 def generate_draft_reply(original_email_body, user_instruction):
-    """Generates a reply based on user's instruction."""
-    if not model: return "⚠️ AI Error: API Key Missing."
+    """
+    Generates a reply based on user's short instruction.
+    """
+    if not API_KEY: return "⚠️ AI Error: API Key Missing."
 
     try:
         prompt = (
