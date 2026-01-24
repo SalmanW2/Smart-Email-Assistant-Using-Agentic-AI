@@ -3,6 +3,7 @@ import asyncio
 import logging
 import threading
 import os
+import functools  # <--- Added for Speed Optimization
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from telegram.ext import (
@@ -61,7 +62,7 @@ class BotHandler:
         keyboard = [[InlineKeyboardButton("🔗 Connect Gmail Account", url=auth_link)]]
         return InlineKeyboardMarkup(keyboard)
 
-    # --- AUTO-CHECKER JOB ---
+    # --- AUTO-CHECKER JOB (OPTIMIZED ⚡) ---
     async def check_new_emails_job(self, context: ContextTypes.DEFAULT_TYPE):
         # 1. AUTH CHECK
         if not self.is_user_authenticated():
@@ -82,9 +83,13 @@ class BotHandler:
         else:
             context.bot_data['auth_warning_sent'] = False
 
-        # 2. NEW EMAIL CHECK
+        # 2. NEW EMAIL CHECK (NON-BLOCKING)
         try:
-            latest_id = self.gmail.get_latest_message_id()
+            # Get the running event loop
+            loop = asyncio.get_running_loop()
+            
+            # Step A: Get ID (Run in background thread to avoid blocking Telegram)
+            latest_id = await loop.run_in_executor(None, self.gmail.get_latest_message_id)
             
             if self.last_checked_email_id is None:
                 self.last_checked_email_id = latest_id
@@ -93,8 +98,8 @@ class BotHandler:
             if latest_id and latest_id != self.last_checked_email_id:
                 self.last_checked_email_id = latest_id
                 
-                # Fetch FULL Details via Class Method
-                details = self.gmail.get_latest_email_details()
+                # Step B: Fetch Full Details (Run in background)
+                details = await loop.run_in_executor(None, self.gmail.get_latest_email_details)
                 if not details: return
 
                 context.bot_data['last_email_id'] = latest_id
@@ -107,7 +112,12 @@ class BotHandler:
 
                 # Threshold: 50 Words
                 if word_count > 50:
-                    summary = self.ai.summarize_email(details['body'])
+                    # Step C: AI Summary (Run in background)
+                    summary = await loop.run_in_executor(
+                        None, 
+                        functools.partial(self.ai.summarize_email, details['body'])
+                    )
+                    
                     msg_text = (
                         f"🚨 **NEW EMAIL (AI Summary)**\n\n"
                         f"👤 **From:** `{details['sender_view']}`\n"
@@ -326,4 +336,3 @@ if __name__ == "__main__":
     # Start Bot
     bot = BotHandler()
     bot.run()
-    
