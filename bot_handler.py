@@ -3,7 +3,6 @@ import asyncio
 import logging
 import threading
 import os
-import functools  # <--- Added for Speed Optimization
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from telegram.ext import (
@@ -12,7 +11,7 @@ from telegram.ext import (
 )
 from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID
 
-# Importing our new OOP Modules
+# Importing our OOP Modules
 from gmail_client import GmailClient
 from auth_manager import AuthManager, run_flask_server
 from ai_engine import AIEngine
@@ -62,7 +61,7 @@ class BotHandler:
         keyboard = [[InlineKeyboardButton("🔗 Connect Gmail Account", url=auth_link)]]
         return InlineKeyboardMarkup(keyboard)
 
-    # --- AUTO-CHECKER JOB (OPTIMIZED ⚡) ---
+    # --- AUTO-CHECKER JOB (STABLE MODE) ---
     async def check_new_emails_job(self, context: ContextTypes.DEFAULT_TYPE):
         # 1. AUTH CHECK
         if not self.is_user_authenticated():
@@ -83,13 +82,10 @@ class BotHandler:
         else:
             context.bot_data['auth_warning_sent'] = False
 
-        # 2. NEW EMAIL CHECK (NON-BLOCKING)
+        # 2. NEW EMAIL CHECK (Stable Blocking Method)
         try:
-            # Get the running event loop
-            loop = asyncio.get_running_loop()
-            
-            # Step A: Get ID (Run in background thread to avoid blocking Telegram)
-            latest_id = await loop.run_in_executor(None, self.gmail.get_latest_message_id)
+            # Direct Call (No Async Executor for Stability)
+            latest_id = self.gmail.get_latest_message_id()
             
             if self.last_checked_email_id is None:
                 self.last_checked_email_id = latest_id
@@ -98,8 +94,8 @@ class BotHandler:
             if latest_id and latest_id != self.last_checked_email_id:
                 self.last_checked_email_id = latest_id
                 
-                # Step B: Fetch Full Details (Run in background)
-                details = await loop.run_in_executor(None, self.gmail.get_latest_email_details)
+                # Fetch FULL Details
+                details = self.gmail.get_latest_email_details()
                 if not details: return
 
                 context.bot_data['last_email_id'] = latest_id
@@ -112,12 +108,7 @@ class BotHandler:
 
                 # Threshold: 50 Words
                 if word_count > 50:
-                    # Step C: AI Summary (Run in background)
-                    summary = await loop.run_in_executor(
-                        None, 
-                        functools.partial(self.ai.summarize_email, details['body'])
-                    )
-                    
+                    summary = self.ai.summarize_email(details['body'])
                     msg_text = (
                         f"🚨 **NEW EMAIL (AI Summary)**\n\n"
                         f"👤 **From:** `{details['sender_view']}`\n"
@@ -169,7 +160,6 @@ class BotHandler:
         query = update.callback_query
         await query.answer()
         email_id = context.bot_data.get('last_email_id')
-        # Re-fetch using class method
         details = self.gmail.get_latest_email_details()
         
         if details:
@@ -196,7 +186,6 @@ class BotHandler:
         original_email = context.bot_data.get('last_email_body', '')
         await update.message.reply_text("⏳ **Drafting...**")
         
-        # Use AI Class
         draft = self.ai.generate_draft_reply(original_email, user_instruction)
         
         context.user_data['draft_body'] = draft
@@ -215,7 +204,6 @@ class BotHandler:
             sub = context.user_data.get('draft_sub')
             body = context.user_data.get('draft_body')
             await query.edit_message_text(f"🚀 **Sending...**")
-            # Use Gmail Class
             result = self.gmail.send_email(to, sub, body)
             await query.edit_message_text(f"{result}\n\n✅ **Done!**")
             return ConversationHandler.END
