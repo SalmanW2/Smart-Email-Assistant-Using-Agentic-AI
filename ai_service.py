@@ -13,8 +13,9 @@ if API_KEY:
 else:
     print("❌ Error: GEMINI_API_KEY not found in .env")
 
-# Model Setup (Flash is fast & free)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Model Setup (Updated Name for Stability)
+# 'gemini-1.5-flash-latest' points to the most stable current version
+model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 def summarize_email(email_body):
     """

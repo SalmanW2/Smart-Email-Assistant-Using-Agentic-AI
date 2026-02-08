@@ -1,10 +1,9 @@
 import os
 import base64
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 import logging
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from email.mime.text import MIMEText
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -26,11 +25,15 @@ def get_service():
     return None
 
 def get_latest_message_id():
-    """Sirf Latest Email ki ID lata hai (Fast check ke liye)"""
+    """
+    Sirf Latest Email ki ID lata hai (Fast check ke liye)
+    FIX: Added q='label:INBOX' to ignore sent emails.
+    """
     service = get_service()
     if not service: return None
     try:
-        results = service.users().messages().list(userId='me', maxResults=1).execute()
+        # Sirf INBOX check karega
+        results = service.users().messages().list(userId='me', q='label:INBOX', maxResults=1).execute()
         messages = results.get('messages', [])
         if not messages: return None
         return messages[0]['id']
@@ -38,11 +41,8 @@ def get_latest_message_id():
         logger.error(f"Error fetching ID: {e}")
         return None
 
-# --- NEW: BODY DECODER FUNCTION 🕵️‍♂️ ---
+# --- BODY DECODER FUNCTION ---
 def parse_email_body(payload):
-    """
-    Ye function email ke andar ghus kar 'text/plain' body dhoondta hai.
-    """
     body = ""
     if 'parts' in payload:
         for part in payload['parts']:
@@ -51,7 +51,6 @@ def parse_email_body(payload):
                 if data:
                     body = base64.urlsafe_b64decode(data).decode()
                     return body
-            # Agar nested parts hain (multipart/alternative)
             if 'parts' in part:
                 return parse_email_body(part)
     elif 'body' in payload:
@@ -77,34 +76,28 @@ def get_email_details(msg_id):
             if h['name'] == 'Subject': subject = h['value']
             if h['name'] == 'From': sender = h['value']
 
-        # Snippet (Preview)
         snippet = msg.get('snippet', '')
-
-        # Full Body Extraction
         full_body = parse_email_body(payload)
         
-        # Agar full body na mile to snippet use kar lo
         if not full_body:
             full_body = snippet
 
-        # Sender Name Safai
         sender_view = sender.split("<")[0].strip().replace('"', '')
 
         return {
             'id': msg_id,
-            'sender_email': sender,     # Reply ke liye (with <email>)
-            'sender_view': sender_view, # Dikhane ke liye (Name only)
+            'sender_email': sender,     
+            'sender_view': sender_view, 
             'subject': subject,
-            'snippet': snippet,         # Notification ke liye
-            'body': full_body           # AI Summary ke liye (FULL TEXT)
+            'snippet': snippet,         
+            'body': full_body           
         }
     except Exception as e:
         logger.error(f"Error fetching details: {e}")
         return None
 
 def get_last_email(query=None):
-    """Telegram command ke liye text format banata hai"""
-    # (Ye function abhi use nahi ho raha naye logic mein, but rakh lo crash na ho)
+    # Backward compatibility wrapper
     msg_id = get_latest_message_id()
     if not msg_id: return None
     details = get_email_details(msg_id)
@@ -114,7 +107,7 @@ def get_last_email(query=None):
         f"📩 **Latest Email**\n\n"
         f"👤 **From:** `{details['sender_view']}`\n"
         f"📌 **Subject:** `{details['subject']}`\n\n"
-        f"{details['body'][:500]}..." # Sirf 500 chars dikhao
+        f"{details['body'][:500]}..." 
     )
 
 def create_and_send_email(to, subject, body_text):
@@ -131,5 +124,3 @@ def create_and_send_email(to, subject, body_text):
         return "✅ Email Sent Successfully!"
     except Exception as e:
         return f"❌ Failed to send: {str(e)}"
-    
-from email.mime.text import MIMEText
