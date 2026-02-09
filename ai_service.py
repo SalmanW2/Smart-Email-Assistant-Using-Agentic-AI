@@ -1,51 +1,32 @@
 import os
 import google.generativeai as genai
-from dotenv import load_dotenv
+from config_env import GEMINI_API_KEY
 
-# Load Environment Variables
-load_dotenv()
-
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-# --- CONFIGURATION ---
-if API_KEY:
-    genai.configure(api_key=API_KEY)
+# Configure Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 else:
     print("❌ Error: GEMINI_API_KEY not found in .env")
 
-# Model Setup (Updated Name for Stability)
-# 'gemini-1.5-flash-latest' points to the most stable current version
+# ✅ FIX: Using stable model name
 model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 def summarize_email(email_body):
-    """
-    Summarizes long emails into 3 bullet points.
-    """
-    if not API_KEY: return "⚠️ AI Error: API Key Missing."
-    
+    """Summarizes email into 3 bullet points."""
     try:
-        prompt = (
-            f"Summarize this email in 3 short, punchy bullet points. "
-            f"Ignore signatures and legal disclaimers:\n\n{email_body}"
-        )
+        prompt = f"Summarize this email in 3 short bullet points. Ignore signatures:\n\n{email_body}"
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         return f"❌ AI Error: {str(e)}"
 
-def generate_draft_reply(original_email_body, user_instruction):
-    """
-    Generates a reply based on user's short instruction.
-    """
-    if not API_KEY: return "⚠️ AI Error: API Key Missing."
-
+def generate_draft_reply(original_email, instruction):
+    """Generates a professional reply based on instruction."""
     try:
         prompt = (
-            f"You are a professional email assistant. "
-            f"The user received this email:\n'{original_email_body}'\n\n"
-            f"The user wants to reply with this intent:\n'{user_instruction}'\n\n"
-            f"Write a professional, polite, and clear email reply. "
-            f"Do NOT include a subject line. Write ONLY the body text."
+            f"Original Email: {original_email}\n\n"
+            f"User Intent: {instruction}\n\n"
+            f"Write a professional email reply. No subject line, just body text."
         )
         response = model.generate_content(prompt)
         return response.text

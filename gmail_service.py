@@ -3,19 +3,27 @@ import base64
 import logging
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 from email.mime.text import MIMEText
+from config_env import TOKEN_FILE, SCOPES
 
-# Setup Logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
-TOKEN_FILE = 'token.json'
-
 def get_credentials():
+    """Loads and Auto-Refreshes tokens to prevent session expiry."""
     creds = None
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    
+    # ✅ FIX: Auto-refresh if expired
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            with open(TOKEN_FILE, 'w') as token:
+                token.write(creds.to_json())
+        except Exception as e:
+            logger.error(f"Refresh Error: {e}")
+            return None
     return creds
 
 def get_service():
@@ -24,103 +32,61 @@ def get_service():
         return build('gmail', 'v1', credentials=creds)
     return None
 
-def get_latest_message_id():
+def get_latest_id(filter_unread=False):
     """
-    Sirf Latest Email ki ID lata hai (Fast check ke liye)
-    FIX: Added q='label:INBOX' to ignore sent emails.
+    Fetches only the latest email ID from INBOX.
     """
     service = get_service()
     if not service: return None
     try:
-        # Sirf INBOX check karega
-        results = service.users().messages().list(userId='me', q='label:INBOX', maxResults=1).execute()
+        # ✅ FIX: Added label:INBOX to ignore sent items
+        query = "label:INBOX"
+        if filter_unread:
+            query += " label:UNREAD"
+            
+        results = service.users().messages().list(userId='me', q=query, maxResults=1).execute()
         messages = results.get('messages', [])
-        if not messages: return None
-        return messages[0]['id']
-    except Exception as e:
-        logger.error(f"Error fetching ID: {e}")
+        return messages[0]['id'] if messages else None
+    except Exception:
         return None
 
-# --- BODY DECODER FUNCTION ---
-def parse_email_body(payload):
-    body = ""
-    if 'parts' in payload:
-        for part in payload['parts']:
-            if part['mimeType'] == 'text/plain':
-                data = part['body'].get('data')
-                if data:
-                    body = base64.urlsafe_b64decode(data).decode()
-                    return body
-            if 'parts' in part:
-                return parse_email_body(part)
-    elif 'body' in payload:
-        data = payload['body'].get('data')
-        if data:
-            body = base64.urlsafe_b64decode(data).decode()
-    return body
-
 def get_email_details(msg_id):
-    """Email ki poori details (Sender, Subject, Full Body) lata hai"""
+    """Fetches full email details."""
     service = get_service()
-    if not service: return None
-    
+    if not service or not msg_id: return None
     try:
         msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
         payload = msg['payload']
         headers = payload.get('headers', [])
-
-        subject = "No Subject"
-        sender = "Unknown"
         
-        for h in headers:
-            if h['name'] == 'Subject': subject = h['value']
-            if h['name'] == 'From': sender = h['value']
-
-        snippet = msg.get('snippet', '')
-        full_body = parse_email_body(payload)
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
+        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown")
         
-        if not full_body:
-            full_body = snippet
-
-        sender_view = sender.split("<")[0].strip().replace('"', '')
-
-        return {
-            'id': msg_id,
-            'sender_email': sender,     
-            'sender_view': sender_view, 
-            'subject': subject,
-            'snippet': snippet,         
-            'body': full_body           
-        }
-    except Exception as e:
-        logger.error(f"Error fetching details: {e}")
+        # Decoding Body
+        body = ""
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body'].get('data', '')
+                    body = base64.urlsafe_b64decode(data).decode()
+        elif 'body' in payload:
+            data = payload['body'].get('data', '')
+            body = base64.urlsafe_b64decode(data).decode()
+            
+        return {'id': msg_id, 'sender': sender, 'subject': subject, 'body': body or msg.get('snippet', '')}
+    except Exception:
         return None
 
-def get_last_email(query=None):
-    # Backward compatibility wrapper
-    msg_id = get_latest_message_id()
-    if not msg_id: return None
-    details = get_email_details(msg_id)
-    if not details: return None
-    
-    return (
-        f"📩 **Latest Email**\n\n"
-        f"👤 **From:** `{details['sender_view']}`\n"
-        f"📌 **Subject:** `{details['subject']}`\n\n"
-        f"{details['body'][:500]}..." 
-    )
-
-def create_and_send_email(to, subject, body_text):
+def send_email_api(to, subject, body):
+    """Sends email via Gmail API."""
     service = get_service()
-    if not service: return "⚠️ Auth Error: Login required."
-    
+    if not service: return "❌ Login Required"
     try:
-        message = MIMEText(body_text)
+        message = MIMEText(body)
         message['to'] = to
         message['subject'] = subject
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        
-        service.users().messages().send(userId='me', body={'raw': raw_message}).execute()
-        return "✅ Email Sent Successfully!"
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        service.users().messages().send(userId='me', body={'raw': raw}).execute()
+        return "✅ Email Sent!"
     except Exception as e:
-        return f"❌ Failed to send: {str(e)}"
+        return f"❌ Error: {str(e)}"
