@@ -10,12 +10,11 @@ from config_env import TOKEN_FILE, SCOPES
 logger = logging.getLogger(__name__)
 
 def get_credentials():
-    """Loads and Auto-Refreshes tokens to prevent session expiry."""
+    """Loads and Auto-Refreshes tokens."""
     creds = None
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
     
-    # ✅ FIX: Auto-refresh if expired
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
@@ -33,17 +32,12 @@ def get_service():
     return None
 
 def get_latest_id(filter_unread=False):
-    """
-    Fetches only the latest email ID from INBOX.
-    """
     service = get_service()
     if not service: return None
     try:
-        # ✅ FIX: Added label:INBOX to ignore sent items
         query = "label:INBOX"
         if filter_unread:
             query += " label:UNREAD"
-            
         results = service.users().messages().list(userId='me', q=query, maxResults=1).execute()
         messages = results.get('messages', [])
         return messages[0]['id'] if messages else None
@@ -51,7 +45,6 @@ def get_latest_id(filter_unread=False):
         return None
 
 def get_email_details(msg_id):
-    """Fetches full email details."""
     service = get_service()
     if not service or not msg_id: return None
     try:
@@ -62,7 +55,6 @@ def get_email_details(msg_id):
         subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
         sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown")
         
-        # Decoding Body
         body = ""
         if 'parts' in payload:
             for part in payload['parts']:
@@ -78,7 +70,6 @@ def get_email_details(msg_id):
         return None
 
 def send_email_api(to, subject, body):
-    """Sends email via Gmail API."""
     service = get_service()
     if not service: return "❌ Login Required"
     try:

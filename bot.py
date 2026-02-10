@@ -14,7 +14,6 @@ def is_authenticated():
     creds = get_credentials()
     return creds is not None and creds.valid
 
-# --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_TELEGRAM_ID: return
     if is_authenticated():
@@ -32,7 +31,6 @@ async def handle_fetch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Check for unread if requested
     is_unread = True if query.data == "fetch_unread" else False
     msg_id = get_latest_id(filter_unread=is_unread)
     
@@ -45,7 +43,6 @@ async def handle_fetch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     msg = f"📩 **Email Found**\n👤 From: `{details['sender']}`\n📌 Subject: `{details['subject']}`\n\n"
     
-    # Summarize if long
     if len(details['body'].split()) > 50:
         summary = summarize_email(details['body'])
         msg += f"✨ **AI Summary:**\n{summary}"
@@ -55,7 +52,6 @@ async def handle_fetch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("✍️ Reply (AI Agent)", callback_data="start_reply")], [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]]
     await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- AI REPLY FLOW ---
 async def start_reply_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -103,6 +99,4 @@ if __name__ == "__main__":
         fallbacks=[CallbackQueryHandler(start, pattern="main_menu")]
     )
     app.add_handler(reply_conv)
-    
-    print("🚀 Bot is running...")
     app.run_polling()

@@ -14,7 +14,6 @@ def get_redirect_uri():
     return "http://localhost:10000/oauth2callback"
 
 def get_login_link():
-    """Generates auth link."""
     if not os.path.exists(CREDENTIALS_FILE): return None
     flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=get_redirect_uri())
     auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline', include_granted_scopes='true')
@@ -34,11 +33,10 @@ def oauth2callback():
     return "<h1>✅ Login Success! You can close this tab.</h1>"
 
 def keep_alive():
-    """Prevents Render from sleeping."""
     url = "https://smart-email-assistant-using-agentic-ai.onrender.com"
     if not os.environ.get("RENDER"): return
     while True:
-        time.sleep(300) # 5 Minutes
+        time.sleep(300) 
         try: requests.get(url)
         except: pass
 

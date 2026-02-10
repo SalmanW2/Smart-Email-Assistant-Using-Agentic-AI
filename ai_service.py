@@ -8,8 +8,8 @@ if GEMINI_API_KEY:
 else:
     print("❌ Error: GEMINI_API_KEY not found in .env")
 
-# ✅ FIX: Using stable model name
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+# ✅ FIX: Removed '-latest' to solve 404 Error
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 def summarize_email(email_body):
     """Summarizes email into 3 bullet points."""
