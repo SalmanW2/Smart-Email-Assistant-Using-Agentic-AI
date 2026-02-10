@@ -1,83 +1,85 @@
-import sys
-import asyncio
 import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID
-from gmail_service import get_latest_id, get_email_details, send_email_api, get_credentials
-from auth_server import run_flask_server, get_login_link
+from gmail_service import list_messages, get_email_details, send_email_api
+from auth_server import run_flask_server
 from ai_service import summarize_email, generate_draft_reply
 
 WAITING_FOR_INSTRUCTION = 0
 
-def is_authenticated():
-    creds = get_credentials()
-    return creds is not None and creds.valid
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_TELEGRAM_ID: return
-    if is_authenticated():
-        kb = [
-            [InlineKeyboardButton("🕒 Last Email", callback_data="fetch_last")],
-            [InlineKeyboardButton("📩 Last Unread", callback_data="fetch_unread")]
-        ]
-        await update.message.reply_text("👋 Boss! System Online. Choose option:", reply_markup=InlineKeyboardMarkup(kb))
-    else:
-        link = get_login_link()
-        kb = [[InlineKeyboardButton("🔗 Login Gmail", url=link)]]
-        await update.message.reply_text("⚠️ Session Expired. Please login:", reply_markup=InlineKeyboardMarkup(kb))
+    text = (
+        "👋 **Boss! System Online.**\n\n"
+        "📜 **/inbox** - Show latest 5 emails\n"
+        "🔍 **/search <keyword>** - Search emails\n"
+        "(Example: `/search job offer`)"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_fetch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    is_unread = True if query.data == "fetch_unread" else False
-    msg_id = get_latest_id(filter_unread=is_unread)
-    
-    if not msg_id:
-        await query.edit_message_text("📭 No emails found.")
+async def cmd_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_email_list(update, query='label:INBOX')
+
+async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("🔍 Likhna bhool gaye! Use: `/search your_keyword`")
+        return
+    query = " ".join(context.args)
+    await show_email_list(update, query=query)
+
+async def show_email_list(update: Update, query):
+    emails = list_messages(query=query, max_results=5)
+    if not emails:
+        await update.message.reply_text("📭 Nothing found.")
         return
 
+    # List dikhao Buttons ke sath
+    for email in emails:
+        btn = [[InlineKeyboardButton(f"📖 Read: {email['subject'][:20]}...", callback_data=f"read_{email['id']}")]]
+        txt = f"👤 **{email['sender']}**\n📌 {email['subject']}"
+        await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(btn))
+
+async def handle_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    msg_id = query.data.split("_")[1]
+    
     details = get_email_details(msg_id)
     context.user_data['last_details'] = details
     
-    msg = f"📩 **Email Found**\n👤 From: `{details['sender']}`\n📌 Subject: `{details['subject']}`\n\n"
-    
+    msg = f"📩 **{details['subject']}**\n👤 {details['sender']}\n\n"
     if len(details['body'].split()) > 50:
-        summary = summarize_email(details['body'])
-        msg += f"✨ **AI Summary:**\n{summary}"
+        msg += f"✨ **AI Summary:**\n{summarize_email(details['body'])}"
     else:
         msg += f"📝 **Body:**\n{details['body']}"
 
-    kb = [[InlineKeyboardButton("✍️ Reply (AI Agent)", callback_data="start_reply")], [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]]
+    kb = [[InlineKeyboardButton("✍️ AI Reply", callback_data="start_reply")]]
     await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
+# --- AI REPLY FLOW (SAME AS BEFORE) ---
 async def start_reply_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("🤖 **AI Agent Active.** What should I say in the reply?")
+    await query.edit_message_text("🤖 **AI Active.** Reply mein kya bolna hai?")
     return WAITING_FOR_INSTRUCTION
 
 async def process_ai_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    instruction = update.message.text
-    details = context.user_data.get('last_details')
-    
-    await update.message.reply_text("⏳ Drafting with Gemini...")
-    draft = generate_draft_reply(details['body'], instruction)
+    draft = generate_draft_reply(context.user_data['last_details']['body'], update.message.text)
     context.user_data['final_draft'] = draft
-    
-    kb = [[InlineKeyboardButton("🚀 Send Now", callback_data="send_final")], [InlineKeyboardButton("❌ Cancel", callback_data="main_menu")]]
-    await update.message.reply_text(f"🧐 **Review Draft:**\n\n{draft}", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("🚀 Send", callback_data="send_final"), InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+    await update.message.reply_text(f"🧐 **Draft:**\n\n{draft}", reply_markup=InlineKeyboardMarkup(kb))
     return WAITING_FOR_INSTRUCTION
 
 async def send_final_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    details = context.user_data.get('last_details')
-    draft = context.user_data.get('final_draft')
-    
-    result = send_email_api(details['sender'], f"Re: {details['subject']}", draft)
-    await query.edit_message_text(result)
+    d = context.user_data['last_details']
+    res = send_email_api(d['sender'], f"Re: {d['subject']}", context.user_data['final_draft'])
+    await query.edit_message_text(res)
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.edit_message_text("❌ Cancelled.")
     return ConversationHandler.END
 
 if __name__ == "__main__":
@@ -85,18 +87,14 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(start, pattern="main_menu"))
-    app.add_handler(CallbackQueryHandler(handle_fetch, pattern="^fetch_"))
+    app.add_handler(CommandHandler("inbox", cmd_inbox))
+    app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CallbackQueryHandler(handle_read, pattern="^read_"))
     
     reply_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_reply_flow, pattern="start_reply")],
-        states={
-            WAITING_FOR_INSTRUCTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_ai_draft),
-                CallbackQueryHandler(send_final_email, pattern="send_final")
-            ]
-        },
-        fallbacks=[CallbackQueryHandler(start, pattern="main_menu")]
+        states={WAITING_FOR_INSTRUCTION: [MessageHandler(filters.TEXT, process_ai_draft), CallbackQueryHandler(send_final_email, pattern="send_final"), CallbackQueryHandler(cancel, pattern="cancel")]},
+        fallbacks=[]
     )
     app.add_handler(reply_conv)
     app.run_polling()
