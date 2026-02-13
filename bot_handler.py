@@ -11,7 +11,6 @@ CONFIRM_DRAFT = 2
 
 class BotHandler:
     def __init__(self):
-        # Initialize OOP Classes (Modules)
         self.auth = AuthManager()
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine()
@@ -22,15 +21,16 @@ class BotHandler:
         
         # Start Auth Server
         self.auth.run_server()
+        
+        # ✅ OLD FEATURE RESTORED: Background Job (Har 60 sec baad check karega)
+        if self.app.job_queue:
+            self.app.job_queue.run_repeating(self.auto_check_mail, interval=60, first=10)
 
     def _register_handlers(self):
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(CommandHandler("inbox", self.cmd_inbox))
-        
-        # Read & Search Flow
         self.app.add_handler(CallbackQueryHandler(self.handle_read, pattern="^read_"))
         
-        # Reply Flow (Conversation)
         reply_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.start_reply_flow, pattern="start_reply")],
             states={
@@ -44,8 +44,27 @@ class BotHandler:
         )
         self.app.add_handler(reply_conv)
 
+    async def auto_check_mail(self, context: ContextTypes.DEFAULT_TYPE):
+        """Ye purana feature wapis aa gaya: Auto Check"""
+        emails = self.gmail.list_emails(max_results=1)
+        if emails:
+            last_id = context.bot_data.get('last_seen_id')
+            current_id = emails[0]['id']
+            
+            if current_id != last_id:
+                context.bot_data['last_seen_id'] = current_id
+                details = self.gmail.get_email_content(current_id)
+                
+                # Notify User
+                btn = [[InlineKeyboardButton(f"📖 Read Now", callback_data=f"read_{current_id}")]]
+                await context.bot.send_message(
+                    chat_id=OWNER_TELEGRAM_ID,
+                    text=f"🚨 **New Email Received!**\n\n👤 {details['sender']}\n📌 {details['subject']}",
+                    reply_markup=InlineKeyboardMarkup(btn)
+                )
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != OWNER_TELEGRAM_ID: return
+        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
         
         if not self.gmail.get_service():
             link = self.auth.get_login_link()
@@ -53,7 +72,7 @@ class BotHandler:
             await update.message.reply_text("⚠️ **Authentication Required**", reply_markup=InlineKeyboardMarkup(kb))
             return
 
-        await update.message.reply_text("🤖 **System Online**\nUse /inbox to check emails.")
+        await update.message.reply_text("🤖 **System Online**\nI will notify you of new emails automatically.")
 
     async def cmd_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         emails = self.gmail.list_emails()
@@ -62,7 +81,6 @@ class BotHandler:
             return
 
         for email in emails:
-            # Minimal details for list view
             details = self.gmail.get_email_content(email['id']) 
             btn = [[InlineKeyboardButton(f"📖 Read", callback_data=f"read_{email['id']}")]]
             await update.message.reply_text(f"👤 {details['sender']}\n📌 {details['subject']}", reply_markup=InlineKeyboardMarkup(btn))
@@ -75,7 +93,6 @@ class BotHandler:
         details = self.gmail.get_email_content(msg_id)
         context.user_data['last_details'] = details
         
-        # AI Summary Call
         summary = self.ai.get_summary(details['body'])
         
         text = f"📩 **{details['subject']}**\n\n✨ **Summary:**\n{summary}"
