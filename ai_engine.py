@@ -17,23 +17,21 @@ class AI_Engine:
 
     def detect_intent(self, user_text):
         """
-        Report Section 2.5.2: Intent Classification (The Router Logic).
-        Decides if user wants to READ, DRAFT, or CHAT.
+        Classifies user intent into: READ, DRAFT, or CHAT.
         """
         if not self.model: return "CHAT"
         
         prompt = (
             f"User Input: '{user_text}'\n"
-            "Classify this intent into exactly one word:\n"
-            "- READ (if user wants to check, read, search, or find emails)\n"
-            "- DRAFT (if user wants to write, send, reply, or draft an email)\n"
-            "- CHAT (if it's a general greeting or question)\n"
-            "Output only the word."
+            "Analyze the intent strictly:\n"
+            "- Return 'READ' if the user wants to check, find, or search for emails.\n"
+            "- Return 'DRAFT' if the user wants to write, reply, or send an email.\n"
+            "- Return 'CHAT' for greetings or unrelated queries.\n"
+            "Output only the single word classification."
         )
         try:
             response = self.model.generate_content(prompt)
             intent = response.text.strip().upper()
-            # Safety cleanup
             if "READ" in intent: return "READ"
             if "DRAFT" in intent: return "DRAFT"
             return "CHAT"
@@ -43,7 +41,11 @@ class AI_Engine:
     def get_summary(self, email_body):
         if not self.model: return "⚠️ AI Error"
         try:
-            prompt = f"Summarize this email in 3 short bullet points:\n\n{email_body}"
+            prompt = (
+                f"Act as a professional executive assistant. Summarize the following email "
+                f"into 3 concise bullet points. Focus on key actions and dates.\n\n"
+                f"Email Body:\n{email_body}"
+            )
             return self.model.generate_content(prompt).text
         except Exception as e:
             return f"❌ Error: {str(e)}"
@@ -52,9 +54,11 @@ class AI_Engine:
         if not self.model: return "⚠️ AI Error"
         try:
             prompt = (
-                f"Context: {original_text}\n"
-                f"User Instruction: {user_instruction}\n"
-                f"Write a professional email body. No Subject."
+                f"Context (Original Email): {original_text}\n"
+                f"User Instruction: {user_instruction}\n\n"
+                f"Draft a formal, professional email response. "
+                f"Do not include placeholders like '[Your Name]'. "
+                f"Keep it polite and concise."
             )
             return self.model.generate_content(prompt).text
         except Exception as e:
