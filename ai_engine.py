@@ -11,55 +11,36 @@ class AI_Engine:
 
     def _get_working_model(self):
         try:
-            return genai.GenerativeModel('gemini-1.5-flash')
+            # Updated to the latest stable endpoint to fix 404 Error
+            return genai.GenerativeModel('gemini-2.0-flash')
         except:
             return genai.GenerativeModel('gemini-pro')
 
-    def detect_intent(self, user_text):
-        """
-        Classifies user intent into: READ, DRAFT, or CHAT.
-        """
-        if not self.model: return "CHAT"
-        
-        prompt = (
-            f"User Input: '{user_text}'\n"
-            "Analyze the intent strictly:\n"
-            "- Return 'READ' if the user wants to check, find, or search for emails.\n"
-            "- Return 'DRAFT' if the user wants to write, reply, or send an email.\n"
-            "- Return 'CHAT' for greetings or unrelated queries.\n"
-            "Output only the single word classification."
-        )
-        try:
-            response = self.model.generate_content(prompt)
-            intent = response.text.strip().upper()
-            if "READ" in intent: return "READ"
-            if "DRAFT" in intent: return "DRAFT"
-            return "CHAT"
-        except:
-            return "CHAT"
-
     def get_summary(self, email_body):
-        if not self.model: return "⚠️ AI Error"
+        if not self.model: return "⚠️ AI Error: Model not initialized."
         try:
-            prompt = (
-                f"Act as a professional executive assistant. Summarize the following email "
-                f"into 3 concise bullet points. Focus on key actions and dates.\n\n"
-                f"Email Body:\n{email_body}"
-            )
+            prompt = f"Provide a professional summary of this email in 3 bullet points:\n\n{email_body}"
             return self.model.generate_content(prompt).text
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ AI Error: {str(e)}"
 
-    def generate_draft(self, original_text, user_instruction):
-        if not self.model: return "⚠️ AI Error"
+    def generate_draft(self, instruction):
+        if not self.model: return "⚠️ AI Error: Model not initialized."
+        try:
+            prompt = f"Draft a professional, formal email based on this intent: '{instruction}'. Do not include subject lines or placeholders like [Your Name]. Just provide the body text."
+            return self.model.generate_content(prompt).text
+        except Exception as e:
+            return f"❌ AI Error: {str(e)}"
+
+    def modify_draft(self, current_draft, user_feedback):
+        """Recreates the draft based on user feedback."""
+        if not self.model: return "⚠️ AI Error: Model not initialized."
         try:
             prompt = (
-                f"Context (Original Email): {original_text}\n"
-                f"User Instruction: {user_instruction}\n\n"
-                f"Draft a formal, professional email response. "
-                f"Do not include placeholders like '[Your Name]'. "
-                f"Keep it polite and concise."
+                f"Here is the current email draft:\n{current_draft}\n\n"
+                f"The user wants the following changes: '{user_feedback}'\n\n"
+                f"Rewrite the draft professionally applying these changes. Output only the new email body."
             )
             return self.model.generate_content(prompt).text
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ AI Error: {str(e)}"

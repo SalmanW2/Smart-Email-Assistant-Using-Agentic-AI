@@ -1,22 +1,18 @@
 import os
 import threading
-import time
-import requests
-import logging
-from flask import Flask, request
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from config_env import CREDENTIALS_FILE, TOKEN_FILE, SCOPES
 
-# Logging hide
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
+app = FastAPI()
 
 class AuthManager:
     def __init__(self):
         self.creds = None
-        self.app = Flask(__name__)
         self._setup_server_routes()
 
     def get_credentials(self):
@@ -25,7 +21,7 @@ class AuthManager:
         
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
-                self.creds.refresh(Request())
+                self.creds.refresh(GoogleAuthRequest())
                 with open(TOKEN_FILE, 'w') as token:
                     token.write(self.creds.to_json())
             except Exception as e:
@@ -49,12 +45,14 @@ class AuthManager:
             return None
 
     def _setup_server_routes(self):
-        @self.app.route('/')
-        def home(): return "✅ Bot Server is Online!"
+        @app.get("/", response_class=HTMLResponse)
+        def home(): 
+            return "✅ FastAPI Bot Server is Online!"
 
-        @self.app.route('/oauth2callback')
-        def oauth2callback():
-            code = request.args.get('code')
+        @app.get("/oauth2callback", response_class=HTMLResponse)
+        def oauth2callback(code: str = None):
+            if not code: return "❌ No code provided."
+            
             redirect_uri = "https://smart-email-assistant-using-agentic-ai.onrender.com/oauth2callback"
             if not os.environ.get("RENDER"):
                 redirect_uri = "http://localhost:8080/oauth2callback"
@@ -68,22 +66,9 @@ class AuthManager:
             except Exception as e:
                 return f"<h1>❌ Login Failed: {str(e)}</h1>"
 
-    def _keep_alive(self):
-        """Purane code wala جگاڑ to keep Render awake"""
-        url = "https://smart-email-assistant-using-agentic-ai.onrender.com"
-        if not os.environ.get("RENDER"): return
-        
-        while True:
-            time.sleep(300) # 5 Minutes
-            try:
-                requests.get(url)
-                print("🔔 Self-Ping Sent to keep Render awake")
-            except:
-                pass
-
     def run_server(self):
         port = int(os.environ.get("PORT", 8080))
-        # Start Flask
-        threading.Thread(target=self.app.run, kwargs={'host': '0.0.0.0', 'port': port}, daemon=True).start()
-        # Start Keep-Alive (Old Feature)
-        threading.Thread(target=self._keep_alive, daemon=True).start()
+        # Run Uvicorn in a separate thread so it doesn't block Telegram Polling
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
+        server = uvicorn.Server(config)
+        threading.Thread(target=server.run, daemon=True).start()

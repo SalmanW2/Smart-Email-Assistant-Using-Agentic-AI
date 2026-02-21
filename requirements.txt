@@ -3,5 +3,6 @@ google-generativeai
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
-Flask
 python-dotenv
+fastapi==0.115.8
+uvicorn==0.34.0

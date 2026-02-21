@@ -36,7 +36,8 @@ class GmailClient:
                     body = base64.urlsafe_b64decode(data).decode()
         elif 'body' in payload:
             data = payload['body'].get('data', '')
-            body = base64.urlsafe_b64decode(data).decode()
+            if data:
+                body = base64.urlsafe_b64decode(data).decode()
             
         return {'id': msg_id, 'sender': sender, 'subject': subject, 'body': body or msg.get('snippet', '')}
 
@@ -52,3 +53,13 @@ class GmailClient:
             return "✅ Email Sent!"
         except Exception as e:
             return f"❌ Send Error: {str(e)}"
+
+    def get_last_email_from_sender(self, sender_email):
+        """Fetches the last email from a specific sender."""
+        service = self.get_service()
+        if not service: return None
+        query = f"from:{sender_email}"
+        results = service.users().messages().list(userId='me', q=query, maxResults=1).execute()
+        messages = results.get('messages', [])
+        if not messages: return None
+        return self.get_email_content(messages[0]['id'])

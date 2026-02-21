@@ -6,257 +6,226 @@ from gmail_client import GmailClient
 from ai_engine import AI_Engine
 
 # Conversation States
-WAITING_FOR_INSTRUCTION = 1
-CONFIRM_DRAFT = 2
+ASK_SENDER, ASK_RECIPIENT, ASK_INTENT, CONFIRM_DRAFT, ASK_FEEDBACK = range(5)
 
 class BotHandler:
     def __init__(self):
-        # Initialize Modules
         self.auth = AuthManager()
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine()
         
-        # Initialize Bot
         self.app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
-        
-        # Start Auth Server
         self.auth.run_server()
-        
-        # Background Job: Auto-Check Emails every 60 seconds
-        if self.app.job_queue:
-            self.app.job_queue.run_repeating(self.auto_check_mail, interval=60, first=10)
 
     def _register_handlers(self):
-        # Commands
         self.app.add_handler(CommandHandler("start", self.start))
-        self.app.add_handler(CommandHandler("menu", self.start)) # Alias for start
+        self.app.add_handler(CommandHandler("menu", self.start))
         
-        # Main Menu Buttons
-        self.app.add_handler(CallbackQueryHandler(self.cmd_inbox, pattern="^menu_inbox$"))
-        self.app.add_handler(CallbackQueryHandler(self.start_draft_mode, pattern="^menu_compose$"))
+        # Read Inbox Flow
+        self.app.add_handler(CallbackQueryHandler(self.show_read_options, pattern="^menu_read$"))
+        self.app.add_handler(CallbackQueryHandler(self.read_last_five, pattern="^read_5$"))
+        self.app.add_handler(CallbackQueryHandler(self.read_last_one, pattern="^read_1$"))
         
-        # Email Actions
-        self.app.add_handler(CallbackQueryHandler(self.handle_read, pattern="^read_"))
-        self.app.add_handler(CallbackQueryHandler(self.dismiss_notification, pattern="^dismiss$"))
-        
-        # Text Handler (Router for Natural Language)
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.central_router))
-        
-        # Draft Conversation Flow
-        reply_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.start_reply_flow, pattern="^start_reply$")],
+        read_specific_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.ask_specific_sender, pattern="^read_specific$")],
             states={
-                WAITING_FOR_INSTRUCTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.process_ai_draft)],
-                CONFIRM_DRAFT: [
-                    CallbackQueryHandler(self.send_final, pattern="^send_final$"),
-                    CallbackQueryHandler(self.cancel, pattern="^cancel$")
-                ]
+                ASK_SENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.fetch_specific_email)]
             },
-            fallbacks=[CallbackQueryHandler(self.cancel, pattern="^cancel$")]
+            fallbacks=[CommandHandler("cancel", self.cancel_flow)]
         )
-        self.app.add_handler(reply_conv)
+        self.app.add_handler(read_specific_conv)
 
-    # --- 1. DASHBOARD & START (User Interface) ---
+        # Compose Email Flow (Looping)
+        compose_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_compose, pattern="^menu_compose$")],
+            states={
+                ASK_RECIPIENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_recipient)],
+                ASK_INTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.generate_initial_draft)],
+                CONFIRM_DRAFT: [
+                    CallbackQueryHandler(self.send_draft, pattern="^send_draft$"),
+                    CallbackQueryHandler(self.ask_for_adjustments, pattern="^recreate_draft$"),
+                    CallbackQueryHandler(self.cancel_flow, pattern="^cancel_draft$")
+                ],
+                ASK_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.regenerate_draft)]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_flow)]
+        )
+        self.app.add_handler(compose_conv)
+
+        # Handle Read button inside email list
+        self.app.add_handler(CallbackQueryHandler(self.handle_read_email, pattern="^open_email_"))
+
+    # --- MAIN DASHBOARD ---
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
         
-        # Login Check
         if not self.gmail.get_service():
             link = self.auth.get_login_link()
-            kb = [[InlineKeyboardButton("🔗 Connect Gmail Account", url=link)]]
-            await update.message.reply_text("⚠️ **Authentication Required**\nPlease log in to access your emails.", reply_markup=InlineKeyboardMarkup(kb))
+            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
+            await update.message.reply_text("⚠️ **Authentication Required**\nPlease authorize access to continue.", reply_markup=InlineKeyboardMarkup(kb))
             return
 
-        # Dashboard Buttons (Restored from Old Code)
         kb = [
-            [InlineKeyboardButton("📩 Inbox Overview", callback_data="menu_inbox")],
+            [InlineKeyboardButton("📖 Read Inbox", callback_data="menu_read")],
             [InlineKeyboardButton("✍️ Compose Email", callback_data="menu_compose")]
         ]
         
-        welcome_text = (
-            "🤖 **Smart Email Assistant Online**\n"
-            "How may I assist you today?\n\n"
-            "You can use the buttons below or type commands like:\n"
-            "• _'Summarize latest emails'_\n"
-            "• _'Draft an email to HR about leave'_"
-        )
-        
-        # Handle both Command and Callback (Menu button)
+        text = "⚙️ **Dashboard**\nSelect an operation below to proceed."
         if update.message:
-            await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
         else:
-            await update.callback_query.message.edit_text(welcome_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
-    # --- 2. INBOX & READING ---
-    async def cmd_inbox(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # --- READING FLOW ---
+    async def show_read_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        if query: await query.answer()
-        
-        emails = self.gmail.list_emails()
-        if not emails:
-            msg = "📭 **Your Inbox is empty.**"
-            if query: await query.edit_message_text(msg)
-            else: await update.message.reply_text(msg)
-            return
+        await query.answer()
+        kb = [
+            [InlineKeyboardButton("📑 Last 5 Emails", callback_data="read_5")],
+            [InlineKeyboardButton("📄 Latest Email", callback_data="read_1")],
+            [InlineKeyboardButton("🔍 Search by Sender", callback_data="read_specific")],
+            [InlineKeyboardButton("🔙 Back", callback_data="menu")]
+        ]
+        await query.edit_message_text("📚 **Inbox Options**\nHow would you like to review your emails?", reply_markup=InlineKeyboardMarkup(kb))
 
-        # List Emails with Read Buttons
+    async def read_last_five(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        emails = self.gmail.list_emails(max_results=5)
+        if not emails:
+            await query.edit_message_text("📭 Your inbox is empty.")
+            return
+        
+        await query.edit_message_text("📑 **Fetching Last 5 Emails...**")
         for email in emails:
             details = self.gmail.get_email_content(email['id'])
-            kb = [[InlineKeyboardButton("📖 Read Email", callback_data=f"read_{email['id']}")]]
-            text = f"👤 **From:** {details['sender']}\n📌 **Subject:** {details['subject']}"
-            
-            if query: await context.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=text, reply_markup=InlineKeyboardMarkup(kb))
-            else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+            kb = [[InlineKeyboardButton("📖 Read Email", callback_data=f"open_email_{email['id']}")]]
+            await context.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=f"👤 **From:** {details['sender']}\n📌 **Subject:** {details['subject']}", reply_markup=InlineKeyboardMarkup(kb))
 
-    async def handle_read(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def read_last_one(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        
-        msg_id = query.data.split("_")[1]
-        await query.edit_message_text("⏳ **Fetching & Summarizing...**")
-        
-        details = self.gmail.get_email_content(msg_id)
-        context.user_data['last_details'] = details
-        
-        # Generate AI Summary
-        summary = self.ai.get_summary(details['body'])
-        
-        display_text = (
-            f"📩 **{details['subject']}**\n"
-            f"👤 **From:** {details['sender']}\n\n"
-            f"✨ **AI Summary:**\n{summary}\n\n"
-            f"────────────────"
-        )
-        
-        # Action Buttons (Workflow: "Send Summary + Buttons")
-        kb = [
-            [InlineKeyboardButton("✍️ Draft Reply", callback_data="start_reply")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_inbox")]
-        ]
-        await query.edit_message_text(display_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-
-    # --- 3. AUTO-CHECK (Background Job) ---
-    async def auto_check_mail(self, context: ContextTypes.DEFAULT_TYPE):
-        """Checks for new emails and sends a notification with buttons."""
         emails = self.gmail.list_emails(max_results=1)
         if emails:
-            last_id = context.bot_data.get('last_seen_id')
-            current_id = emails[0]['id']
-            
-            if current_id != last_id:
-                context.bot_data['last_seen_id'] = current_id
-                details = self.gmail.get_email_content(current_id)
-                
-                # Notification UI
-                text = (
-                    f"🚨 **New Email Received**\n"
-                    f"👤 **From:** {details['sender']}\n"
-                    f"📌 **Subject:** {details['subject']}"
-                )
-                kb = [
-                    [InlineKeyboardButton("📖 Read Now", callback_data=f"read_{current_id}")],
-                    [InlineKeyboardButton("❌ Dismiss", callback_data="dismiss")]
-                ]
-                await context.bot.send_message(
-                    chat_id=OWNER_TELEGRAM_ID,
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(kb)
-                )
-
-    async def dismiss_notification(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.callback_query.delete_message()
-
-    # --- 4. CENTRAL ROUTER (Text Intent) ---
-    async def central_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handles text inputs using AI Intent Detection."""
-        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
-
-        user_text = update.message.text
-        intent = self.ai.detect_intent(user_text)
-        
-        if intent == "READ":
-            await update.message.reply_text(f"🔍 **Searching Inbox...**")
-            await self.cmd_inbox(update, context)
-            
-        elif intent == "DRAFT":
-            await update.message.reply_text(f"✍️ **Drafting Mode Detected.**\nPlease use the button below to start.", 
-                                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✍️ Start Drafting", callback_data="menu_compose")]]))
+            await self.display_email_content(update, context, emails[0]['id'])
         else:
-            # General Chat / Help
-            await update.message.reply_text(
-                "🤖 **AI Assistant:**\n"
-                "I am not sure I understood. Please use the **Menu** or try commands like:\n"
-                "• 'Show unread emails'\n"
-                "• 'Compose email'",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Open Menu", callback_data="menu")]])
-            )
+            await query.edit_message_text("📭 Your inbox is empty.")
 
-    # --- 5. DRAFTING & SENDING FLOW ---
-    async def start_draft_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def ask_specific_sender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        # Clean state for fresh email
-        context.user_data['last_details'] = {'sender': '', 'subject': 'New Email', 'body': ''}
-        await query.edit_message_text("✍️ **Compose Email**\n\nPlease type your instructions. \n(e.g., _'Email HR asking for a sick leave for tomorrow'_)", parse_mode="Markdown")
-        return WAITING_FOR_INSTRUCTION
+        await query.edit_message_text("🔍 Please enter the email address of the sender you want to search for:")
+        return ASK_SENDER
 
-    async def start_reply_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        await query.edit_message_text("🎤 **Reply Instruction:**\nWhat should I say in the reply?", parse_mode="Markdown")
-        return WAITING_FOR_INSTRUCTION
-
-    async def process_ai_draft(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        instruction = update.message.text
-        original_body = context.user_data.get('last_details', {}).get('body', '')
+    async def fetch_specific_email(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        sender_email = update.message.text
+        msg = await update.message.reply_text("⏳ Searching...")
+        details = self.gmail.get_last_email_from_sender(sender_email)
         
-        msg = await update.message.reply_text("⏳ **Generating Professional Draft...**")
-        draft = self.ai.generate_draft(original_body, instruction)
-        context.user_data['final_draft'] = draft
-        
-        kb = [
-            [InlineKeyboardButton("🚀 Send Email", callback_data="send_final")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-        ]
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=msg.message_id,
-            text=f"📝 **Draft Preview:**\n────────────────\n{draft}\n────────────────",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return CONFIRM_DRAFT
-
-    async def send_final(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        details = context.user_data.get('last_details', {})
-        
-        # If new email (not reply), ask for recipient (Simplified for now, assumes Reply)
-        recipient = details.get('sender', '')
-        if not recipient or recipient == '':
-             await query.edit_message_text("⚠️ **Error:** Recipient not found. This version supports Replies primarily.")
-             return ConversationHandler.END
-
-        subject = f"Re: {details.get('subject', 'No Subject')}"
-        body = context.user_data['final_draft']
-        
-        await query.edit_message_text("🚀 **Sending Email...**")
-        result = self.gmail.send_email(recipient, subject, body)
-        
-        await context.bot.send_message(
-            chat_id=OWNER_TELEGRAM_ID,
-            text=f"{result}\n\n Returning to menu...",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu_inbox")]])
-        )
+        if not details:
+            await msg.edit_text(f"❌ No emails found from {sender_email}.")
+            return ConversationHandler.END
+            
+        await msg.delete()
+        await self.display_email_content(update, context, details['id'], is_message=True)
         return ConversationHandler.END
 
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.callback_query.edit_message_text("❌ **Operation Cancelled.**", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="menu")]]))
+    async def handle_read_email(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        msg_id = query.data.split("_")[2]
+        await self.display_email_content(update, context, msg_id)
+
+    async def display_email_content(self, update, context, msg_id, is_message=False):
+        details = self.gmail.get_email_content(msg_id)
+        summary = self.ai.get_summary(details['body'])
+        text = f"📩 **{details['subject']}**\n👤 **From:** {details['sender']}\n\n✨ **AI Summary:**\n{summary}"
+        kb = [[InlineKeyboardButton("🔙 Menu", callback_data="menu")]]
+        
+        if is_message:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+    # --- COMPOSE FLOW (LOOP) ---
+    async def start_compose(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("✍️ **Compose Email**\nPlease provide the recipient's email address:")
+        return ASK_RECIPIENT
+
+    async def get_recipient(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        context.user_data['draft_to'] = update.message.text
+        await update.message.reply_text("📝 What is the primary objective or message of this email? (e.g., 'Ask for a project update')")
+        return ASK_INTENT
+
+    async def generate_initial_draft(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        intent = update.message.text
+        context.user_data['draft_intent'] = intent
+        msg = await update.message.reply_text("⏳ Generating professional draft...")
+        
+        draft = self.ai.generate_draft(intent)
+        context.user_data['current_draft'] = draft
+        
+        await self.send_draft_review(msg, context)
+        return CONFIRM_DRAFT
+
+    async def ask_for_adjustments(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("🔄 Please specify what changes you would like to make to the draft:")
+        return ASK_FEEDBACK
+
+    async def regenerate_draft(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        feedback = update.message.text
+        msg = await update.message.reply_text("⏳ Adjusting draft based on your feedback...")
+        
+        current_draft = context.user_data['current_draft']
+        new_draft = self.ai.modify_draft(current_draft, feedback)
+        context.user_data['current_draft'] = new_draft
+        
+        await self.send_draft_review(msg, context)
+        return CONFIRM_DRAFT
+
+    async def send_draft_review(self, message, context):
+        draft = context.user_data['current_draft']
+        to_email = context.user_data['draft_to']
+        text = f"✉️ **Recipient:** {to_email}\n\n📄 **Draft Preview:**\n────────────────\n{draft}\n────────────────\n\nPlease select an action:"
+        
+        kb = [
+            [InlineKeyboardButton("✅ Send Email", callback_data="send_draft")],
+            [InlineKeyboardButton("🔄 Recreate / Edit", callback_data="recreate_draft")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_draft")]
+        ]
+        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb))
+
+    async def send_draft(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("🚀 Sending email...")
+        
+        to = context.user_data['draft_to']
+        body = context.user_data['current_draft']
+        # Extract a basic subject from intent for manual compose
+        subject = context.user_data.get('draft_intent', 'Update')[:30] + "..."
+        
+        result = self.gmail.send_email(to, subject, body)
+        
+        kb = [[InlineKeyboardButton("🔙 Return to Dashboard", callback_data="menu")]]
+        await query.edit_message_text(f"{result}", reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    async def cancel_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text("❌ Operation cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Dashboard", callback_data="menu")]]))
+        else:
+            await update.message.reply_text("❌ Operation cancelled.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Dashboard", callback_data="menu")]]))
         return ConversationHandler.END
 
     def run(self):
-        print("🚀 Bot is Polling...")
+        print("🚀 Bot is Polling via Telegram...")
         self.app.run_polling()
 
 if __name__ == "__main__":
