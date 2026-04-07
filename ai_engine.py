@@ -3,7 +3,7 @@ from config_env import GEMINI_API_KEY
 
 class AI_Engine:
     def __init__(self):
-        if GEMINI_API_KEY:
+        if GEMINI_API_KEY: 
             # Using the new SDK
             self.client = genai.Client(api_key=GEMINI_API_KEY)
             self.model_name = 'gemini-2.5-flash' # Latest stable model
