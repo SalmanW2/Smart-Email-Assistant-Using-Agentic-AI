@@ -13,6 +13,7 @@ class BotHandler:
         self.auth = AuthManager()
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine()
+        self.last_checked_email_id = None # Memory for automatic email caching
         
         self.app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -56,12 +57,46 @@ class BotHandler:
         # Handle Read button inside email list
         self.app.add_handler(CallbackQueryHandler(self.handle_read_email, pattern="^open_email_"))
 
-        # 🚀 SMART ROUTER: Catches random text outside of workflows
+        # 🚀 SMART ROUTER
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_general_text))
+
+        # 🚀 BACKGROUND EMAIL CHECKER (Runs every 60 seconds)
+        self.app.job_queue.run_repeating(self.check_new_emails, interval=60, first=10)
+
+    # --- AUTO EMAIL CHECKER ---
+    async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
+        """Automatically checks for new unread emails and sends a notification."""
+        if not self.gmail.get_service():
+            return
+        
+        try:
+            emails = self.gmail.list_emails(query='is:unread', max_results=1)
+            if emails:
+                latest_email_id = emails[0]['id']
+                
+                # Check if this email is new and hasn't been notified yet
+                if self.last_checked_email_id != latest_email_id:
+                    self.last_checked_email_id = latest_email_id
+                    
+                    details = self.gmail.get_email_content(latest_email_id)
+                    summary = self.ai.get_summary(details['body'])
+                    
+                    text = f"🚨 **New Email Arrived!**\n\n📩 **{details['subject']}**\n👤 **From:** {details['sender']}\n\n✨ **AI Summary:**\n{summary}"
+                    kb = [
+                        [InlineKeyboardButton("📖 View Full Thread", callback_data=f"open_email_{latest_email_id}")],
+                        [InlineKeyboardButton("🔙 Go to Workspace", callback_data="menu")]
+                    ]
+                    
+                    await context.bot.send_message(
+                        chat_id=OWNER_TELEGRAM_ID, 
+                        text=text, 
+                        reply_markup=InlineKeyboardMarkup(kb)
+                    )
+        except Exception as e:
+            print(f"Background checking error: {e}")
 
     # --- MAIN DASHBOARD ---
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Check if the user is the owner
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
             await self.handle_guest_interaction(update, context)
             return
@@ -85,18 +120,16 @@ class BotHandler:
 
     # --- GENERAL TEXT FALLBACK ---
     async def handle_general_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Processes any casual chat or direct commands outside the formal menu."""
-        # Check if the user is the owner
-        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
+        user_id = str(update.effective_user.id)
+        if user_id != str(OWNER_TELEGRAM_ID):
             await self.handle_guest_interaction(update, context)
             return
 
         user_text = update.message.text
-        
-        # Send a typing indicator while AI processes the response
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         
-        ai_response = self.ai.general_chat(user_text)
+        # Memory support integrated by passing user_id
+        ai_response = self.ai.general_chat(user_text, user_id)
         
         kb = [
             [InlineKeyboardButton("📖 Open Inbox", callback_data="menu_read"),
@@ -104,17 +137,17 @@ class BotHandler:
         ]
         
         await update.message.reply_text(
-            f"🤖 **Assistant:** {ai_response}\n\n*How would you like to proceed with your emails?*", 
+            f"🤖 **Assistant:** {ai_response}", 
             reply_markup=InlineKeyboardMarkup(kb)
         )
 
     # --- GUEST INTERACTION HANDLER ---
     async def handle_guest_interaction(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle non-owner users professionally using AI"""
+        user_id = str(update.effective_user.id)
         user_text = update.message.text if update.message else "Hello"
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         
-        ai_response = self.ai.guest_chat(user_text)
+        ai_response = self.ai.guest_chat(user_text, user_id)
         if update.message:
             await update.message.reply_text(f"🤖 **Assistant:** {ai_response}")
 
