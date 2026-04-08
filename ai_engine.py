@@ -5,7 +5,7 @@ class AI_Engine:
     def __init__(self):
         if GEMINI_API_KEY:
             self.client = genai.Client(api_key=GEMINI_API_KEY)
-            self.model_name = 'gemini-2.5-flash'
+            self.model_name = 'gemini-2.5-flash-lite'
         else:
             self.client = None
 
