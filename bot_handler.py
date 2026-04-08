@@ -61,7 +61,10 @@ class BotHandler:
 
     # --- MAIN DASHBOARD ---
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
+        # Check if the user is the owner
+        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
+            await self.handle_guest_interaction(update, context)
+            return
         
         if not self.gmail.get_service():
             link = self.auth.get_login_link()
@@ -83,6 +86,11 @@ class BotHandler:
     # --- GENERAL TEXT FALLBACK ---
     async def handle_general_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Processes any casual chat or direct commands outside the formal menu."""
+        # Check if the user is the owner
+        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
+            await self.handle_guest_interaction(update, context)
+            return
+
         user_text = update.message.text
         
         # Send a typing indicator while AI processes the response
@@ -99,6 +107,16 @@ class BotHandler:
             f"🤖 **Assistant:** {ai_response}\n\n*How would you like to proceed with your emails?*", 
             reply_markup=InlineKeyboardMarkup(kb)
         )
+
+    # --- GUEST INTERACTION HANDLER ---
+    async def handle_guest_interaction(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle non-owner users professionally using AI"""
+        user_text = update.message.text if update.message else "Hello"
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+        
+        ai_response = self.ai.guest_chat(user_text)
+        if update.message:
+            await update.message.reply_text(f"🤖 **Assistant:** {ai_response}")
 
     # --- READING FLOW ---
     async def show_read_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
