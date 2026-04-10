@@ -13,7 +13,7 @@ class BotHandler:
         self.auth = AuthManager()
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine()
-        self.last_checked_email_id = None # Memory for automatic email caching
+        self.last_checked_email_id = None
         
         self.app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -22,6 +22,9 @@ class BotHandler:
     def _register_handlers(self):
         self.app.add_handler(CommandHandler("start", self.start))
         self.app.add_handler(CommandHandler("menu", self.start))
+        
+        # 🚀 FIX: Added route for 'Return to Workspace' button
+        self.app.add_handler(CallbackQueryHandler(self.start, pattern="^menu$"))
         
         # Read Inbox Flow
         self.app.add_handler(CallbackQueryHandler(self.show_read_options, pattern="^menu_read$"))
@@ -57,24 +60,20 @@ class BotHandler:
         # Handle Read button inside email list
         self.app.add_handler(CallbackQueryHandler(self.handle_read_email, pattern="^open_email_"))
 
-        # 🚀 SMART ROUTER
+        # General Text
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_general_text))
 
-        # 🚀 BACKGROUND EMAIL CHECKER (Runs every 60 seconds)
+        # Background Email Checker
         self.app.job_queue.run_repeating(self.check_new_emails, interval=60, first=10)
 
     # --- AUTO EMAIL CHECKER ---
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        """Automatically checks for new unread emails and sends a notification."""
-        if not self.gmail.get_service():
-            return
+        if not self.gmail.get_service(): return
         
         try:
             emails = self.gmail.list_emails(query='is:unread', max_results=1)
             if emails:
                 latest_email_id = emails[0]['id']
-                
-                # Check if this email is new and hasn't been notified yet
                 if self.last_checked_email_id != latest_email_id:
                     self.last_checked_email_id = latest_email_id
                     
@@ -87,24 +86,27 @@ class BotHandler:
                         [InlineKeyboardButton("🔙 Go to Workspace", callback_data="menu")]
                     ]
                     
-                    await context.bot.send_message(
-                        chat_id=OWNER_TELEGRAM_ID, 
-                        text=text, 
-                        reply_markup=InlineKeyboardMarkup(kb)
-                    )
+                    await context.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=text, reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             print(f"Background checking error: {e}")
 
     # --- MAIN DASHBOARD ---
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
+        is_callback = update.callback_query is not None
+        if is_callback: await update.callback_query.answer() # Stops the loading circle
+        
+        user_id = str(update.effective_user.id)
+        if user_id != str(OWNER_TELEGRAM_ID):
             await self.handle_guest_interaction(update, context)
             return
         
         if not self.gmail.get_service():
             link = self.auth.get_login_link()
             kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
-            await update.message.reply_text("⚠️ **Authentication Required**\nPlease authorize access to continue.", reply_markup=InlineKeyboardMarkup(kb))
+            text = "⚠️ **Authentication Required**\nPlease authorize access to continue."
+            
+            if is_callback: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+            else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
             return
 
         kb = [
@@ -113,10 +115,8 @@ class BotHandler:
         ]
         text = "⚙️ **Workspace Dashboard**\nPlease select an operation to proceed."
         
-        if update.message:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
-        else:
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        if is_callback: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     # --- GENERAL TEXT FALLBACK ---
     async def handle_general_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,19 +127,12 @@ class BotHandler:
 
         user_text = update.message.text
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-        
-        # Memory support integrated by passing user_id
         ai_response = self.ai.general_chat(user_text, user_id)
         
-        kb = [
-            [InlineKeyboardButton("📖 Open Inbox", callback_data="menu_read"),
-             InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")]
-        ]
+        kb = [[InlineKeyboardButton("📖 Open Inbox", callback_data="menu_read"), InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")]]
         
-        await update.message.reply_text(
-            f"🤖 **Assistant:** {ai_response}", 
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
+        # 🚀 FIX: Removed the "🤖 Assistant:" prefix
+        await update.message.reply_text(ai_response, reply_markup=InlineKeyboardMarkup(kb))
 
     # --- GUEST INTERACTION HANDLER ---
     async def handle_guest_interaction(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,13 +141,19 @@ class BotHandler:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         
         ai_response = self.ai.guest_chat(user_text, user_id)
-        if update.message:
-            await update.message.reply_text(f"🤖 **Assistant:** {ai_response}")
+        # 🚀 FIX: Removed the "🤖 Assistant:" prefix
+        if update.message: await update.message.reply_text(ai_response)
 
     # --- READING FLOW ---
     async def show_read_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
+        
+        # 🚀 FIX: Pre-check login before showing options
+        if not self.gmail.get_service():
+            await query.edit_message_text("❌ Login Required. Please type /start to authenticate.")
+            return ConversationHandler.END
+
         kb = [
             [InlineKeyboardButton("📑 Recent 5 Emails", callback_data="read_5")],
             [InlineKeyboardButton("📄 Latest Email", callback_data="read_1")],
@@ -168,7 +167,7 @@ class BotHandler:
         await query.answer()
         emails = self.gmail.list_emails(max_results=5)
         if not emails:
-            await query.edit_message_text("📭 Your inbox is currently empty.")
+            await query.edit_message_text("📭 Your inbox is currently empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="menu")]]))
             return
         
         await query.edit_message_text("📑 **Fetching recent records...**")
@@ -181,10 +180,8 @@ class BotHandler:
         query = update.callback_query
         await query.answer()
         emails = self.gmail.list_emails(max_results=1)
-        if emails:
-            await self.display_email_content(update, context, emails[0]['id'])
-        else:
-            await query.edit_message_text("📭 Your inbox is currently empty.")
+        if emails: await self.display_email_content(update, context, emails[0]['id'])
+        else: await query.edit_message_text("📭 Your inbox is currently empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="menu")]]))
 
     async def ask_specific_sender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -198,7 +195,7 @@ class BotHandler:
         details = self.gmail.get_last_email_from_sender(sender_email)
         
         if not details:
-            await msg.edit_text(f"❌ No records found matching the sender: {sender_email}.")
+            await msg.edit_text(f"❌ No records found matching the sender: {sender_email}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="menu")]]))
             return ConversationHandler.END
             
         await msg.delete()
@@ -217,15 +214,19 @@ class BotHandler:
         text = f"📩 **{details['subject']}**\n👤 **From:** {details['sender']}\n\n✨ **AI Executive Summary:**\n{summary}"
         kb = [[InlineKeyboardButton("🔙 Back to Workspace", callback_data="menu")]]
         
-        if is_message:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
-        else:
-            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        if is_message: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        else: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
     # --- COMPOSE FLOW (LOOP) ---
     async def start_compose(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
+        
+        # 🚀 FIX: Pre-check login before starting compose flow
+        if not self.gmail.get_service():
+            await query.edit_message_text("❌ Login Required. Please type /start to authenticate.")
+            return ConversationHandler.END
+
         await query.edit_message_text("✍️ **Drafting Interface**\nPlease enter the recipient's email address:")
         return ASK_RECIPIENT
 
