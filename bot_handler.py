@@ -237,11 +237,11 @@ class BotHandler:
         return CONFIRM_DRAFT
 
     async def send_draft_review(self, message, context):
-        draft = context.user_data['current_draft']
+        draft = context.user_data['current_draft'] 
         to_email = context.user_data['draft_to']
         text = f"Recipient: {to_email}\n\nDraft Preview:\n\n{draft}"
         
-        # Dynamic Buttons for Drafting
+        # Dynamic Buttons for  Drafting
         kb = [
             [InlineKeyboardButton("✅ Send", callback_data="send_draft"), InlineKeyboardButton("✍️ Edit", callback_data="recreate_draft")],
             [InlineKeyboardButton("❌ Discard", callback_data="cancel_draft")]
