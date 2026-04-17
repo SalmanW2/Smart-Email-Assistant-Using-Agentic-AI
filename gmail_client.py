@@ -18,6 +18,23 @@ class GmailClient:
         results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
         return results.get('messages', [])
 
+    def search_emails(self, query: str):
+        """Tool to search emails based on a query (e.g., 'from:Ghous'). Returns simple text."""
+        service = self.get_service()
+        if not service: return "Login required."
+        try:
+            results = service.users().messages().list(userId='me', q=query, maxResults=3).execute()
+            messages = results.get('messages', [])
+            if not messages: return "No emails found."
+            
+            summary = []
+            for m in messages:
+                data = self.get_email_content(m['id'])
+                summary.append(f"From: {data['sender']}, Subject: {data['subject']}, Snippet: {data['body'][:100]}")
+            return "\n".join(summary)
+        except Exception as e:
+            return f"Search error: {str(e)}"
+
     def get_email_content(self, msg_id):
         service = self.get_service()
         if not service: return None
@@ -41,25 +58,33 @@ class GmailClient:
             
         return {'id': msg_id, 'sender': sender, 'subject': subject, 'body': body or msg.get('snippet', '')}
 
-    def send_email(self, to, subject, body):
+    def get_last_email_from_sender(self, sender_email):
         service = self.get_service()
-        if not service: return "❌ Login Required"
+        if not service: return None
+        results = service.users().messages().list(userId='me', q=f"from:{sender_email}", maxResults=1).execute()
+        messages = results.get('messages', [])
+        if not messages: return None
+        return self.get_email_content(messages[0]['id'])
+
+    def send_email(self, to: str, subject: str, body: str):
+        """Tool to physically send an email. Must only be called after user confirms."""
+        service = self.get_service()
+        if not service: return "Login Required"
         try:
             message = MIMEText(body)
             message['to'] = to
             message['subject'] = subject
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
-            return "✅ Email Sent!"
+            return "Email Sent Successfully!"
         except Exception as e:
-            return f"❌ Send Error: {str(e)}"
+            return f"Send Error: {str(e)}"
 
-    def get_last_email_from_sender(self, sender_email):
-        """Fetches the last email from a specific sender."""
+    def delete_email(self, msg_id):
         service = self.get_service()
-        if not service: return None
-        query = f"from:{sender_email}"
-        results = service.users().messages().list(userId='me', q=query, maxResults=1).execute()
-        messages = results.get('messages', [])
-        if not messages: return None
-        return self.get_email_content(messages[0]['id'])
+        if not service: return False
+        try:
+            service.users().messages().trash(userId='me', id=msg_id).execute()
+            return True
+        except:
+            return False
