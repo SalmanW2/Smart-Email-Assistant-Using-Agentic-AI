@@ -10,7 +10,6 @@ from google.oauth2.credentials import Credentials
 
 app = FastAPI()
 
-# Background Ping to keep Render Awake
 def ping_server():
     url = os.getenv("RENDER_WEB_SERVICE_URL", "http://localhost:8000")
     while True:
@@ -50,6 +49,11 @@ class AuthManager:
         with open(self.token_file, 'w') as f:
             f.write(creds.to_json())
 
+    def run_server(self):
+        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+        server = uvicorn.Server(config)
+        threading.Thread(target=server.run, daemon=True).start()
+
 auth_manager_instance = AuthManager()
 
 @app.get("/")
@@ -70,8 +74,3 @@ async def callback(request: Request):
     flow.fetch_token(code=code)
     auth_manager_instance.save_credentials(flow.credentials)
     return "<h3>Authentication Successful! You can return to Telegram.</h3>"
-
-    def run_server(self):
-        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
-        server = uvicorn.Server(config)
-        threading.Thread(target=server.run, daemon=True).start()
