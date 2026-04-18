@@ -25,17 +25,19 @@ class AuthManager:
         self.scopes = ['https://mail.google.com/']
         self.creds_file = 'credentials.json'
         self.token_file = 'token.json'
+        self.active_flow = None  # FIX: Original flow ko save karne ke liye
         
         # Start Anti-Sleep Thread
         threading.Thread(target=ping_server, daemon=True).start()
 
     def get_login_link(self):
-        flow = Flow.from_client_secrets_file(
+        self.active_flow = Flow.from_client_secrets_file(
             self.creds_file,
             scopes=self.scopes,
             redirect_uri=os.getenv("REDIRECT_URI", "http://localhost:8000/callback")
         )
-        auth_url, _ = flow.authorization_url(prompt='consent')
+        # Auth url generate hote waqt code_verifier ban jata hai
+        auth_url, _ = self.active_flow.authorization_url(prompt='consent')
         return auth_url
 
     def get_credentials(self):
@@ -50,7 +52,7 @@ class AuthManager:
             f.write(creds.to_json())
 
     def run_server(self):
-        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+        config = uvicorn.Config(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
         server = uvicorn.Server(config)
         threading.Thread(target=server.run, daemon=True).start()
 
@@ -62,15 +64,19 @@ def read_root():
 
 @app.get("/callback", response_class=HTMLResponse)
 async def callback(request: Request):
-    flow = Flow.from_client_secrets_file(
-        auth_manager_instance.creds_file,
-        scopes=auth_manager_instance.scopes,
-        redirect_uri=os.getenv("REDIRECT_URI", "http://localhost:8000/callback")
-    )
     code = request.query_params.get("code")
     if not code:
         return "Authentication Failed: No code provided."
     
-    flow.fetch_token(code=code)
-    auth_manager_instance.save_credentials(flow.credentials)
-    return "<h3>Authentication Successful! You can return to Telegram.</h3>"
+    # FIX: Naya Flow banane ke bajaye original saved Flow use karein
+    if not auth_manager_instance.active_flow:
+        return "<h3>Authentication Session Expired. Please type /start in Telegram again.</h3>"
+    
+    try:
+        auth_manager_instance.active_flow.fetch_token(code=code)
+        auth_manager_instance.save_credentials(auth_manager_instance.active_flow.credentials)
+        auth_manager_instance.active_flow = None  # Success ke baad clear kar dein
+        return "<h3>Authentication Successful! You can return to Telegram.</h3>"
+    except Exception as e:
+        return f"<h3>Authentication Failed: {str(e)}</h3>"
+        
