@@ -7,7 +7,7 @@ class AI_Engine:
         self.gmail = gmail_client
         if GEMINI_API_KEY:
             self.client = genai.Client(api_key=GEMINI_API_KEY)
-            self.model_name = 'gemini-2.5-flash-lite'
+            self.model_name = 'gemini-2.0-flash-lite'
         else:
             self.client = None
         self.active_chats = {}
