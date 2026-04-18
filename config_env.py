@@ -10,7 +10,10 @@ OWNER_TELEGRAM_ID = int(os.getenv("OWNER_TELEGRAM_ID", "0"))
 # Gemini Config
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Auth Files
+# Auth Config
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]
+# PKCE session storage
+SESSION_FILE = "session_data.json"
+# Unified Scope for all Gmail tools
+SCOPES = ['https://mail.google.com/']
