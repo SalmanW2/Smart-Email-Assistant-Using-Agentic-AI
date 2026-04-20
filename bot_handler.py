@@ -1,8 +1,11 @@
+import os
 import time
+import uvicorn
+from fastapi import Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
-from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID
-from auth_manager import auth_manager_instance
+from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID, WEBHOOK_URL
+from auth_manager import auth_manager_instance, app as fastapi_app
 from gmail_client import GmailClient
 from ai_engine import AI_Engine
 
@@ -14,28 +17,26 @@ class BotHandler:
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine(self.gmail)
         self.last_checked_email_id = None
-        # Bot start hote waqt ka time (Unix Timestamp in milliseconds)
         self.boot_time = int(time.time() * 1000)
         
-        self.app = ApplicationBuilder().token(BOT_TOKEN).build()
+        self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
-        self.auth.run_server()
 
     def _register_handlers(self):
-        self.app.add_handler(CommandHandler("start", self.start))
-        self.app.add_handler(CommandHandler("menu", self.start))
-        self.app.add_handler(CallbackQueryHandler(self.start, pattern="^menu$"))
-        self.app.add_handler(CallbackQueryHandler(self.show_read_options, pattern="^menu_read$"))
-        self.app.add_handler(CallbackQueryHandler(self.read_last_five, pattern="^read_5$"))
-        self.app.add_handler(CallbackQueryHandler(self.read_last_one, pattern="^read_1$"))
-        self.app.add_handler(CallbackQueryHandler(self.handle_delete_email, pattern="^delete_"))
+        self.ptb_app.add_handler(CommandHandler("start", self.start))
+        self.ptb_app.add_handler(CommandHandler("menu", self.start))
+        self.ptb_app.add_handler(CallbackQueryHandler(self.start, pattern="^menu$"))
+        self.ptb_app.add_handler(CallbackQueryHandler(self.show_read_options, pattern="^menu_read$"))
+        self.ptb_app.add_handler(CallbackQueryHandler(self.read_last_five, pattern="^read_5$"))
+        self.ptb_app.add_handler(CallbackQueryHandler(self.read_last_one, pattern="^read_1$"))
+        self.ptb_app.add_handler(CallbackQueryHandler(self.handle_delete_email, pattern="^delete_"))
         
         read_specific_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.ask_specific_sender, pattern="^read_specific$")],
             states={ASK_SENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.fetch_specific_email)]},
             fallbacks=[CommandHandler("cancel", self.cancel_flow)]
         )
-        self.app.add_handler(read_specific_conv)
+        self.ptb_app.add_handler(read_specific_conv)
 
         compose_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.start_compose, pattern="^menu_compose$"), CallbackQueryHandler(self.start_reply, pattern="^reply_")],
@@ -51,29 +52,23 @@ class BotHandler:
             },
             fallbacks=[CommandHandler("cancel", self.cancel_flow)]
         )
-        self.app.add_handler(compose_conv)
-        self.app.add_handler(CallbackQueryHandler(self.handle_read_email, pattern="^open_email_"))
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_general_text))
-        
-        # Checking every 5 minutes (300s) to save quota
-        self.app.job_queue.run_repeating(self.check_new_emails, interval=300, first=10)
+        self.ptb_app.add_handler(compose_conv)
+        self.ptb_app.add_handler(CallbackQueryHandler(self.handle_read_email, pattern="^open_email_"))
+        self.ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_general_text))
 
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
         service = self.gmail.get_service()
         if not service: return
         try:
-            # Sirf unread emails dekhein
             results = service.users().messages().list(userId='me', q='is:unread', maxResults=1).execute()
             messages = results.get('messages', [])
             
             if messages:
                 m_id = messages[0]['id']
                 if self.last_checked_email_id != m_id:
-                    # Email ke details lein taake waqt check ho sake
                     msg_data = service.users().messages().get(userId='me', id=m_id, format='minimal').execute()
                     internal_date = int(msg_data.get('internalDate', 0))
                     
-                    # Agar email bot start hone ke BAAD aayi hai
                     if internal_date > self.boot_time:
                         self.last_checked_email_id = m_id
                         details = self.gmail.get_email_content(m_id)
@@ -119,34 +114,31 @@ class BotHandler:
         if update.message: await update.message.reply_text(res)
 
     async def show_read_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
+        await update.callback_query.answer()
         kb = [
             [InlineKeyboardButton("Recent 5", callback_data="read_5"), InlineKeyboardButton("Latest", callback_data="read_1")],
             [InlineKeyboardButton("Search Sender", callback_data="read_specific")],
             [InlineKeyboardButton("Return", callback_data="menu")]
         ]
-        await query.edit_message_text("Inbox Retrieval Menu:", reply_markup=InlineKeyboardMarkup(kb))
+        await update.callback_query.edit_message_text("Inbox Retrieval Menu:", reply_markup=InlineKeyboardMarkup(kb))
 
     async def read_last_five(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
+        await update.callback_query.answer()
         emails = self.gmail.list_emails(max_results=5)
         if not emails:
-            await query.edit_message_text("Inbox empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="menu")]]))
+            await update.callback_query.edit_message_text("Inbox empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="menu")]]))
             return
-        await query.edit_message_text("Fetching records...")
+        await update.callback_query.edit_message_text("Fetching records...")
         for e in emails:
             d = self.gmail.get_email_content(e['id'])
             kb = [[InlineKeyboardButton("Open", callback_data=f"open_email_{e['id']}")]]
             await context.bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=f"From: {d['sender']}\nSubject: {d['subject']}", reply_markup=InlineKeyboardMarkup(kb))
 
     async def read_last_one(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
+        await update.callback_query.answer()
         emails = self.gmail.list_emails(max_results=1)
         if emails: await self.display_email_content(update, context, emails[0]['id'])
-        else: await query.edit_message_text("Inbox empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="menu")]]))
+        else: await update.callback_query.edit_message_text("Inbox empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="menu")]]))
 
     async def ask_specific_sender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
@@ -168,12 +160,11 @@ class BotHandler:
         await self.display_email_content(update, context, update.callback_query.data.split("_")[2])
 
     async def handle_delete_email(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        m_id = query.data.split("_")[1]
+        await update.callback_query.answer()
+        m_id = update.callback_query.data.split("_")[1]
         success = self.gmail.delete_email(m_id)
         txt = "Email Trashed successfully." if success else "Failed to delete."
-        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Menu", callback_data="menu")]]))
+        await update.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Menu", callback_data="menu")]]))
 
     async def display_email_content(self, update, context, m_id, is_message=False):
         d = self.gmail.get_email_content(m_id)
@@ -245,8 +236,33 @@ class BotHandler:
         else: await update.message.reply_text("Operation canceled.", reply_markup=InlineKeyboardMarkup(kb))
         return ConversationHandler.END
 
+    def setup_webhook(self):
+        webhook_path = f"{WEBHOOK_URL}/telegram"
+
+        @fastapi_app.post("/telegram")
+        async def telegram_webhook(request: Request):
+            data = await request.json()
+            await self.ptb_app.update_queue.put(Update.de_json(data=data, bot=self.ptb_app.bot))
+            return {"ok": True}
+
+        @fastapi_app.on_event("startup")
+        async def on_startup():
+            await self.ptb_app.bot.set_webhook(webhook_path)
+            await self.ptb_app.initialize()
+            await self.ptb_app.start()
+            self.ptb_app.job_queue.run_repeating(self.check_new_emails, interval=300, first=10)
+            await self.ptb_app.job_queue.start()
+
+        @fastapi_app.on_event("shutdown")
+        async def on_shutdown():
+            await self.ptb_app.bot.delete_webhook()
+            await self.ptb_app.stop()
+
     def run(self):
-        self.app.run_polling()
+        self.setup_webhook()
+        port = int(os.getenv("PORT", 8080))
+        # FastAPI ek hi thread mein Telegram aur Google dono handle karega
+        uvicorn.run(fastapi_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     BotHandler().run()
