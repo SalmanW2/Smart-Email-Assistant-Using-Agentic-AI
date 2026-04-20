@@ -27,7 +27,7 @@ class AuthManager:
         self.scopes = SCOPES
         self.creds_file = CREDENTIALS_FILE
         self.token_file = TOKEN_FILE
-        self.active_flow = None # Data ab RAM mein save hoga
+        self.active_flow = None
         threading.Thread(target=ping_server, daemon=True).start()
 
     def get_login_link(self):
@@ -66,24 +66,20 @@ async def callback(request: Request):
         auth_manager_instance.active_flow.fetch_token(code=code)
         creds = auth_manager_instance.active_flow.credentials
         auth_manager_instance.save_credentials(creds)
-        auth_manager_instance.active_flow = None # Login ke baad RAM saaf
+        auth_manager_instance.active_flow = None 
 
-        # Fetch Email for Notification
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_addr = profile.get('emailAddress')
         
-        # UTC Time
         now = datetime.datetime.now(datetime.timezone.utc)
         dt_string = now.strftime("%B %d, %Y at %I:%M %p UTC")
 
-        # Telegram Direct Alert
         bot = Bot(token=BOT_TOKEN)
-        text = f"✅ Authentication Successful!\n\nAccount: {email_addr} has been successfully logged in on {dt_string}."
-        kb = [[InlineKeyboardButton("Read Inbox", callback_data="menu_read")], [InlineKeyboardButton("Compose Email", callback_data="menu_compose")]]
+        text = f"Authentication Successful!\n\nAccount: {email_addr} has been successfully logged in on {dt_string}."
+        kb = [[InlineKeyboardButton("Read Inbox", callback_data="menu_read")]]
         await bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=text, reply_markup=InlineKeyboardMarkup(kb))
 
         return "<h3>Authentication Successful! You can return to Telegram.</h3>"
     except Exception as e:
         return f"<h3>Authentication Failed: {str(e)}</h3>"
-    
