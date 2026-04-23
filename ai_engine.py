@@ -101,21 +101,4 @@ class AI_Engine:
     # Guest chat (anyone other than owner)
     # ---------------------------------------------------------------
     def guest_chat(self, text: str, user_id: str) -> str:
-        if not self.client:
-            return "Offline."
-        try:
-            guest_key = f"guest_{user_id}"
-            if guest_key not in self.active_chats:
-                system_prompt = (
-                    "You are an AI assistant currently in private development. "
-                    "You only serve your owner, Muhammad Salman Wattoo. "
-                    "Politely decline to help other users and tell them this bot is private. "
-                    "Keep replies short. No markdown."
-                )
-                self.active_chats[guest_key] = self.client.chats.create(
-                    model=self.model_name,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt)
-                )
-            return self.active_chats[guest_key].send_message(text).text
-        except Exception:
-            return "Sorry, I only serve my owner Muhammad Salman Wattoo right now."
+        return "This is a private bot owned by Muhammad Salman Wattoo. I only serve my owner."

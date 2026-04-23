@@ -1,6 +1,7 @@
 import os
 import time
 import uvicorn
+import asyncio
 from fastapi import Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -139,7 +140,7 @@ class BotHandler:
             if action == "sum":
                 await query.edit_message_text("Generating summary, please wait...")
                 body = self.gmail.get_full_body(m_id)
-                summary = self.ai.get_summary(body)
+                summary = await asyncio.to_thread(self.ai.get_summary, body)
                 await query.edit_message_text(f"Summary:\n\n{summary}")
  
             elif action == "full":
@@ -202,13 +203,13 @@ class BotHandler:
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id, action='typing'
         )
-        res = self.ai.agent_chat(
-            update.message.text, str(update.effective_user.id)
+        res = await asyncio.to_thread(
+            self.ai.agent_chat, update.message.text, str(update.effective_user.id)
         )
         await update.message.reply_text(res)
  
     # ---------------------------------------------------------------
-    # Voice message handler  <-- YEH WALA ADHOORA THA, AB COMPLETE HAI
+    # Voice message handler 
     # ---------------------------------------------------------------
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
@@ -223,8 +224,7 @@ class BotHandler:
             file_path = f"/tmp/voice_{int(time.time())}.ogg"
             await file.download_to_drive(file_path)
  
-            # Gemini Flash se transcribe karo (Whisper ki zaroorat nahi)
-            transcribed_text = self.ai.transcribe_audio(file_path)
+            transcribed_text = await asyncio.to_thread(self.ai.transcribe_audio, file_path)
  
             # Cleanup temp file
             if os.path.exists(file_path):
@@ -236,8 +236,7 @@ class BotHandler:
  
             await msg.edit_text(f"You said: {transcribed_text}\n\nProcessing...")
  
-            # Transcribed text ko normal agent chat mein bhejo
-            response = self.ai.agent_chat(transcribed_text, str(update.effective_user.id))
+            response = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, str(update.effective_user.id))
             await update.message.reply_text(response)
  
         except Exception as e:
