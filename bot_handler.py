@@ -6,6 +6,7 @@ from fastapi import Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                            MessageHandler, filters, ContextTypes)
+from telegram.error import RetryAfter  # Flood control handle karne ke liye
 from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID, WEBHOOK_URL
 from auth_manager import auth_manager_instance, app as fastapi_app
 from gmail_client import GmailClient
@@ -240,8 +241,19 @@ async def webhook(request: Request):
 @fastapi_app.on_event("startup")
 async def on_startup():
     await bot_handler_instance.ptb_app.initialize()
-    await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
- 
+    
+    # Telegram API Rate Limit/Flood Control Handle
+    try:
+        await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        print("✅ Webhook set successfully.")
+    except RetryAfter as e:
+        print(f"⚠️ Telegram API rate limit hit. Waiting for {e.retry_after + 1} seconds...")
+        await asyncio.sleep(e.retry_after + 2)
+        await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        print("✅ Webhook set successfully after wait.")
+    except Exception as e:
+        print(f"❌ Webhook setting failed: {e}")
+
     bot_handler_instance.ptb_app.job_queue.run_repeating(
         bot_handler_instance.check_new_emails, interval=60, first=10
     )
@@ -252,4 +264,4 @@ async def on_shutdown():
     await bot_handler_instance.ptb_app.stop()
  
 if __name__ == "__main__":
-    uvicorn.run("bot_handler:fastapi_app", host="0.0.0.0", port=int(os.getenv("PORT", 8080)))   
+    uvicorn.run("bot_handler:fastapi_app", host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
