@@ -10,7 +10,7 @@ from email import encoders
 class GmailClient:
     def __init__(self, auth_manager):
         self.auth = auth_manager
-        self.current_attachment = None # File attachment ko handle karne ke liye
+        self.current_attachment = None
 
     def get_service(self):
         creds = self.auth.get_credentials()
@@ -19,24 +19,23 @@ class GmailClient:
         return None
 
     def search_emails(self, query: str = 'label:INBOX', max_results: int = 5):
-        """Tool to list or search emails. AI will pass max_results based on user natural language."""
+        """Tool to list or search emails."""
         service = self.get_service()
-        if not service: return "Login required."
+        if not service: return "❌ Login required."
         try:
             results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
             messages = results.get('messages', [])
-            if not messages: return "No emails found."
+            if not messages: return "📭 No emails found."
             
             summary = []
             for m in messages:
                 data = self.get_email_metadata(m['id'])
-                summary.append(f"ID: {m['id']} | From: {data['sender']} | Subject: {data['subject']}")
+                summary.append(f"📧 ID: {m['id']} \n👤 From: {data['sender']} \n📝 Subject: {data['subject']}\n")
             return "\n".join(summary)
         except Exception as e:
-            return f"Search error: {str(e)}"
+            return f"❌ Search error: {str(e)}"
 
     def get_email_metadata(self, msg_id):
-        # Tokens bachane ke liye sirf metadata
         service = self.get_service()
         msg = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject', 'From']).execute()
         headers = msg.get('payload', {}).get('headers', [])
@@ -46,7 +45,7 @@ class GmailClient:
 
     def get_full_body(self, msg_id):
         service = self.get_service()
-        if not service: return "Login Required"
+        if not service: return "❌ Login Required"
         msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
         payload = msg.get('payload', {})
         
@@ -70,7 +69,7 @@ class GmailClient:
     def send_email(self, to: str, subject: str, body: str):
         """Tool to physically send an email with optional attachments."""
         service = self.get_service()
-        if not service: return "Login Required"
+        if not service: return "❌ Login Required"
         try:
             message = MIMEMultipart()
             message['to'] = to
@@ -92,14 +91,15 @@ class GmailClient:
                 msg_file.add_header('Content-Disposition', 'attachment', filename=filename)
                 message.attach(msg_file)
                 
-                # Ek dafa email send hone ke baad attachment variable reset
+                # IMPORTANT FIX: Delete file from Render Server to prevent Memory Leak
+                os.remove(self.current_attachment)
                 self.current_attachment = None
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
-            return "Email Sent Successfully!"
+            return "✅ Email Sent Successfully!"
         except Exception as e:
-            return f"Send Error: {str(e)}"
+            return f"❌ Send Error: {str(e)}"
 
     def delete_email(self, msg_id):
         service = self.get_service()
@@ -109,4 +109,3 @@ class GmailClient:
             return True
         except:
             return False
-            

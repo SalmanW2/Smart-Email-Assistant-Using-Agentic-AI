@@ -2,19 +2,13 @@ import os
 from google import genai
 from google.genai import types
  
- 
 class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
- 
-        # Sirf Flash — free tier mein 1500 req/day, kaafi hai sab kaam ke liye
         self.model_name = 'gemini-2.0-flash'
         self.active_chats = {}
  
-    # ---------------------------------------------------------------
-    # Voice transcription
-    # ---------------------------------------------------------------
     def transcribe_audio(self, file_path: str) -> str:
         try:
             sample_file = self.client.files.upload(file=file_path)
@@ -23,16 +17,13 @@ class AI_Engine:
                 contents=[
                     sample_file,
                     "Extract exactly what the user said in this audio. "
-                    "Do not add extra words. Reply in the same language as the speaker."
+                    "Do not add extra words. Reply in the exact same language (e.g. Urdu/English) as the speaker."
                 ]
             )
             return response.text
         except Exception as e:
             return f"Transcription error: {str(e)}"
  
-    # ---------------------------------------------------------------
-    # Email summarization (token-efficient: only called on demand)
-    # ---------------------------------------------------------------
     def get_summary(self, text: str) -> str:
         try:
             response = self.client.models.generate_content(
@@ -47,9 +38,6 @@ class AI_Engine:
         except Exception as e:
             return f"Summary error: {str(e)}"
  
-    # ---------------------------------------------------------------
-    # Agent config with Gmail tools
-    # ---------------------------------------------------------------
     def _get_agent_config(self):
         tools = []
         if self.gmail:
@@ -58,28 +46,26 @@ class AI_Engine:
         system_instruction = (
             "You are a Smart Email Assistant owned by Muhammad Salman Wattoo. "
             "You help him manage his Gmail through Telegram.\n\n"
-            "STRICT RULES:\n"
+            "STRICT RULES TO SAVE API QUOTA:\n"
             "1. NO MARKDOWN. Never use asterisks (*), bold, or any formatting symbols.\n"
-            "2. Be short, direct, and conversational like WhatsApp.\n"
-            "3. To list or search emails, use the search_emails tool. "
+            "2. Be extremely short and direct.\n"
+            "3. DO NOT search or fetch past emails unless the user explicitly asks for them.\n"
+            "4. To list emails, use the search_emails tool. "
             "   Example: user says 'show last 5 emails' -> call search_emails with query='label:INBOX' and max_results=5.\n"
-            "4. DRAFT APPROVAL RULE: If user asks to send an email, first write the draft "
+            "5. DRAFT APPROVAL RULE: If user asks to send an email, first write the draft "
             "   and ask 'Is this okay to send? Reply yes to confirm.' "
             "   ONLY call send_email tool if the user explicitly replies yes or ok.\n"
-            "5. If an attachment is mentioned, it is already cached. Just draft or send the email normally.\n"
-            "6. If you do not understand, ask a simple clarifying question."
+            "6. If an attachment is mentioned, it is already cached. Just draft or send the email normally.\n"
+            "7. If you do not understand, ask a simple clarifying question."
         )
  
         return types.GenerateContentConfig(
             tools=tools,
             system_instruction=system_instruction,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(enabled=True),
-            temperature=0.7
+            temperature=0.3 # Lower temperature for more factual and direct responses
         )
  
-    # ---------------------------------------------------------------
-    # Main agent chat (owner only)
-    # ---------------------------------------------------------------
     def agent_chat(self, text: str, user_id: str) -> str:
         if not self.client:
             return "System offline."
@@ -92,13 +78,9 @@ class AI_Engine:
             response = self.active_chats[user_id].send_message(text)
             return response.text
         except Exception as e:
-            # Chat session expire ho jaye to reset karke retry
             if user_id in self.active_chats:
                 del self.active_chats[user_id]
-            return f"Error: {str(e)}"
+            return f"Error connecting to AI: {str(e)}"
  
-    # ---------------------------------------------------------------
-    # Guest chat (anyone other than owner)
-    # ---------------------------------------------------------------
     def guest_chat(self, text: str, user_id: str) -> str:
-        return "This is a private bot owned by Muhammad Salman Wattoo. I only serve my owner."
+        return "⚠️ This is a private assistant owned by Muhammad Salman Wattoo. Unauthorized access."
