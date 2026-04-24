@@ -2,11 +2,13 @@ import os
 import time
 import uvicorn
 import asyncio
+import re
+import html
 from fastapi import Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                            MessageHandler, filters, ContextTypes)
-from telegram.error import RetryAfter  # Flood control handle karne ke liye
+from telegram.error import RetryAfter
 from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID, WEBHOOK_URL
 from auth_manager import auth_manager_instance, app as fastapi_app
 from gmail_client import GmailClient
@@ -17,7 +19,7 @@ class BotHandler:
         self.auth = auth_manager_instance
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine(self.gmail)
-        self.notified_emails = set() # Multiple emails track karne ke liye
+        self.notified_emails = set() 
         self.boot_time = int(time.time() * 1000)
  
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -35,13 +37,11 @@ class BotHandler:
             filters.TEXT & ~filters.COMMAND, self.handle_text
         ))
  
-    # Background job: new email check every 60s
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
         service = self.gmail.get_service()
         if not service:
             return
         try:
-            # Check up to 3 latest unread emails
             results = service.users().messages().list(
                 userId='me', q='is:unread', maxResults=3
             ).execute()
@@ -59,7 +59,6 @@ class BotHandler:
                         self.notified_emails.add(m_id)
                         meta = self.gmail.get_email_metadata(m_id)
                         
-                        # UI/UX Improved Notification
                         text = (
                             f"🔔 *New Email Received!*\n\n"
                             f"👤 *From:* {meta['sender']}\n"
@@ -98,7 +97,8 @@ class BotHandler:
  
         kb = [
             [InlineKeyboardButton("📥 Read Inbox",    callback_data="menu_read")],
-            [InlineKeyboardButton("✍️ Compose Email", callback_data="menu_compose")]
+            [InlineKeyboardButton("✍️ Compose Email", callback_data="menu_compose")],
+            [InlineKeyboardButton("⚙️ Manual Control", callback_data="manual_read")]
         ]
         text = "🎛️ *Workspace Dashboard*\nWelcome! What would you like to do today?"
         if update.callback_query:
@@ -128,6 +128,33 @@ class BotHandler:
                 "- Email Ali about the meeting tomorrow",
                 parse_mode="Markdown"
             )
+        elif data == "manual_read":
+            # API Fallback: Manually fetching emails without AI
+            await query.edit_message_text("⏳ Fetching recent emails manually...")
+            service = self.gmail.get_service()
+            if not service:
+                await query.edit_message_text("❌ Login required.")
+                return
+            try:
+                results = service.users().messages().list(userId='me', q='label:INBOX', maxResults=5).execute()
+                messages = results.get('messages', [])
+                if not messages:
+                    await query.edit_message_text("📭 No emails found in Inbox.")
+                    return
+                
+                kb = []
+                text = "📥 <b>Top 5 Recent Emails (Manual Mode):</b>\n\n"
+                for idx, m in enumerate(messages):
+                    meta = self.gmail.get_email_metadata(m['id'])
+                    safe_sender = html.escape(meta['sender'][:25])
+                    safe_subj = html.escape(meta['subject'][:30])
+                    text += f"<b>{idx+1}.</b> {safe_sender}\n<i>{safe_subj}...</i>\n\n"
+                    kb.append([InlineKeyboardButton(f"📖 Read Email #{idx+1}", callback_data=f"full_{m['id']}")])
+                    
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+            except Exception as e:
+                await query.edit_message_text(f"❌ Error fetching emails: {str(e)}")
+                
         else:
             parts = data.split("_", 1)
             if len(parts) != 2: return
@@ -137,14 +164,38 @@ class BotHandler:
                 await query.edit_message_text("⏳ Generating AI Summary...")
                 body = self.gmail.get_full_body(m_id)
                 summary = await asyncio.to_thread(self.ai.get_summary, body)
-                await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown")
+                
+                if summary.startswith("Error:") or "validation error" in summary.lower():
+                    summary = "⚠️ *AI Quota Exceeded or Unavailable.*\nPlease read the full email manually."
+                
+                kb = [[InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}")]]
+                await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
  
             elif action == "full":
                 await query.edit_message_text("⏳ Fetching...")
                 body = self.gmail.get_full_body(m_id)
-                if len(body) > 4000:
-                    body = body[:4000] + "\n\n[Truncated]"
-                await query.edit_message_text(f"📖 *Full Email:*\n\n{body}")
+                meta = self.gmail.get_email_metadata(m_id)
+                
+                if len(body) > 3500:
+                    body = body[:3500] + "\n\n[Truncated]"
+                
+                # HTML Escaping & Link Shortening Logic
+                safe_body = html.escape(body)
+                safe_sender = html.escape(meta['sender'])
+                safe_subject = html.escape(meta['subject'])
+                
+                url_pattern = re.compile(r'(https?://[^\s]+)')
+                safe_body = url_pattern.sub(r'<a href="\1">🔗 Click Here</a>', safe_body)
+                
+                formatted_email = (
+                    f"📧 <b>From:</b> {safe_sender}\n"
+                    f"📝 <b>Subject:</b> {safe_subject}\n"
+                    f"━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{safe_body}"
+                )
+                
+                kb = [[InlineKeyboardButton("🗑️ Move to Trash", callback_data=f"del_{m_id}")]]
+                await query.edit_message_text(formatted_email, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
  
             elif action == "del":
                 self.gmail.delete_email(m_id)
@@ -190,7 +241,18 @@ class BotHandler:
  
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, update.message.text, str(update.effective_user.id))
-        await update.message.reply_text(res)
+        
+        # Checking for API Quota / Validation Errors to provide Manual Fallback
+        if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
+            fallback_msg = (
+                "⚠️ *System Notice: AI Unavailable*\n\n"
+                "The AI assistant is currently unable to process requests (Quota exceeded or Technical error). "
+                "However, you can still manage your emails manually."
+            )
+            kb = [[InlineKeyboardButton("📥 Manage Inbox Manually", callback_data="manual_read")]]
+            await update.message.reply_text(fallback_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await update.message.reply_text(res)
  
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID):
@@ -210,13 +272,19 @@ class BotHandler:
             if os.path.exists(file_path):
                 os.remove(file_path)
  
-            if not transcribed_text:
-                await msg.edit_text("❌ Could not understand the voice note. Please try again.")
+            if not transcribed_text or transcribed_text.startswith("Transcription error"):
+                await msg.edit_text("❌ Could not understand the voice note or API unavailable. Please try again or use text.")
                 return
  
             await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
-            response = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, str(update.effective_user.id))
-            await update.message.reply_text(response)
+            res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, str(update.effective_user.id))
+            
+            if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
+                fallback_msg = "⚠️ *AI Unavailable.* Please manage your emails manually using the dashboard."
+                kb = [[InlineKeyboardButton("📥 Manage Inbox Manually", callback_data="manual_read")]]
+                await update.message.reply_text(fallback_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await update.message.reply_text(res)
  
         except Exception as e:
             await msg.edit_text(f"❌ Voice processing error: {str(e)}")
@@ -242,7 +310,6 @@ async def webhook(request: Request):
 async def on_startup():
     await bot_handler_instance.ptb_app.initialize()
     
-    # Telegram API Rate Limit/Flood Control Handle
     try:
         await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
         print("✅ Webhook set successfully.")
