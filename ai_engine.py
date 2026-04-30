@@ -6,7 +6,7 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model_name = 'gemini-2.0-flash'
+        self.model_name = 'gemini-1.5-flash'
         self.active_chats = {}
  
     def transcribe_audio(self, file_path: str) -> str:
