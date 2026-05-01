@@ -344,9 +344,8 @@ async def webhook(request: Request):
     await bot_handler_instance.ptb_app.process_update(update)
     return {"ok": True}
  
-# FIXED: Replaced on_event startup/shutdown to remove Deprecation Warnings
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+@fastapi_app.on_event("startup")
+async def on_startup():
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
@@ -362,10 +361,10 @@ async def lifespan(app: FastAPI):
         bot_handler_instance.check_new_emails, interval=60, first=10
     )
     await bot_handler_instance.ptb_app.start()
-    yield
+ 
+@fastapi_app.on_event("shutdown")
+async def on_shutdown():
     await bot_handler_instance.ptb_app.stop()
-
-fastapi_app.router.lifespan_context = lifespan
-
+ 
 if __name__ == "__main__":
     uvicorn.run("bot_handler:fastapi_app", host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
