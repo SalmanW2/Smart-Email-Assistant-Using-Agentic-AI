@@ -8,6 +8,16 @@ class AI_Engine:
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.model_name = "gemini-2.5-flash-lite"
         self.active_chats = {}
+        
+    # FIXED: Clean, user-friendly error messages (No raw tracebacks)
+    def _parse_error(self, e: Exception) -> str:
+        error_str = str(e).lower()
+        if "quota" in error_str or "429" in error_str:
+            return "QUOTA_ERROR: AI limits reached."
+        elif "api key" in error_str or "401" in error_str:
+            return "Error: Gemini Authentication missing."
+        else:
+            return "Error: AI System temporarily unavailable."
  
     def transcribe_audio(self, file_path: str) -> str:
         try:
@@ -22,7 +32,7 @@ class AI_Engine:
             )
             return response.text
         except Exception as e:
-            return f"Transcription error: {str(e)}"
+            return self._parse_error(e)
  
     def get_summary(self, text: str) -> str:
         try:
@@ -36,7 +46,7 @@ class AI_Engine:
             )
             return response.text
         except Exception as e:
-            return f"Summary error: {str(e)}"
+            return self._parse_error(e)
  
     def _get_agent_config(self):
         tools = []
@@ -63,7 +73,7 @@ class AI_Engine:
             tools=tools,
             system_instruction=system_instruction,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(enabled=True),
-            temperature=0.3 # Lower temperature for more factual and direct responses
+            temperature=0.3 
         )
  
     def agent_chat(self, text: str, user_id: str) -> str:
@@ -80,7 +90,7 @@ class AI_Engine:
         except Exception as e:
             if user_id in self.active_chats:
                 del self.active_chats[user_id]
-            return f"Error connecting to AI: {str(e)}"
+            return self._parse_error(e)
  
     def guest_chat(self, text: str, user_id: str) -> str:
         return "⚠️ This is a private assistant owned by Muhammad Salman Wattoo. Unauthorized access."

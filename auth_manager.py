@@ -1,8 +1,5 @@
 import os
-import time
 import datetime
-import requests
-import threading
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from google_auth_oauthlib.flow import Flow
@@ -13,22 +10,12 @@ from config_env import SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOT_TOKEN, OWNER_TE
 
 app = FastAPI()
 
-def ping_server():
-    url = os.getenv("RENDER_WEB_SERVICE_URL", "http://localhost:8000")
-    while True:
-        time.sleep(840)
-        try:
-            requests.get(url)
-        except Exception:
-            pass
-
 class AuthManager:
     def __init__(self):
         self.scopes = SCOPES
         self.creds_file = CREDENTIALS_FILE
         self.token_file = TOKEN_FILE
         self.active_flow = None
-        threading.Thread(target=ping_server, daemon=True).start()
 
     def get_login_link(self):
         self.active_flow = Flow.from_client_secrets_file(
@@ -52,7 +39,8 @@ class AuthManager:
 
 auth_manager_instance = AuthManager()
 
-@app.get("/")
+# FIXED: Render Health Check needs HEAD method
+@app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {"status": "System Online"}
 

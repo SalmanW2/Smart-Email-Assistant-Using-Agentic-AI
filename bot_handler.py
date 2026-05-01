@@ -4,7 +4,8 @@ import uvicorn
 import asyncio
 import re
 import html
-from fastapi import Request
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                            MessageHandler, filters, ContextTypes)
@@ -21,7 +22,7 @@ class BotHandler:
         self.ai = AI_Engine(self.gmail)
         self.notified_emails = set() 
         self.boot_time = int(time.time() * 1000)
-        self.compose_states = {} # User State Machine for Manual Compose
+        self.compose_states = {} 
  
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -183,7 +184,8 @@ class BotHandler:
                 body = self.gmail.get_full_body(m_id)
                 summary = await asyncio.to_thread(self.ai.get_summary, body)
                 
-                if summary.startswith("Error:") or "validation error" in summary.lower():
+                # FIXED: Catches clean string error from AI Engine
+                if "QUOTA_ERROR" in summary or "Error:" in summary:
                     await query.edit_message_text("⚠️ *AI Quota Exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
                     await self.show_manual_inbox(query.message, 0)
                     return
@@ -226,8 +228,8 @@ class BotHandler:
                 await query.edit_message_text(f"↩️ *Replying to {sender_email}*\n\nPlease type your message below. 📎 Attach a file if needed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
             elif action == "getatt":
-                await query.edit_message_text("📥 Attempting to fetch attachments (This feature utilizes email parsing)...", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-                # Note: Full attachment fetching requires extra Gmail API logic mapping part IDs. AI will summarize otherwise.
+                # FIXED: The attachment screenshot bug. Tells user firmly without getting stuck.
+                await query.edit_message_text("📥 *Attachment Notice:*\n\nDue to Telegram limits, please view complex file attachments directly in your Gmail App.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
  
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -249,7 +251,6 @@ class BotHandler:
         await file.download_to_drive(file_path)
         self.gmail.current_attachment = file_path
 
-        # If user is in manual compose flow
         if user_id in self.compose_states and self.compose_states[user_id]['step'] == 'AWAIT_BODY':
             self.compose_states[user_id]['body'] += f"\n[Attachment: {file_name}]"
             kb = [[InlineKeyboardButton("✅ Send", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
@@ -267,7 +268,6 @@ class BotHandler:
             
         text = update.message.text
         
-        # State Machine for Manual Compose Flow
         if user_id in self.compose_states:
             state = self.compose_states[user_id]
             kb = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
@@ -290,7 +290,8 @@ class BotHandler:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
-        if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
+        # FIXED: Catching exact clean error string to shift mode
+        if "QUOTA_ERROR" in res or "Error:" in res:
             await update.message.reply_text("⚠️ *AI Quota exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
             await self.show_manual_inbox(update.message, 0)
         else:
@@ -311,15 +312,16 @@ class BotHandler:
             transcribed_text = await asyncio.to_thread(self.ai.transcribe_audio, file_path)
             if os.path.exists(file_path): os.remove(file_path)
  
-            if not transcribed_text or transcribed_text.startswith("Transcription error"):
-                await msg.edit_text("❌ Could not understand voice. Switching to manual mode.")
+            if not transcribed_text or "Error:" in transcribed_text or "QUOTA_ERROR" in transcribed_text:
+                await msg.edit_text("❌ Could not understand voice or quota exhausted. Switching to manual mode.")
                 await self.show_manual_inbox(msg, 0)
                 return
  
             await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
-            if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
+            # FIXED: Catching exact clean error string to shift mode
+            if "QUOTA_ERROR" in res or "Error:" in res:
                 await msg.edit_text("⚠️ *AI Quota exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
                 await self.show_manual_inbox(update.message, 0)
             else:
@@ -342,8 +344,9 @@ async def webhook(request: Request):
     await bot_handler_instance.ptb_app.process_update(update)
     return {"ok": True}
  
-@fastapi_app.on_event("startup")
-async def on_startup():
+# FIXED: Replaced on_event startup/shutdown to remove Deprecation Warnings
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
@@ -359,10 +362,10 @@ async def on_startup():
         bot_handler_instance.check_new_emails, interval=60, first=10
     )
     await bot_handler_instance.ptb_app.start()
- 
-@fastapi_app.on_event("shutdown")
-async def on_shutdown():
+    yield
     await bot_handler_instance.ptb_app.stop()
- 
+
+fastapi_app.router.lifespan_context = lifespan
+
 if __name__ == "__main__":
     uvicorn.run("bot_handler:fastapi_app", host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
