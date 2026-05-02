@@ -58,7 +58,41 @@ class AI_Engine:
     def _get_agent_config(self):
         tools = []
         if self.gmail:
-            tools = [self.gmail.search_emails, self.gmail.send_email]
+            # Explicitly defining the schemas to bypass the SDK auto-conversion bug
+            search_tool = types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name="search_emails",
+                        description="Searches the user's Gmail inbox using standard search queries. Example queries: 'is:unread', 'from:someone@example.com', or 'subject:urgent'.",
+                        parameters=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "query": types.Schema(type=types.Type.STRING, description="The Gmail search query."),
+                                "max_results": types.Schema(type=types.Type.INTEGER, description="Maximum number of emails to return.")
+                            }
+                        )
+                    )
+                ]
+            )
+            
+            send_tool = types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name="send_email",
+                        description="Transmits a new email message to the specified recipient. Automatically attaches files stored in the temporary system buffer.",
+                        parameters=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "to": types.Schema(type=types.Type.STRING, description="The recipient's email address."),
+                                "subject": types.Schema(type=types.Type.STRING, description="The subject line of the email."),
+                                "body": types.Schema(type=types.Type.STRING, description="The main text body of the email.")
+                            },
+                            required=["to", "subject", "body"]
+                        )
+                    )
+                ]
+            )
+            tools = [search_tool, send_tool]
  
         system_instruction = (
             "You are a Smart Email Assistant owned by Muhammad Salman Wattoo. "
