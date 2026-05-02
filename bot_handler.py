@@ -192,7 +192,8 @@ class BotHandler:
                 summary = await asyncio.to_thread(self.ai.get_summary, body)
                 
                 if summary.startswith("Error:"):
-                    await query.edit_message_text(f"⚠️ *System Alert:* {summary}", parse_mode="Markdown")
+                    # FIXED: Removed Markdown parsing for raw errors
+                    await query.edit_message_text(f"⚠️ System Alert: {summary}")
                     return
                 
                 kb = [[InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}")], self.get_back_button()]
@@ -295,7 +296,8 @@ class BotHandler:
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
         if res.startswith("Error:"):
-            await update.message.reply_text(f"⚠️ *System Alert:* {res}", parse_mode="Markdown")
+            # FIXED: Removed Markdown parsing for raw errors
+            await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
             if "Wait!" in res and "file" in res.lower():
                 await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
@@ -315,14 +317,16 @@ class BotHandler:
             if os.path.exists(file_path): os.remove(file_path)
  
             if transcribed_text.startswith("Error:"):
-                await msg.edit_text(f"⚠️ *System Alert:* {transcribed_text}", parse_mode="Markdown")
+                # FIXED: Removed Markdown parsing for raw errors
+                await msg.edit_text(f"⚠️ System Alert: {transcribed_text}")
                 return
  
             await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
             if res.startswith("Error:"):
-                await msg.edit_text(f"⚠️ *System Alert:* {res}", parse_mode="Markdown")
+                # FIXED: Removed Markdown parsing for raw errors
+                await msg.edit_text(f"⚠️ System Alert: {res}")
             else:
                 await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         except Exception as e:
@@ -336,10 +340,8 @@ class BotHandler:
  
 bot_handler_instance = BotHandler()
 
-# This uses the native startup system to guarantee it runs inside Render's worker
 @fastapi_app.on_event("startup")
 async def on_startup():
-    print("DEBUG: Executing Startup Event...")
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
@@ -372,14 +374,10 @@ async def webhook(request: Request):
         await bot_handler_instance.ptb_app.process_update(update)
         return {"ok": True}
     except RuntimeError as e:
-        # Catches the exact error Telegram throws if the webhook arrives too early
         if "not initialized" in str(e).lower():
-            print("DEBUG: Webhook hit before startup completed. Telling Telegram to wait.")
             return Response(content="Initializing", status_code=503)
-        print(f"ERROR processing webhook: {str(e)}")
         raise e
     except Exception as e:
-        print(f"General Webhook Error: {str(e)}")
         return {"ok": False}
  
 if __name__ == "__main__":
