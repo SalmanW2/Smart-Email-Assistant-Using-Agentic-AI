@@ -4,6 +4,7 @@ import uvicorn
 import asyncio
 import re
 import html
+import urllib.request
 from fastapi import Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -49,6 +50,13 @@ class BotHandler:
     def get_back_button(self):
         return [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")]
  
+    async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
+        """Pings the server itself to prevent Render from sleeping."""
+        try:
+            await asyncio.to_thread(urllib.request.urlopen, WEBHOOK_URL)
+        except Exception:
+            pass
+
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
         service = self.gmail.get_service()
         if not service: return
@@ -354,9 +362,16 @@ async def on_startup():
         await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
     except Exception: pass
 
+    # Email Check Loop
     bot_handler_instance.ptb_app.job_queue.run_repeating(
         bot_handler_instance.check_new_emails, interval=60, first=10
     )
+    
+    # Auto-Ping Loop (Interval: 14 Minutes / 840 Seconds)
+    bot_handler_instance.ptb_app.job_queue.run_repeating(
+        bot_handler_instance.auto_ping, interval=840, first=60
+    )
+
     await bot_handler_instance.ptb_app.start()
  
 @fastapi_app.on_event("shutdown")
