@@ -57,8 +57,8 @@ class AI_Engine:
     def _get_agent_config(self):
         tools = []
         if self.gmail:
-            # FIXED: Wrapping class methods in standard functions avoids the "Error: OBJECT" SDK bug completely.
-            def search_gmail_inbox(query: str, max_results: int = 5) -> str:
+            # FIXED: Removed default value (max_results: int = 5) to comply with strict Google SDK schema rules.
+            def search_gmail_inbox(query: str, max_results: int) -> str:
                 """Searches the user's Gmail inbox using standard search queries like 'is:unread'."""
                 return self.gmail.search_emails(query, max_results)
 
