@@ -20,15 +20,15 @@ class GmailClient:
 
     def search_emails(self, query: str = 'label:INBOX', max_results: int = 5):
         """
-        Searches the user's Gmail inbox using standard search queries. 
-        Example queries: 'is:unread', 'from:someone@example.com', or 'subject:urgent'.
+        Searches the user's Gmail inbox using specialized search queries. 
+        Parameters: query (standard Gmail search syntax), max_results (integer count).
         """
         service = self.get_service()
-        if not service: return "❌ Login required."
+        if not service: return "❌ Authentication required."
         try:
             results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
             messages = results.get('messages', [])
-            if not messages: return "📭 No emails found."
+            if not messages: return "📭 No relevant emails found."
             
             summary = []
             for m in messages:
@@ -36,7 +36,7 @@ class GmailClient:
                 summary.append(f"📧 ID: {m['id']} \n👤 From: {data['sender']} \n📝 Subject: {data['subject']}\n")
             return "\n".join(summary)
         except Exception as e:
-            return f"❌ Search error: {str(e)}"
+            return f"❌ Search failure: {str(e)}"
 
     def get_email_metadata(self, msg_id):
         service = self.get_service()
@@ -48,7 +48,7 @@ class GmailClient:
 
     def get_full_body(self, msg_id):
         service = self.get_service()
-        if not service: return "❌ Login Required"
+        if not service: return "❌ Authentication Required"
         msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
         payload = msg.get('payload', {})
         
@@ -67,14 +67,15 @@ class GmailClient:
         if not body and 'body' in payload and 'data' in payload['body']:
              body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
              
-        return body[:3000] if body else "No text content found."
+        return body[:3000] if body else "No text content identified."
 
     def send_email(self, to: str, subject: str, body: str):
         """
-        Drafts and sends a new email. It automatically includes any files currently cached in the system attachment buffer.
+        Transmits a new email message to the specified recipient. 
+        Automatically attaches files stored in the temporary system buffer.
         """
         service = self.get_service()
-        if not service: return "❌ Login Required"
+        if not service: return "❌ Authentication Required"
         try:
             message = MIMEMultipart()
             message['to'] = to
@@ -97,9 +98,9 @@ class GmailClient:
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
-            return "✅ Email Sent Successfully!"
+            return "✅ Transmission Successful!"
         except Exception as e:
-            return f"❌ Send Error: {str(e)}"
+            return f"❌ Transmission Error: {str(e)}"
         finally:
             if self.current_attachment and os.path.exists(self.current_attachment):
                 os.remove(self.current_attachment)
