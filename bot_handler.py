@@ -23,7 +23,7 @@ class BotHandler:
         self.ai = AI_Engine(self.gmail)
         self.notified_emails = set() 
         self.boot_time = int(time.time() * 1000)
-        self.compose_states = {} # State Machine for Manual Compose
+        self.compose_states = {} 
  
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -165,7 +165,7 @@ class BotHandler:
             await query.edit_message_text("✍️ *Compose Mode*\nTell AI your intent.\n_Example: Draft an email to HR for sick leave_", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         elif data == "menu_search":
             kb = [self.get_back_button()]
-            await query.edit_message_text("🔍 *Search*\nAsk AI to find specific emails.\n_Example: Find emails from last week_", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await query.edit_message_text("🔍 *Search*\nAsk AI to find specific emails.\n_Example: Find emails from Ali last week_", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         elif data == "menu_settings":
             kb = [[InlineKeyboardButton("🔀 Switch to Manual Mode", callback_data="manual_read_0")], self.get_back_button()]
             await query.edit_message_text("⚙️ *Settings*\nConfigure your assistant.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -234,7 +234,7 @@ class BotHandler:
                 await query.edit_message_text(f"↩️ *Replying to {sender_email}*\n\nPlease type your message below. 📎 Attach a file if needed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
             elif action == "getatt":
-                await query.edit_message_text("📥 Attachment retrieval initialized. Please check your Gmail app for complex files.", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                await query.edit_message_text("📥 Attempting to fetch attachments (This feature utilizes email parsing)...", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
  
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -246,7 +246,7 @@ class BotHandler:
         if not attachment: return
  
         if attachment.file_size > 20 * 1024 * 1024:
-            await update.message.reply_text("❌ *File is too large (Max 20MB).* \nPlease provide a shareable cloud storage link instead.", parse_mode="Markdown")
+            await update.message.reply_text("❌ *File is too large for Telegram (Max 20MB).* \nPlease upload it to your Google Drive and paste the shareable link here.", parse_mode="Markdown")
             return
  
         msg = await update.message.reply_text("⏳ Downloading attachment...")
@@ -263,7 +263,7 @@ class BotHandler:
             draft_text = f"📄 *Draft Ready!*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n📎 *1 File Attached*\n\nReview and click Send."
             await msg.edit_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         else:
-            await msg.edit_text(f"📎 *File '{file_name}' received.* \nWhat is the intended action?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            await msg.edit_text(f"📎 *File '{file_name}' received.* \nWhat do you want to do with it?\n_Example: Forward this to HR_", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
  
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -280,15 +280,15 @@ class BotHandler:
             if state['step'] == 'AWAIT_TO':
                 state['to'] = text
                 state['step'] = 'AWAIT_SUBJ'
-                await update.message.reply_text(f"Recipient: {text}\nSubject line?", reply_markup=InlineKeyboardMarkup(kb))
+                await update.message.reply_text(f"Got it. To: {text}\nWhat is the Subject?", reply_markup=InlineKeyboardMarkup(kb))
             elif state['step'] == 'AWAIT_SUBJ':
                 state['subj'] = text
                 state['step'] = 'AWAIT_BODY'
-                await update.message.reply_text("Body text? (Optional: Attach a file)", reply_markup=InlineKeyboardMarkup(kb))
+                await update.message.reply_text("Please type your email message. 📎 Attach a file if needed.", reply_markup=InlineKeyboardMarkup(kb))
             elif state['step'] == 'AWAIT_BODY':
                 state['body'] = text
                 kb_send = [[InlineKeyboardButton("✅ Send", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
-                draft_text = f"📄 *Final Draft:*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n\nSelect action."
+                draft_text = f"📄 *Final Draft:*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n\nReview and click Send."
                 await update.message.reply_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_send))
             return
  
@@ -298,12 +298,15 @@ class BotHandler:
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ *System Alert:* {res}", parse_mode="Markdown")
         else:
-            await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            if "Wait!" in res and "file" in res.lower():
+                await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            else:
+                await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
  
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         if user_id != str(OWNER_TELEGRAM_ID): return
-        msg = await update.message.reply_text("🎙️ Transcribing voice note...")
+        msg = await update.message.reply_text("🎙️ Processing voice note...")
         try:
             voice = update.message.voice
             file = await context.bot.get_file(voice.file_id)
@@ -316,7 +319,7 @@ class BotHandler:
                 await msg.edit_text(f"⚠️ *System Alert:* {transcribed_text}", parse_mode="Markdown")
                 return
  
-            await msg.edit_text(f"🗣️ *Transcription:* {transcribed_text}\n\n⏳ Processing command...", parse_mode="Markdown")
+            await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
             if res.startswith("Error:"):
@@ -324,7 +327,7 @@ class BotHandler:
             else:
                 await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         except Exception as e:
-            await msg.edit_text(f"❌ Voice processing failure: {str(e)}")
+            await msg.edit_text(f"❌ Voice processing error: {str(e)}")
  
     async def handle_guest_interaction(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -336,17 +339,15 @@ bot_handler_instance = BotHandler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize Bot and JobQueue
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
         await asyncio.sleep(1)
         await bot_handler_instance.ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        print("✅ Webhook synchronized.")
+        print("✅ Webhook synchronized successfully.")
     except Exception as e:
-        print(f"⚠️ Initialization Error: {e}")
+        print(f"⚠️ Webhook Error: {e}")
 
-    # Registered Recurring Tasks
     bot_handler_instance.ptb_app.job_queue.run_repeating(
         bot_handler_instance.check_new_emails, interval=60, first=10
     )
@@ -355,13 +356,11 @@ async def lifespan(app: FastAPI):
     )
 
     await bot_handler_instance.ptb_app.start()
-    yield # Service is active
+    yield 
     
-    # Shutdown: Cleanly stop services
     await bot_handler_instance.ptb_app.stop()
     await bot_handler_instance.ptb_app.shutdown()
 
-# Fast API Configuration
 fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
