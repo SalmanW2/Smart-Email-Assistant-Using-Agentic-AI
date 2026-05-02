@@ -49,10 +49,6 @@ class BotHandler:
 
     def get_back_button(self):
         return [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")]
-        
-    def get_auth_prompt_kb(self):
-        link = self.auth.get_login_link()
-        return InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Connect Google Account", url=link)]])
  
     async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
         """Self-ping mechanism to keep the Render service active."""
@@ -102,10 +98,12 @@ class BotHandler:
             return
  
         if not self.gmail.get_service():
+            link = self.auth.get_login_link()
+            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
             if update.message:
                 await update.message.reply_text(
                     "⚠️ *Authentication Required.*\nPlease connect your Gmail account to proceed.",
-                    parse_mode="Markdown", reply_markup=self.get_auth_prompt_kb()
+                    parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
                 )
             return
  
@@ -194,6 +192,7 @@ class BotHandler:
                 summary = await asyncio.to_thread(self.ai.get_summary, body)
                 
                 if summary.startswith("Error:"):
+                    # FIXED: Removed Markdown parsing for raw errors
                     await query.edit_message_text(f"⚠️ System Alert: {summary}")
                     return
                 
@@ -242,14 +241,6 @@ class BotHandler:
         if user_id != str(OWNER_TELEGRAM_ID):
             await self.handle_guest_interaction(update, context)
             return
-
-        # --- GATEKEEPER: Agar login nahi toh roko ---
-        if not self.gmail.get_service():
-            await update.message.reply_text(
-                "👋 Hello! I am your Smart Email Assistant.\n\n⚠️ *Authentication Required.*\nBefore I can process files, please connect your Google account.",
-                parse_mode="Markdown", reply_markup=self.get_auth_prompt_kb()
-            )
-            return
  
         attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None) or update.message.audio or update.message.video)
         if not attachment: return
@@ -280,14 +271,6 @@ class BotHandler:
             await self.handle_guest_interaction(update, context)
             return
             
-        # --- GATEKEEPER: Agar login nahi toh roko ---
-        if not self.gmail.get_service():
-            await update.message.reply_text(
-                "👋 Hello! I am your Smart Email Assistant.\n\n⚠️ *Authentication Required.*\nBefore I can answer questions, please connect your Google account.",
-                parse_mode="Markdown", reply_markup=self.get_auth_prompt_kb()
-            )
-            return
-            
         text = update.message.text
         
         if user_id in self.compose_states:
@@ -313,6 +296,7 @@ class BotHandler:
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
         if res.startswith("Error:"):
+            # FIXED: Removed Markdown parsing for raw errors
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
             if "Wait!" in res and "file" in res.lower():
@@ -323,15 +307,6 @@ class BotHandler:
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         if user_id != str(OWNER_TELEGRAM_ID): return
-
-        # --- GATEKEEPER: Agar login nahi toh roko ---
-        if not self.gmail.get_service():
-            await update.message.reply_text(
-                "👋 Hello! I am your Smart Email Assistant.\n\n⚠️ *Authentication Required.*\nBefore I can process voice commands, please connect your Google account.",
-                parse_mode="Markdown", reply_markup=self.get_auth_prompt_kb()
-            )
-            return
-
         msg = await update.message.reply_text("🎙️ Processing voice note...")
         try:
             voice = update.message.voice
@@ -342,6 +317,7 @@ class BotHandler:
             if os.path.exists(file_path): os.remove(file_path)
  
             if transcribed_text.startswith("Error:"):
+                # FIXED: Removed Markdown parsing for raw errors
                 await msg.edit_text(f"⚠️ System Alert: {transcribed_text}")
                 return
  
@@ -349,6 +325,7 @@ class BotHandler:
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
             if res.startswith("Error:"):
+                # FIXED: Removed Markdown parsing for raw errors
                 await msg.edit_text(f"⚠️ System Alert: {res}")
             else:
                 await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
