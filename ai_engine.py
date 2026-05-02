@@ -6,24 +6,14 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        # Standard, most stable model name
         self.model_name = "gemini-1.5-flash"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
-        """
-        Parses raw API exceptions and returns professional, human-readable error messages.
-        """
-        error_str = str(e).lower()
-        if "quota" in error_str or "429" in error_str:
-            return "Error: AI quota has been exhausted. Please change the model or try again tomorrow."
-        elif "api key" in error_str or "401" in error_str or "unauthorized" in error_str:
-            return "Error: Invalid or missing API Key. Please verify your credentials."
-        elif "timeout" in error_str or "network" in error_str or "connection" in error_str:
-            return "Error: Network connection to the AI server was lost. Please try again."
-        elif "model" in error_str or "not found" in error_str or "404" in error_str:
-            return "Error: The specified AI model was not found. Please verify the model configuration."
-        else:
-            return f"Error: {str(e)}"
+        # Puraani masking delete kar di gayi hai. 
+        # Ab jo exactly Google ka API error hoga, wahi Telegram par aayega.
+        return f"Raw Error: {str(e)}"
  
     def transcribe_audio(self, file_path: str) -> str:
         try:
@@ -57,7 +47,8 @@ class AI_Engine:
     def _get_agent_config(self):
         tools = []
         if self.gmail:
-            # FIXED: Removed default value (max_results: int = 5) to comply with strict Google SDK schema rules.
+            # 1. Wrapper functions -> Fixes the "Error: OBJECT" bug.
+            # 2. Removed max_results=5 -> Fixes the "Default value not supported" bug.
             def search_gmail_inbox(query: str, max_results: int) -> str:
                 """Searches the user's Gmail inbox using standard search queries like 'is:unread'."""
                 return self.gmail.search_emails(query, max_results)
