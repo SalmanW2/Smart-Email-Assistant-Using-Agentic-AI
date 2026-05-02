@@ -183,9 +183,8 @@ class BotHandler:
                 body = self.gmail.get_full_body(m_id)
                 summary = await asyncio.to_thread(self.ai.get_summary, body)
                 
-                if summary.startswith("Error:") or "validation error" in summary.lower():
-                    await query.edit_message_text("⚠️ *AI Quota Exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
-                    await self.show_manual_inbox(query.message, 0)
+                if summary.startswith("Error:"):
+                    await query.edit_message_text(f"⚠️ *System Alert:* {summary}", parse_mode="Markdown")
                     return
                 
                 kb = [[InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}")], self.get_back_button()]
@@ -227,7 +226,6 @@ class BotHandler:
                 
             elif action == "getatt":
                 await query.edit_message_text("📥 Attempting to fetch attachments (This feature utilizes email parsing)...", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-                # Note: Full attachment fetching requires extra Gmail API logic mapping part IDs. AI will summarize otherwise.
  
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -239,7 +237,7 @@ class BotHandler:
         if not attachment: return
  
         if attachment.file_size > 20 * 1024 * 1024:
-            await update.message.reply_text("❌ *File is too large for Telegram (Max 20MB).* \nPlease upload it to your Google Drive and just paste the shareable link here. I will add the link to your email.", parse_mode="Markdown")
+            await update.message.reply_text("❌ *File is too large for Telegram (Max 20MB).* \nPlease upload it to your Google Drive and paste the shareable link here.", parse_mode="Markdown")
             return
  
         msg = await update.message.reply_text("⏳ Downloading attachment...")
@@ -290,9 +288,8 @@ class BotHandler:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
-        if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
-            await update.message.reply_text("⚠️ *AI Quota exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
-            await self.show_manual_inbox(update.message, 0)
+        if res.startswith("Error:"):
+            await update.message.reply_text(f"⚠️ *System Alert:* {res}", parse_mode="Markdown")
         else:
             if "Wait!" in res and "file" in res.lower():
                 await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
@@ -311,17 +308,15 @@ class BotHandler:
             transcribed_text = await asyncio.to_thread(self.ai.transcribe_audio, file_path)
             if os.path.exists(file_path): os.remove(file_path)
  
-            if not transcribed_text or transcribed_text.startswith("Transcription error"):
-                await msg.edit_text("❌ Could not understand voice. Switching to manual mode.")
-                await self.show_manual_inbox(msg, 0)
+            if transcribed_text.startswith("Error:"):
+                await msg.edit_text(f"⚠️ *System Alert:* {transcribed_text}", parse_mode="Markdown")
                 return
  
             await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
-            if res.startswith("Error:") or "validation error" in res.lower() or "quota" in res.lower():
-                await msg.edit_text("⚠️ *AI Quota exhausted. Shifting to Manual Mode.*", parse_mode="Markdown")
-                await self.show_manual_inbox(update.message, 0)
+            if res.startswith("Error:"):
+                await msg.edit_text(f"⚠️ *System Alert:* {res}", parse_mode="Markdown")
             else:
                 await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         except Exception as e:
@@ -337,6 +332,10 @@ bot_handler_instance = BotHandler()
  
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
+    # Prevents 500 crashes if Telegram sends an update before the bot finishes starting
+    if not getattr(bot_handler_instance.ptb_app, '_initialized', False):
+        return {"status": "initializing", "message": "Bot is still starting up."}
+        
     data = await request.json()
     update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
     await bot_handler_instance.ptb_app.process_update(update)
