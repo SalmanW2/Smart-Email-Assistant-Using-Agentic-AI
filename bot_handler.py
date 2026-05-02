@@ -6,7 +6,7 @@ import re
 import html
 import urllib.request
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                            MessageHandler, filters, ContextTypes)
@@ -24,6 +24,7 @@ class BotHandler:
         self.notified_emails = set() 
         self.boot_time = int(time.time() * 1000)
         self.compose_states = {} 
+        self.is_ready = False  # Explicit readiness flag
  
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -356,8 +357,14 @@ async def lifespan(app: FastAPI):
     )
 
     await bot_handler_instance.ptb_app.start()
+    
+    # Mark bot as fully ready
+    bot_handler_instance.is_ready = True
+    print("✅ Bot is fully online and ready.")
+    
     yield 
     
+    bot_handler_instance.is_ready = False
     await bot_handler_instance.ptb_app.stop()
     await bot_handler_instance.ptb_app.shutdown()
 
@@ -365,18 +372,14 @@ fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    print("DEBUG: Webhook endpoint triggered.")
-    
-    # Safety Check: Prevent 500 crashes if Telegram sends messages too early
-    if not getattr(bot_handler_instance.ptb_app, '_initialized', False):
-        print("DEBUG: Bot is still starting up. Dropping early request.")
-        return {"ok": True} 
+    if not bot_handler_instance.is_ready:
+        print("DEBUG: Request dropped. Bot is still booting.")
+        return Response(status_code=503) # 503 tells Telegram to keep the message and resend it later
         
     data = await request.json()
     update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
     await bot_handler_instance.ptb_app.process_update(update)
     return {"ok": True}
-        
  
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
