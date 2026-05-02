@@ -6,7 +6,7 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model_name = "gemini-2.5-flash-lite"
+        self.model_name = "gemini-2.0-flash-lite"
         self.active_chats = {}
         
     # FIXED: Clean, user-friendly error messages (No raw tracebacks)
