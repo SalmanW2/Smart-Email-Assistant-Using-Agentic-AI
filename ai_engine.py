@@ -6,8 +6,7 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        # FIXED: Downgraded to the lightest, most free-tier friendly model to avoid Limit: 0 errors
-        self.model_name = "gemini-1.5-flash-8b"
+        self.model_name = "gemini-1.5-flash"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
