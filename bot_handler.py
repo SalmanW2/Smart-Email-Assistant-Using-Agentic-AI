@@ -5,7 +5,6 @@ import asyncio
 import re
 import html
 import urllib.request
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -272,7 +271,6 @@ class BotHandler:
             return
             
         text = update.message.text
-        print(f"DEBUG: Processing text: {text}")
         
         if user_id in self.compose_states:
             state = self.compose_states[user_id]
@@ -338,8 +336,10 @@ class BotHandler:
  
 bot_handler_instance = BotHandler()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+# This uses the native startup system to guarantee it runs inside Render's worker
+@fastapi_app.on_event("startup")
+async def on_startup():
+    print("DEBUG: Executing Startup Event...")
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
@@ -357,14 +357,12 @@ async def lifespan(app: FastAPI):
     )
 
     await bot_handler_instance.ptb_app.start()
-    print("✅ Bot is fully online.")
-    
-    yield 
-    
+    print("✅ Bot is fully initialized and online.")
+
+@fastapi_app.on_event("shutdown")
+async def on_shutdown():
     await bot_handler_instance.ptb_app.stop()
     await bot_handler_instance.ptb_app.shutdown()
-
-fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
@@ -374,9 +372,9 @@ async def webhook(request: Request):
         await bot_handler_instance.ptb_app.process_update(update)
         return {"ok": True}
     except RuntimeError as e:
-        # Check specifically if Telegram says it hasn't initialized yet
+        # Catches the exact error Telegram throws if the webhook arrives too early
         if "not initialized" in str(e).lower():
-            print("DEBUG: Caught initialization race condition. Telling Telegram to wait.")
+            print("DEBUG: Webhook hit before startup completed. Telling Telegram to wait.")
             return Response(content="Initializing", status_code=503)
         print(f"ERROR processing webhook: {str(e)}")
         raise e
