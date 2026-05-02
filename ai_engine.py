@@ -7,7 +7,7 @@ class AI_Engine:
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         # Sab se stable aur universally free model
-        self.model_name = "gemini-1.5-flash"
+        self.model_name = "gemini-2.0-flash-lite"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
