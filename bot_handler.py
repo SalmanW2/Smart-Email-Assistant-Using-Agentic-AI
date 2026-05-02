@@ -365,13 +365,13 @@ fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    if not bot_handler_instance.ptb_app.running:
-        return {"status": "initializing"}
-        
+    
+    print("DEBUG: Webhook endpoint triggered.")
     data = await request.json()
     update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
     await bot_handler_instance.ptb_app.process_update(update)
     return {"ok": True}
+        
  
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
