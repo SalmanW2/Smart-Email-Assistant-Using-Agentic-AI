@@ -19,6 +19,10 @@ class GmailClient:
         return None
 
     def search_emails(self, query: str = 'label:INBOX', max_results: int = 5):
+        """
+        Searches the user's Gmail inbox using standard search queries. 
+        Example queries: 'is:unread', 'from:someone@example.com', or 'subject:urgent'.
+        """
         service = self.get_service()
         if not service: return "❌ Login required."
         try:
@@ -66,6 +70,9 @@ class GmailClient:
         return body[:3000] if body else "No text content found."
 
     def send_email(self, to: str, subject: str, body: str):
+        """
+        Drafts and sends a new email. It automatically includes any files currently cached in the system attachment buffer.
+        """
         service = self.get_service()
         if not service: return "❌ Login Required"
         try:
@@ -94,7 +101,6 @@ class GmailClient:
         except Exception as e:
             return f"❌ Send Error: {str(e)}"
         finally:
-            # FIXED: Guaranteed deletion of file from Server to prevent Disk/Memory Leak
             if self.current_attachment and os.path.exists(self.current_attachment):
                 os.remove(self.current_attachment)
                 self.current_attachment = None
