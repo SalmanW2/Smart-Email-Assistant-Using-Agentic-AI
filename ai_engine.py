@@ -23,7 +23,8 @@ class AI_Engine:
         elif "model" in error_str or "not found" in error_str or "404" in error_str:
             return "Error: The specified AI model was not found. Please verify the model configuration."
         else:
-            return "Error: An unexpected technical issue occurred within the AI system."
+            # FIXED: This will now print the EXACT error from Google directly to your Telegram chat
+            return f"Error: {str(e)}"
  
     def transcribe_audio(self, file_path: str) -> str:
         try:
@@ -78,7 +79,6 @@ class AI_Engine:
         return types.GenerateContentConfig(
             tools=tools,
             system_instruction=system_instruction,
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(enabled=True),
             temperature=0.3 
         )
  
