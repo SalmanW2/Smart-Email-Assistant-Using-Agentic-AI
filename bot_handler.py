@@ -365,8 +365,13 @@ fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    
     print("DEBUG: Webhook endpoint triggered.")
+    
+    # Safety Check: Prevent 500 crashes if Telegram sends messages too early
+    if not getattr(bot_handler_instance.ptb_app, '_initialized', False):
+        print("DEBUG: Bot is still starting up. Dropping early request.")
+        return {"ok": True} 
+        
     data = await request.json()
     update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
     await bot_handler_instance.ptb_app.process_update(update)
