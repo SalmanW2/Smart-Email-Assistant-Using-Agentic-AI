@@ -6,13 +6,11 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        # Changed to the explicitly supported latest version
-        self.model_name = "gemini-1.5-flash-latest"
+        # UPGRADED: 1.5-flash is retired. Using the officially supported 2.0-flash model.
+        self.model_name = "gemini-2.0-flash"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
-        # Puraani masking delete kar di gayi hai. 
-        # Ab jo exactly Google ka API error hoga, wahi Telegram par aayega.
         return f"Raw Error: {str(e)}"
  
     def transcribe_audio(self, file_path: str) -> str:
