@@ -6,8 +6,8 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        # Standard, most stable model name
-        self.model_name = "gemini-1.5-flash"
+        # Changed to the explicitly supported latest version
+        self.model_name = "gemini-1.5-flash-latest"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
@@ -47,8 +47,6 @@ class AI_Engine:
     def _get_agent_config(self):
         tools = []
         if self.gmail:
-            # 1. Wrapper functions -> Fixes the "Error: OBJECT" bug.
-            # 2. Removed max_results=5 -> Fixes the "Default value not supported" bug.
             def search_gmail_inbox(query: str, max_results: int) -> str:
                 """Searches the user's Gmail inbox using standard search queries like 'is:unread'."""
                 return self.gmail.search_emails(query, max_results)
