@@ -23,7 +23,6 @@ class AI_Engine:
         elif "model" in error_str or "not found" in error_str or "404" in error_str:
             return "Error: The specified AI model was not found. Please verify the model configuration."
         else:
-            # FIXED: This will now print the EXACT error from Google directly to your Telegram chat
             return f"Error: {str(e)}"
  
     def transcribe_audio(self, file_path: str) -> str:
@@ -58,41 +57,16 @@ class AI_Engine:
     def _get_agent_config(self):
         tools = []
         if self.gmail:
-            # Explicitly defining the schemas to bypass the SDK auto-conversion bug
-            search_tool = types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name="search_emails",
-                        description="Searches the user's Gmail inbox using standard search queries. Example queries: 'is:unread', 'from:someone@example.com', or 'subject:urgent'.",
-                        parameters=types.Schema(
-                            type=types.Type.OBJECT,
-                            properties={
-                                "query": types.Schema(type=types.Type.STRING, description="The Gmail search query."),
-                                "max_results": types.Schema(type=types.Type.INTEGER, description="Maximum number of emails to return.")
-                            }
-                        )
-                    )
-                ]
-            )
-            
-            send_tool = types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name="send_email",
-                        description="Transmits a new email message to the specified recipient. Automatically attaches files stored in the temporary system buffer.",
-                        parameters=types.Schema(
-                            type=types.Type.OBJECT,
-                            properties={
-                                "to": types.Schema(type=types.Type.STRING, description="The recipient's email address."),
-                                "subject": types.Schema(type=types.Type.STRING, description="The subject line of the email."),
-                                "body": types.Schema(type=types.Type.STRING, description="The main text body of the email.")
-                            },
-                            required=["to", "subject", "body"]
-                        )
-                    )
-                ]
-            )
-            tools = [search_tool, send_tool]
+            # FIXED: Wrapping class methods in standard functions avoids the "Error: OBJECT" SDK bug completely.
+            def search_gmail_inbox(query: str, max_results: int = 5) -> str:
+                """Searches the user's Gmail inbox using standard search queries like 'is:unread'."""
+                return self.gmail.search_emails(query, max_results)
+
+            def send_new_email(to: str, subject: str, body: str) -> str:
+                """Drafts and sends a new email message to the specified recipient."""
+                return self.gmail.send_email(to, subject, body)
+
+            tools = [search_gmail_inbox, send_new_email]
  
         system_instruction = (
             "You are a Smart Email Assistant owned by Muhammad Salman Wattoo. "
@@ -101,11 +75,11 @@ class AI_Engine:
             "1. NO MARKDOWN. Never use asterisks (*), bold, or any formatting symbols.\n"
             "2. Be extremely short and direct.\n"
             "3. DO NOT search or fetch past emails unless the user explicitly asks for them.\n"
-            "4. To list emails, use the search_emails tool. "
-            "   Example: user says 'show last 5 emails' -> call search_emails with query='label:INBOX' and max_results=5.\n"
+            "4. To list emails, use the search_gmail_inbox tool. "
+            "   Example: user says 'show last 5 emails' -> call search_gmail_inbox with query='label:INBOX' and max_results=5.\n"
             "5. DRAFT APPROVAL RULE: If user asks to send an email, first write the draft "
             "   and ask 'Is this okay to send? Reply yes to confirm.' "
-            "   ONLY call send_email tool if the user explicitly replies yes or ok.\n"
+            "   ONLY call send_new_email tool if the user explicitly replies yes or ok.\n"
             "6. If an attachment is mentioned, it is already cached. Just draft or send the email normally.\n"
             "7. If you do not understand, ask a simple clarifying question."
         )
@@ -133,4 +107,4 @@ class AI_Engine:
             return self._parse_error(e)
  
     def guest_chat(self, text: str, user_id: str) -> str:
-        return "⚠️ This is a private assistant owned by Mr Neutral. Unauthorized access is prohibited."
+        return "⚠️ This is a private assistant owned by Muhammad Salman Wattoo. Unauthorized access is prohibited."
