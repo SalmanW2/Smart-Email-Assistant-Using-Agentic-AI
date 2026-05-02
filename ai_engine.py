@@ -6,8 +6,8 @@ class AI_Engine:
     def __init__(self, gmail_client=None):
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        # UPGRADED: 1.5-flash is retired. Using the officially supported 2.0-flash model.
-        self.model_name = "gemini-2.0-flash"
+        # FIXED: Downgraded to the lightest, most free-tier friendly model to avoid Limit: 0 errors
+        self.model_name = "gemini-1.5-flash-8b"
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
