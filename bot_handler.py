@@ -24,7 +24,6 @@ class BotHandler:
         self.notified_emails = set() 
         self.boot_time = int(time.time() * 1000)
         self.compose_states = {} 
-        self.is_ready = False  # Explicit readiness flag
  
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -273,6 +272,7 @@ class BotHandler:
             return
             
         text = update.message.text
+        print(f"DEBUG: Processing text: {text}")
         
         if user_id in self.compose_states:
             state = self.compose_states[user_id]
@@ -357,14 +357,10 @@ async def lifespan(app: FastAPI):
     )
 
     await bot_handler_instance.ptb_app.start()
-    
-    # Mark bot as fully ready
-    bot_handler_instance.is_ready = True
-    print("✅ Bot is fully online and ready.")
+    print("✅ Bot is fully online.")
     
     yield 
     
-    bot_handler_instance.is_ready = False
     await bot_handler_instance.ptb_app.stop()
     await bot_handler_instance.ptb_app.shutdown()
 
@@ -372,14 +368,21 @@ fastapi_app.router.lifespan_context = lifespan
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
-    if not bot_handler_instance.is_ready:
-        print("DEBUG: Request dropped. Bot is still booting.")
-        return Response(status_code=503) # 503 tells Telegram to keep the message and resend it later
-        
-    data = await request.json()
-    update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
-    await bot_handler_instance.ptb_app.process_update(update)
-    return {"ok": True}
+    try:
+        data = await request.json()
+        update = Update.de_json(data, bot_handler_instance.ptb_app.bot)
+        await bot_handler_instance.ptb_app.process_update(update)
+        return {"ok": True}
+    except RuntimeError as e:
+        # Check specifically if Telegram says it hasn't initialized yet
+        if "not initialized" in str(e).lower():
+            print("DEBUG: Caught initialization race condition. Telling Telegram to wait.")
+            return Response(content="Initializing", status_code=503)
+        print(f"ERROR processing webhook: {str(e)}")
+        raise e
+    except Exception as e:
+        print(f"General Webhook Error: {str(e)}")
+        return {"ok": False}
  
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
