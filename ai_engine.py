@@ -9,15 +9,21 @@ class AI_Engine:
         self.model_name = "gemini-1.5-flash"
         self.active_chats = {}
         
-    # FIXED: Clean, user-friendly error messages (No raw tracebacks)
     def _parse_error(self, e: Exception) -> str:
+        """
+        Parses raw API exceptions and returns professional, human-readable error messages.
+        """
         error_str = str(e).lower()
         if "quota" in error_str or "429" in error_str:
-            return "QUOTA_ERROR: AI limits reached."
-        elif "api key" in error_str or "401" in error_str:
-            return "Error: Gemini Authentication missing."
+            return "Error: AI quota has been exhausted. Please change the model or try again tomorrow."
+        elif "api key" in error_str or "401" in error_str or "unauthorized" in error_str:
+            return "Error: Invalid or missing API Key. Please verify your credentials."
+        elif "timeout" in error_str or "network" in error_str or "connection" in error_str:
+            return "Error: Network connection to the AI server was lost. Please try again."
+        elif "model" in error_str or "not found" in error_str or "404" in error_str:
+            return "Error: The specified AI model was not found. Please verify the model configuration."
         else:
-            return "Error: AI System temporarily unavailable."
+            return "Error: An unexpected technical issue occurred within the AI system."
  
     def transcribe_audio(self, file_path: str) -> str:
         try:
@@ -78,7 +84,7 @@ class AI_Engine:
  
     def agent_chat(self, text: str, user_id: str) -> str:
         if not self.client:
-            return "System offline."
+            return "Error: AI System offline."
         try:
             if user_id not in self.active_chats:
                 self.active_chats[user_id] = self.client.chats.create(
@@ -93,4 +99,4 @@ class AI_Engine:
             return self._parse_error(e)
  
     def guest_chat(self, text: str, user_id: str) -> str:
-        return "⚠️ This is a private assistant owned by Muhammad Salman Wattoo. Unauthorized access."
+        return "⚠️ This is a private assistant owned by Mr Neutral. Unauthorized access is prohibited."
