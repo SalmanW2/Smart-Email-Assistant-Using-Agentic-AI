@@ -15,18 +15,19 @@ class AuthManager:
         self.scopes = SCOPES
         self.creds_file = CREDENTIALS_FILE
         self.token_file = TOKEN_FILE
-        self.active_flow = None
 
     def get_login_link(self):
-        self.active_flow = Flow.from_client_secrets_file(
+        """Generates the Google OAuth login link."""
+        flow = Flow.from_client_secrets_file(
             self.creds_file,
             scopes=self.scopes,
             redirect_uri=os.getenv("REDIRECT_URI")
         )
-        auth_url, _ = self.active_flow.authorization_url(prompt='consent', access_type='offline')
+        auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
         return auth_url
 
     def get_credentials(self):
+        """Retrieves saved credentials from the token file."""
         if os.path.exists(self.token_file):
             creds = Credentials.from_authorized_user_file(self.token_file, self.scopes)
             if creds.valid:
@@ -34,12 +35,13 @@ class AuthManager:
         return None
 
     def save_credentials(self, creds):
+        """Saves the credentials to the token file."""
         with open(self.token_file, 'w') as f:
             f.write(creds.to_json())
 
 auth_manager_instance = AuthManager()
 
-# FIXED: Render Health Check needs HEAD method
+# Render Health Check needs HEAD method
 @app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {"status": "System Online"}
@@ -47,15 +49,22 @@ def read_root():
 @app.get("/callback", response_class=HTMLResponse)
 async def callback(request: Request):
     code = request.query_params.get("code")
-    if not code or not auth_manager_instance.active_flow:
-        return "<h3>Authentication Failed: Session expired in RAM. Restart from Telegram.</h3>"
+    
+    if not code:
+        return "<h3>Authentication Failed: No authorization code provided.</h3>"
     
     try:
-        auth_manager_instance.active_flow.fetch_token(code=code)
-        creds = auth_manager_instance.active_flow.credentials
+        # Rebuilding the flow here prevents RAM expiration issues on Render
+        flow = Flow.from_client_secrets_file(
+            CREDENTIALS_FILE, 
+            scopes=SCOPES, 
+            redirect_uri=os.getenv("REDIRECT_URI")
+        )
+        flow.fetch_token(code=code)
+        creds = flow.credentials
         auth_manager_instance.save_credentials(creds)
-        auth_manager_instance.active_flow = None 
 
+        # Fetch user's email address for confirmation
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_addr = profile.get('emailAddress')
@@ -63,11 +72,31 @@ async def callback(request: Request):
         now = datetime.datetime.now(datetime.timezone.utc)
         dt_string = now.strftime("%B %d, %Y at %I:%M %p UTC")
 
+        # Initialize the Telegram Bot to send the success message
         bot = Bot(token=BOT_TOKEN)
-        text = f"Authentication Successful!\n\nAccount: {email_addr} has been successfully logged in on {dt_string}."
-        kb = [[InlineKeyboardButton("Read Inbox", callback_data="menu_read")]]
-        await bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=text, reply_markup=InlineKeyboardMarkup(kb))
+        
+        # The Full Workspace Dashboard Keyboard
+        kb = [
+            [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
+             InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
+            [InlineKeyboardButton("🔍 Search", callback_data="menu_search_prompt")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
+        ]
+        
+        success_text = (
+            f"✅ *Authentication Successful!*\n\n"
+            f"Account: `{email_addr}` has been successfully logged in on {dt_string}.\n\n"
+            f"🎛️ *Workspace Dashboard*\n"
+            f"You can click a button below for manual actions, or simply type your request and the AI will handle it automatically."
+        )
+        
+        await bot.send_message(
+            chat_id=OWNER_TELEGRAM_ID, 
+            text=success_text, 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
-        return "<h3>Authentication Successful! You can return to Telegram.</h3>"
+        return "<h3>Authentication Successful! You can close this tab and return to Telegram.</h3>"
     except Exception as e:
         return f"<h3>Authentication Failed: {str(e)}</h3>"
