@@ -17,7 +17,7 @@ class AuthManager:
         self.token_file = TOKEN_FILE
 
     def get_login_link(self):
-        """Generates the Google OAuth login link."""
+        """Generates the Google OAuth login link automatically."""
         flow = Flow.from_client_secrets_file(
             self.creds_file,
             scopes=self.scopes,
@@ -41,7 +41,6 @@ class AuthManager:
 
 auth_manager_instance = AuthManager()
 
-# Render Health Check needs HEAD method
 @app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {"status": "System Online"}
@@ -55,27 +54,16 @@ async def callback(request: Request):
     
     try:
         # Rebuilding the flow here prevents RAM expiration issues on Render
-        flow = Flow.from_client_secrets_file(
-            CREDENTIALS_FILE, 
-            scopes=SCOPES, 
-            redirect_uri=os.getenv("REDIRECT_URI")
-        )
+        flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=os.getenv("REDIRECT_URI"))
         flow.fetch_token(code=code)
         creds = flow.credentials
         auth_manager_instance.save_credentials(creds)
 
-        # Fetch user's email address for confirmation
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_addr = profile.get('emailAddress')
         
-        now = datetime.datetime.now(datetime.timezone.utc)
-        dt_string = now.strftime("%B %d, %Y at %I:%M %p UTC")
-
-        # Initialize the Telegram Bot to send the success message
         bot = Bot(token=BOT_TOKEN)
-        
-        # The Full Workspace Dashboard Keyboard
         kb = [
             [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
              InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
@@ -83,20 +71,15 @@ async def callback(request: Request):
             [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
         ]
         
+        # FIXED: Much shorter, cleaner success message
         success_text = (
-            f"✅ *Authentication Successful!*\n\n"
-            f"Account: `{email_addr}` has been successfully logged in on {dt_string}.\n\n"
+            f"✅ *Logged In Successfully!*\n"
+            f"Account: `{email_addr}`\n\n"
             f"🎛️ *Workspace Dashboard*\n"
-            f"You can click a button below for manual actions, or simply type your request and the AI will handle it automatically."
+            f"Select an action below or type your request."
         )
         
-        await bot.send_message(
-            chat_id=OWNER_TELEGRAM_ID, 
-            text=success_text, 
-            parse_mode="Markdown", 
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-
+        await bot.send_message(chat_id=OWNER_TELEGRAM_ID, text=success_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return "<h3>Authentication Successful! You can close this tab and return to Telegram.</h3>"
     except Exception as e:
         return f"<h3>Authentication Failed: {str(e)}</h3>"
