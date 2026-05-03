@@ -7,7 +7,7 @@ class AI_Engine:
         self.gmail = gmail_client
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         # FIXED: Updated to the new working model
-        self.model_name = "gemini-3-flash-preview"
+        self.model_name = "gemini-2.5-flash-lite"
         self.active_chats = {}
         self.last_auth_state = False
         
