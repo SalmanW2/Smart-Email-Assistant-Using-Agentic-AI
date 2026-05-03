@@ -9,7 +9,6 @@ from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                            MessageHandler, filters, ContextTypes)
-from telegram.error import RetryAfter
 from config_env import BOT_TOKEN, OWNER_TELEGRAM_ID, WEBHOOK_URL
 from auth_manager import auth_manager_instance, app as fastapi_app
 from gmail_client import GmailClient
@@ -21,12 +20,11 @@ class BotHandler:
         self.gmail = GmailClient(self.auth)
         self.ai = AI_Engine(self.gmail)
         self.notified_emails = set() 
-        self.boot_time = int(time.time() * 1000)
+        self.startup_time = int(time.time() * 1000)
         
-        # State management for manual modes
         self.compose_states = {} 
         self.search_states = {}
-        self.current_queries = {} # Stores the active search query for pagination
+        self.current_queries = {}
 
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -44,7 +42,6 @@ class BotHandler:
         ))
 
     def get_main_menu_kb(self):
-        """Returns the primary Workspace Dashboard keyboard."""
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
              InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
@@ -56,7 +53,6 @@ class BotHandler:
         return [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")]
 
     async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
-        """Self-ping mechanism to keep the Render service active."""
         try:
             await asyncio.to_thread(urllib.request.urlopen, WEBHOOK_URL)
         except Exception:
@@ -75,7 +71,7 @@ class BotHandler:
                     msg_data = service.users().messages().get(userId='me', id=m_id, format='minimal').execute()
                     internal_date = int(msg_data.get('internalDate', 0))
 
-                    if internal_date > self.boot_time:
+                    if internal_date > self.startup_time:
                         self.notified_emails.add(m_id)
                         meta = self.gmail.get_email_metadata(m_id)
                         
@@ -112,14 +108,13 @@ class BotHandler:
                 )
             return
 
-        text = "🎛️ *Workspace Dashboard*\nWelcome! You can click a button below for manual actions, or simply type your request and the AI will handle it automatically."
+        text = "🎛️ *Workspace Dashboard*\nSelect an action below or type your request."
         if update.callback_query:
             await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=self.get_main_menu_kb())
         else:
             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=self.get_main_menu_kb())
 
     async def show_paginated_emails(self, message_obj, query='label:INBOX', offset=0, user_id=None):
-        """Fetches and displays emails based on a specific query with pagination."""
         service = self.gmail.get_service()
         if not service: return
         try:
@@ -166,7 +161,12 @@ class BotHandler:
             else:
                 await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
-            pass
+            # FIXED: Handle errors so it doesn't crash silently
+            error_text = f"⚠️ *Search Error:*\n{str(e)}"
+            if hasattr(message_obj, 'edit_text'):
+                await message_obj.edit_text(error_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            else:
+                await message_obj.reply_text(error_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
     async def handle_button_actions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -177,7 +177,7 @@ class BotHandler:
         if data == "menu_main":
             self.compose_states.pop(user_id, None)
             self.search_states.pop(user_id, None)
-            text = "🎛️ *Workspace Dashboard*\nWelcome! You can click a button below for manual actions, or simply type your request and the AI will handle it automatically."
+            text = "🎛️ *Workspace Dashboard*\nSelect an action below or type your request."
             await query.edit_message_text(text, parse_mode="Markdown", reply_markup=self.get_main_menu_kb())
         
         elif data == "menu_compose":
@@ -232,7 +232,10 @@ class BotHandler:
             if action == "sum":
                 await query.edit_message_text("⏳ Generating AI Summary...")
                 body = self.gmail.get_full_body(m_id)
-                summary = await asyncio.to_thread(self.ai.get_summary, body)
+                meta = self.gmail.get_email_metadata(m_id)
+                
+                # FIXED: Passing sender to the summary function
+                summary = await asyncio.to_thread(self.ai.get_summary, body, meta['sender'])
                 
                 if summary.startswith("Error:"):
                     await query.edit_message_text(f"⚠️ System Alert: {summary}")
@@ -315,15 +318,14 @@ class BotHandler:
             
         text = update.message.text
         
-        # Check if user is in Manual Search flow
+        # FIXED: Bug in search where it tried to edit the user's message and failed silently.
         if user_id in self.search_states and self.search_states[user_id] == 'AWAIT_QUERY':
             query_text = text
             self.search_states.pop(user_id, None)
-            await update.message.reply_text(f"🔍 Searching for: `{query_text}`...", parse_mode="Markdown")
-            await self.show_paginated_emails(update.message, query=query_text, offset=0, user_id=user_id)
+            waiting_msg = await update.message.reply_text(f"🔍 Searching for: `{query_text}`...", parse_mode="Markdown")
+            await self.show_paginated_emails(waiting_msg, query=query_text, offset=0, user_id=user_id)
             return
 
-        # Check if user is in Manual Compose flow
         if user_id in self.compose_states:
             state = self.compose_states[user_id]
             kb = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
@@ -346,17 +348,17 @@ class BotHandler:
                 await update.message.reply_text("Please upload an attachment file, or click Send Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
             return
 
-        # Default AI Routing
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
+            # We enforce standard Markdown from AI, safely handled here
             if "Wait!" in res and "file" in res.lower():
                 await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
             else:
-                await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -380,7 +382,7 @@ class BotHandler:
             if res.startswith("Error:"):
                 await msg.edit_text(f"⚠️ System Alert: {res}")
             else:
-                await update.message.reply_text(res, reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         except Exception as e:
             await msg.edit_text(f"❌ Voice processing error: {str(e)}")
 
