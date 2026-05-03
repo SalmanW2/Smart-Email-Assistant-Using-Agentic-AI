@@ -1,6 +1,7 @@
 import os
 import base64
 import mimetypes
+import re
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -10,7 +11,8 @@ from email import encoders
 class GmailClient:
     def __init__(self, auth_manager):
         self.auth = auth_manager
-        self.current_attachment = None
+        # NEW: Global array for AI voice attachments
+        self.current_global_attachments = []
 
     def get_service(self):
         creds = self.auth.get_credentials()
@@ -18,29 +20,18 @@ class GmailClient:
             return build('gmail', 'v1', credentials=creds)
         return None
 
-    def search_emails(self, query: str = 'label:INBOX', max_results: int = 5):
-        service = self.get_service()
-        if not service: return "❌ Authentication required."
-        try:
-            results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
-            messages = results.get('messages', [])
-            if not messages: return "📭 No relevant emails found."
-            
-            summary = []
-            for m in messages:
-                data = self.get_email_metadata(m['id'])
-                summary.append(f"📧 ID: {m['id']} \n👤 From: {data['sender']} \n📝 Subject: {data['subject']}\n")
-            return "\n".join(summary)
-        except Exception as e:
-            return f"❌ Search failure: {str(e)}"
-
     def get_email_metadata(self, msg_id):
         service = self.get_service()
         msg = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject', 'From']).execute()
         headers = msg.get('payload', {}).get('headers', [])
         subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
         sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
-        return {"id": msg_id, "subject": subject, "sender": sender}
+        
+        # Extract attachment names for notification
+        parts = msg.get('payload', {}).get('parts', [])
+        attachments = [p['filename'] for p in parts if p.get('filename')]
+        
+        return {"id": msg_id, "subject": subject, "sender": sender, "attachments": attachments}
 
     def get_full_body(self, msg_id):
         service = self.get_service()
@@ -63,9 +54,16 @@ class GmailClient:
         if not body and 'body' in payload and 'data' in payload['body']:
              body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
              
-        return body[:3000] if body else "No text content identified."
+        if not body: return "No text content identified."
+        
+        # NEW: Text Cleaner to remove messy forum footers and dashes
+        body = re.sub(r'-{3,}', '---', body) # Reduce huge dash lines
+        body = re.sub(r'To reply click on this link:.*', '', body, flags=re.IGNORECASE | re.DOTALL)
+        body = re.sub(r'Unsubscribe from this forum:.*', '', body, flags=re.IGNORECASE | re.DOTALL)
+        body = os.linesep.join([s for s in body.splitlines() if s.strip()]) # Remove empty blank lines
+        
+        return body[:3000]
 
-    # Attachment Downloader
     def get_attachments(self, msg_id):
         service = self.get_service()
         if not service: return []
@@ -95,11 +93,10 @@ class GmailClient:
                 extract_parts(payload['parts'])
                 
             return attachments
-        except Exception as e:
-            print(f"Attachment error: {e}")
+        except:
             return []
 
-    def send_email(self, to: str, subject: str, body: str):
+    def send_email(self, to: str, subject: str, body: str, manual_attachments: list):
         service = self.get_service()
         if not service: return "❌ Authentication Required"
         try:
@@ -108,29 +105,35 @@ class GmailClient:
             message['subject'] = subject
             message.attach(MIMEText(body, 'plain'))
 
-            if self.current_attachment and os.path.exists(self.current_attachment):
-                content_type, encoding = mimetypes.guess_type(self.current_attachment)
-                if content_type is None or encoding is not None:
-                    content_type = 'application/octet-stream'
-                main_type, sub_type = content_type.split('/', 1)
+            # Combine manual upload and global AI memory uploads
+            all_files = manual_attachments + self.current_global_attachments
 
-                with open(self.current_attachment, 'rb') as fp:
-                    msg_file = MIMEBase(main_type, sub_type)
-                    msg_file.set_payload(fp.read())
-                encoders.encode_base64(msg_file)
-                filename = os.path.basename(self.current_attachment)
-                msg_file.add_header('Content-Disposition', 'attachment', filename=filename)
-                message.attach(msg_file)
+            for file_path in all_files:
+                if os.path.exists(file_path):
+                    content_type, encoding = mimetypes.guess_type(file_path)
+                    if content_type is None or encoding is not None:
+                        content_type = 'application/octet-stream'
+                    main_type, sub_type = content_type.split('/', 1)
+
+                    with open(file_path, 'rb') as fp:
+                        msg_file = MIMEBase(main_type, sub_type)
+                        msg_file.set_payload(fp.read())
+                    encoders.encode_base64(msg_file)
+                    filename = os.path.basename(file_path)
+                    msg_file.add_header('Content-Disposition', 'attachment', filename=filename)
+                    message.attach(msg_file)
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
+            
+            # Clean up all temp files
+            for file_path in all_files:
+                if os.path.exists(file_path): os.remove(file_path)
+            self.current_global_attachments = []
+            
             return "✅ Transmission Successful!"
         except Exception as e:
             return f"❌ Transmission Error: {str(e)}"
-        finally:
-            if self.current_attachment and os.path.exists(self.current_attachment):
-                os.remove(self.current_attachment)
-                self.current_attachment = None
 
     def delete_email(self, msg_id):
         service = self.get_service()
