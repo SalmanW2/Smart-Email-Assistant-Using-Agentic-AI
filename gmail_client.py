@@ -19,10 +19,6 @@ class GmailClient:
         return None
 
     def search_emails(self, query: str = 'label:INBOX', max_results: int = 5):
-        """
-        Searches the user's Gmail inbox using specialized search queries. 
-        Parameters: query (standard Gmail search syntax), max_results (integer count).
-        """
         service = self.get_service()
         if not service: return "❌ Authentication required."
         try:
@@ -69,11 +65,41 @@ class GmailClient:
              
         return body[:3000] if body else "No text content identified."
 
+    # Attachment Downloader
+    def get_attachments(self, msg_id):
+        service = self.get_service()
+        if not service: return []
+        
+        try:
+            msg = service.users().messages().get(userId='me', id=msg_id).execute()
+            payload = msg.get('payload', {})
+            attachments = []
+
+            def extract_parts(parts):
+                for part in parts:
+                    if part.get('filename') and part.get('body', {}).get('attachmentId'):
+                        att_id = part['body']['attachmentId']
+                        att = service.users().messages().attachments().get(
+                            userId='me', messageId=msg_id, id=att_id).execute()
+                        data = att.get('data')
+                        if data:
+                            file_data = base64.urlsafe_b64decode(data)
+                            file_path = f"/tmp/{part['filename']}"
+                            with open(file_path, 'wb') as f:
+                                f.write(file_data)
+                            attachments.append(file_path)
+                    if 'parts' in part:
+                        extract_parts(part['parts'])
+
+            if 'parts' in payload:
+                extract_parts(payload['parts'])
+                
+            return attachments
+        except Exception as e:
+            print(f"Attachment error: {e}")
+            return []
+
     def send_email(self, to: str, subject: str, body: str):
-        """
-        Transmits a new email message to the specified recipient. 
-        Automatically attaches files stored in the temporary system buffer.
-        """
         service = self.get_service()
         if not service: return "❌ Authentication Required"
         try:

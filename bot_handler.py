@@ -125,7 +125,7 @@ class BotHandler:
             messages = results.get('messages', [])
             
             if not messages:
-                text = f"📭 No emails found for query: `{query}`"
+                text = f"📭 No emails found for: `{query}`"
                 kb = [[InlineKeyboardButton("🔍 Search Again", callback_data="menu_search_prompt")], self.get_back_button()]
                 if hasattr(message_obj, 'edit_text'):
                     await message_obj.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -139,11 +139,14 @@ class BotHandler:
                 return
 
             kb = []
-            text = f"📥 *Results ({offset+1}-{offset+len(page_msgs)}):*\nQuery: `{query}`\n\n"
+            # FIXED: UI looks clean now, no technical "Query:" words
+            text = f"📥 *Results ({offset+1}-{offset+len(page_msgs)}):*\n🔍 Searched: `{query}`\n\n"
             for idx, m in enumerate(page_msgs):
                 meta = self.gmail.get_email_metadata(m['id'])
-                safe_sender = html.escape(meta['sender'][:25])
-                safe_subj = html.escape(meta['subject'][:30])
+                # FIXED: Removed html.escape to prevent &lt; bugs. Using manual replacement for safe markdown.
+                safe_sender = meta['sender'][:30].replace('<', '').replace('>', '').replace('_', ' ').replace('*', '')
+                safe_subj = meta['subject'][:35].replace('<', '').replace('>', '').replace('_', ' ').replace('*', '')
+                
                 text += f"*{idx+1+offset}.* {safe_sender}\n_{safe_subj}..._\n\n"
                 kb.append([InlineKeyboardButton(f"📖 Read #{idx+1+offset}", callback_data=f"full_{m['id']}")])
             
@@ -161,7 +164,6 @@ class BotHandler:
             else:
                 await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
-            # FIXED: Handle errors so it doesn't crash silently
             error_text = f"⚠️ *Search Error:*\n{str(e)}"
             if hasattr(message_obj, 'edit_text'):
                 await message_obj.edit_text(error_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
@@ -173,6 +175,13 @@ class BotHandler:
         user_id = str(update.effective_user.id)
         await query.answer()
         data = query.data
+
+        # NEW: The Gatekeeper - Protects manual buttons if not logged in
+        if not self.gmail.get_service() and data not in ["action_logout"]:
+            link = self.auth.get_login_link()
+            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
+            await query.edit_message_text("⚠️ *Please login first!*\nYou need to connect your Google Account to proceed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            return
 
         if data == "menu_main":
             self.compose_states.pop(user_id, None)
@@ -233,8 +242,6 @@ class BotHandler:
                 await query.edit_message_text("⏳ Generating AI Summary...")
                 body = self.gmail.get_full_body(m_id)
                 meta = self.gmail.get_email_metadata(m_id)
-                
-                # FIXED: Passing sender to the summary function
                 summary = await asyncio.to_thread(self.ai.get_summary, body, meta['sender'])
                 
                 if summary.startswith("Error:"):
@@ -278,8 +285,20 @@ class BotHandler:
                 kb = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
                 await query.edit_message_text(f"↩️ *Replying to {sender_email}*\n\nPlease type your message below. 📎 You can attach a file in the next step.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
+            # NEW: Real Attachment Processing Logic
             elif action == "getatt":
-                await query.edit_message_text("📥 Attempting to fetch attachments (This feature utilizes email parsing)...", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                await query.edit_message_text("⏳ Fetching attachments...")
+                file_paths = await asyncio.to_thread(self.gmail.get_attachments, m_id)
+                
+                if not file_paths:
+                    await query.edit_message_text("📭 No supported attachments found in this email.", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                else:
+                    await query.edit_message_text("📤 Sending attachments, please wait...")
+                    for fp in file_paths:
+                        with open(fp, 'rb') as f:
+                            await context.bot.send_document(chat_id=user_id, document=f)
+                        os.remove(fp) # Clean up file after sending
+                    await query.edit_message_text("✅ Attachments sent successfully!", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -318,7 +337,6 @@ class BotHandler:
             
         text = update.message.text
         
-        # FIXED: Bug in search where it tried to edit the user's message and failed silently.
         if user_id in self.search_states and self.search_states[user_id] == 'AWAIT_QUERY':
             query_text = text
             self.search_states.pop(user_id, None)
@@ -354,7 +372,6 @@ class BotHandler:
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
-            # We enforce standard Markdown from AI, safely handled here
             if "Wait!" in res and "file" in res.lower():
                 await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
             else:
