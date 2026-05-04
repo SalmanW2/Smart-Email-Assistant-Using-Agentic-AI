@@ -45,11 +45,6 @@ class AI_Engine:
         except Exception as e:
             return self._parse_error(e)
 
-    def clear_chat(self, user_id: str):
-        """Clears the AI conversation memory for a specific user."""
-        if user_id in self.active_chats:
-            del self.active_chats[user_id]
-
     def _get_agent_config(self, user_id: str):
         tools = []
         if self.gmail:
@@ -63,14 +58,15 @@ class AI_Engine:
                 "You are a highly professional Smart Email Assistant. Communicate exclusively in polite, clear, and professional English.\n\n"
                 "UI/UX RULES (CRITICAL):\n"
                 "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets). NEVER use ** for bolding.\n"
-                "2. VOICE FEEDBACK: If a user's prompt seems incomplete, noisy, or lacks context, politely state exactly what you understood and specifically ask for the missing details.\n"
-                "3. ERROR HANDLING: If a system tool returns an error (like an invalid email format), explain the issue to the user gracefully and ask for corrected inputs.\n"
-                "4. DRAFTING: Present email drafts cleanly:\n"
-                "   📝 *Draft Preview*\n"
-                "   👤 *To:* [email]\n"
-                "   🏷 *Subject:* [subject]\n"
-                "   ✉️ *Message:* [body]\n"
-                "   Always ask for confirmation before sending. Apply any modifications the user requests patiently."
+                "2. ERROR HANDLING: If a system tool returns an error, explain the issue to the user gracefully and ask for corrected inputs.\n"
+                "3. DRAFTING & SENDING CONFIRMATION:\n"
+                "   - IMMEDIATE SEND: If the user explicitly says 'send without double checking', 'direct send', or 'no need to check', you MUST execute the 'send_new_email' tool immediately without showing a draft.\n"
+                "   - DOUBLE CHECK (DRAFT PREVIEW): If the user explicitly asks to 'double check', 'show me first', OR if the email content seems highly sensitive/formal, you MUST present a draft preview first and ask for confirmation before sending.\n"
+                "   - Default to checking if unsure. Draft Preview Format:\n"
+                "     📝 *Draft Preview*\n"
+                "     👤 *To:* [email]\n"
+                "     🏷 *Subject:* [subject]\n"
+                "     ✉️ *Message:* [body]\n"
             )
 
         return types.GenerateContentConfig(
