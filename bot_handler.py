@@ -24,7 +24,6 @@ class BotHandler:
         self.compose_states = {} 
         self.search_states = {}
         self.current_queries = {}
-        # NEW: Navigation history tracking
         self.navigation_history = {} 
 
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -51,7 +50,6 @@ class BotHandler:
         ])
 
     def get_back_button(self, context_type="main", extra_data=""):
-        # NEW: Dynamic Back Button Generator
         if context_type == "inbox":
             return [InlineKeyboardButton("🔙 Back to Inbox", callback_data=f"manual_read_{extra_data}")]
         elif context_type == "search":
@@ -73,7 +71,6 @@ class BotHandler:
 
             for msg in messages:
                 m_id = msg['id']
-                # FIXED: Instant lock to prevent double webhooks
                 if m_id not in self.notified_emails:
                     self.notified_emails.add(m_id)
                     
@@ -82,8 +79,6 @@ class BotHandler:
 
                     if internal_date > self.startup_time:
                         meta = self.gmail.get_email_metadata(m_id)
-                        
-                        # NEW: Shows attachment details inside notification
                         att_count = len(meta.get('attachments', []))
                         att_text = f"📎 *Attachments:* {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
                         
@@ -122,6 +117,38 @@ class BotHandler:
             await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=self.get_main_menu_kb())
         else:
             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=self.get_main_menu_kb())
+
+    async def send_attachment_dashboard(self, message_obj, user_id):
+        """Displays a clean interactive dashboard for managed files."""
+        files = self.gmail.get_user_attachments(user_id)
+        if not files:
+            text = "📭 *Memory Empty:* No attachments saved."
+            kb = [self.get_back_button()]
+            if hasattr(message_obj, 'edit_text'):
+                await message_obj.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        text = f"📁 *File(s) Saved to Memory*\nTotal Files: {len(files)}\n\n"
+        kb = []
+        for i, f in enumerate(files):
+            # Fixing the Markdown Underscore Crash Bug visually
+            safe_filename = os.path.basename(f).replace("_", "-").replace("*", "")
+            text += f"*{i+1}.* `{safe_filename}`\n"
+            kb.append([InlineKeyboardButton(f"❌ Remove File {i+1}", callback_data=f"rm_att_{i}")])
+        
+        kb.append([InlineKeyboardButton("➕ Add Another Attachment", callback_data="add_att")])
+        kb.append([
+            InlineKeyboardButton("🧹 Clear All", callback_data="clr_att"), 
+            InlineKeyboardButton("✉️ Draft Email", callback_data="menu_compose")
+        ])
+        kb.append(self.get_back_button())
+
+        if hasattr(message_obj, 'edit_text'):
+            await message_obj.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     async def show_paginated_emails(self, message_obj, query='label:INBOX', offset=0, user_id=None, is_search=False):
         service = self.gmail.get_service()
@@ -238,14 +265,35 @@ class BotHandler:
         elif data == "cancel_compose":
             self.compose_states.pop(user_id, None)
             self.search_states.pop(user_id, None)
-            await query.edit_message_text("❌ Action cancelled.", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            await query.edit_message_text("🚫 *Process Canceled*\n\nThe action was safely terminated. How else may I assist you?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         
+        elif data == "forget_task":
+            self.ai.clear_chat(user_id)
+            self.compose_states.pop(user_id, None)
+            self.gmail.clear_user_attachments(user_id)
+            await query.edit_message_text("🚫 *Task Forgotten & Canceled*\n\nThe current AI process and any related memory have been cleared securely. What would you like to do next?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
+        # Attachment Dashboard Handlers
+        elif data.startswith("rm_att_"):
+            idx = int(data.split("_")[2])
+            files = self.gmail.get_user_attachments(user_id)
+            if idx < len(files):
+                fp = files.pop(idx)
+                if os.path.exists(fp): os.remove(fp)
+            await self.send_attachment_dashboard(query.message, user_id)
+
+        elif data == "clr_att":
+            self.gmail.clear_user_attachments(user_id)
+            await query.edit_message_text("🧹 *All attachments have been securely wiped from memory.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
+        elif data == "add_att":
+            await query.edit_message_text("📎 *Please upload the next file directly in this chat.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
         elif data == "send_manual_draft":
             state = self.compose_states.get(user_id)
             if state:
                 await query.edit_message_text("⏳ Sending Email...")
-                # FIXED: Attachments array passed to send_email
-                res = await asyncio.to_thread(self.gmail.send_email, state['to'], state['subj'], state['body'], state['attachments'])
+                res = await asyncio.to_thread(self.gmail.send_email, state['to'], state['subj'], state['body'], state['attachments'], user_id=user_id)
                 self.compose_states.pop(user_id, None)
                 await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         else:
@@ -277,7 +325,7 @@ class BotHandler:
                 
                 if len(body) > 3500: body = body[:3500] + "\n\n[Truncated]"
                 
-                safe_body = body.replace('<', '').replace('>', '') # Simple safe tag escape
+                safe_body = body.replace('<', '').replace('>', '') 
                 safe_sender = meta['sender'].replace('<', '').replace('>', '')
                 safe_subject = meta['subject'].replace('<', '').replace('>', '')
                 
@@ -300,7 +348,7 @@ class BotHandler:
 
             elif action == "del":
                 self.gmail.delete_email(m_id)
-                await query.edit_message_text("🗑️ Email moved to trash.", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, nav_offset)]))
+                await query.edit_message_text("🗑️ Email moved to trash securely.", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, nav_offset)]))
                 
             elif action == "reply":
                 meta = self.gmail.get_email_metadata(m_id)
@@ -325,8 +373,7 @@ class BotHandler:
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
-        if user_id != str(OWNER_TELEGRAM_ID):
-            return
+        if user_id != str(OWNER_TELEGRAM_ID): return
 
         attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None) or update.message.audio or update.message.video)
         if not attachment: return
@@ -346,18 +393,16 @@ class BotHandler:
             state = self.compose_states[user_id]
             kb = [[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
             
-            files_list = "\n".join([f"- {os.path.basename(f)}" for f in state['attachments']])
+            files_list = "\n".join([f"- {os.path.basename(f).replace('_', '-')}" for f in state['attachments']])
             draft_text = f"📄 *Draft Ready!*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n📎 *Attachments:* \n{files_list}\n\nYou can upload more files or click Send Now."
             await msg.edit_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         else:
-            # FIXED: Global bot attachment handling for Voice AI
-            self.gmail.current_global_attachments.append(file_path)
-            await msg.edit_text(f"📎 *File '{file_name}' saved to memory.* \nYou can now tell me via text or voice to send an email, and I will automatically attach this file.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            self.gmail.add_user_attachment(user_id, file_path)
+            await self.send_attachment_dashboard(msg, user_id)
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
-        if user_id != str(OWNER_TELEGRAM_ID):
-            return
+        if user_id != str(OWNER_TELEGRAM_ID): return
             
         if not self.gmail.get_service():
             link = self.auth.get_login_link()
@@ -396,11 +441,9 @@ class BotHandler:
                 await update.message.reply_text("Please upload an attachment file, or click Send Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
             return
 
-        # NEW: Direct fast search interceptor
         if text.lower().startswith(('search ', 'find ', 'dhundo ', 'check ')):
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
             waiting_msg = await update.message.reply_text(f"🔍 Let me search that for you...", parse_mode="Markdown")
-            # Ask AI to convert language to standard query
             query = await asyncio.to_thread(self.ai.get_search_query, text)
             await self.show_paginated_emails(waiting_msg, query=query, offset=0, user_id=user_id, is_search=True)
             return
@@ -411,7 +454,8 @@ class BotHandler:
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
-            await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            kb = [[InlineKeyboardButton("❌ Forget Task", callback_data="forget_task")], self.get_back_button()]
+            await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -432,13 +476,12 @@ class BotHandler:
             transcribed_text = await asyncio.to_thread(self.ai.transcribe_audio, file_path)
             if os.path.exists(file_path): os.remove(file_path)
 
-            if transcribed_text.startswith("Error:"):
-                await msg.edit_text(f"⚠️ System Alert: {transcribed_text}")
+            if transcribed_text.startswith("System Error:") or "[Audio Unclear]" in transcribed_text:
+                await msg.edit_text(f"⚠️ *Transcription Error:*\nThe audio was unclear or cut off. Could you please repeat that professionally?", parse_mode="Markdown")
                 return
 
             await msg.edit_text(f"🗣️ *You said:* {transcribed_text}\n\n⏳ Processing...", parse_mode="Markdown")
             
-            # Voice interceptor for search
             if transcribed_text.lower().startswith(('search', 'find', 'dhundo', 'check')):
                 query = await asyncio.to_thread(self.ai.get_search_query, transcribed_text)
                 await self.show_paginated_emails(msg, query=query, offset=0, user_id=user_id, is_search=True)
@@ -449,7 +492,8 @@ class BotHandler:
             if res.startswith("Error:"):
                 await msg.edit_text(f"⚠️ System Alert: {res}")
             else:
-                await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                kb = [[InlineKeyboardButton("❌ Forget Task", callback_data="forget_task")], self.get_back_button()]
+                await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             await msg.edit_text(f"❌ Voice processing error: {str(e)}")
 

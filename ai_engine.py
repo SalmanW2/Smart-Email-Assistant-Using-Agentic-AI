@@ -10,23 +10,22 @@ class AI_Engine:
         self.active_chats = {}
         
     def _parse_error(self, e: Exception) -> str:
-        return f"Raw Error: {str(e)}"
+        return f"System Error: {str(e)}"
 
     def transcribe_audio(self, file_path: str) -> str:
         try:
             sample_file = self.client.files.upload(file=file_path)
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[sample_file, "Translate this audio to text accurately. Do not add formatting."]
+                contents=[sample_file, "Transcribe this audio accurately. Do not invent words if it is noisy. If the audio is completely unintelligible, just output: '[Audio Unclear]'."]
             )
-            return response.text
+            return response.text.strip()
         except Exception as e:
             return self._parse_error(e)
 
-    # NEW: Converts user request to a pure Gmail search query
     def get_search_query(self, user_text: str) -> str:
         try:
-            prompt = f"Convert this user request into a strict Gmail search query. Reply ONLY with the query string, nothing else.\nUser: {user_text}\nExamples:\nUser: search for emails from ali\nAI: from:ali\nUser: dhundo us email ko jis mein project likha ho\nAI: project"
+            prompt = f"Convert this user request into a strict Gmail search query. Reply ONLY with the query string, nothing else.\nUser: {user_text}\nExamples:\nUser: search for emails from ali\nAI: from:ali\nUser: find project emails\nAI: project"
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=[prompt]
@@ -46,26 +45,32 @@ class AI_Engine:
         except Exception as e:
             return self._parse_error(e)
 
-    def _get_agent_config(self):
+    def clear_chat(self, user_id: str):
+        """Clears the AI conversation memory for a specific user."""
+        if user_id in self.active_chats:
+            del self.active_chats[user_id]
+
+    def _get_agent_config(self, user_id: str):
         tools = []
         if self.gmail:
             def send_new_email(to: str, subject: str, body: str) -> str:
-                """Sends a new email message. Global attachments are handled automatically."""
-                return self.gmail.send_email(to, subject, body, [])
+                """Sends a new email message. Attachments previously uploaded by the user are automatically included."""
+                return self.gmail.send_email(to, subject, body, [], user_id=user_id)
 
             tools = [send_new_email]
             
             system_instruction = (
-                "You are Muhammad Salman Wattoo's Smart Email Assistant. "
-                "Speak freely and naturally in whatever language the user uses.\n\n"
+                "You are a highly professional Smart Email Assistant. Communicate exclusively in polite, clear, and professional English.\n\n"
                 "UI/UX RULES (CRITICAL):\n"
                 "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets). NEVER use ** for bolding.\n"
-                "2. DRAFTING: Present email drafts cleanly:\n"
+                "2. VOICE FEEDBACK: If a user's prompt seems incomplete, noisy, or lacks context, politely state exactly what you understood and specifically ask for the missing details.\n"
+                "3. ERROR HANDLING: If a system tool returns an error (like an invalid email format), explain the issue to the user gracefully and ask for corrected inputs.\n"
+                "4. DRAFTING: Present email drafts cleanly:\n"
                 "   📝 *Draft Preview*\n"
                 "   👤 *To:* [email]\n"
                 "   🏷 *Subject:* [subject]\n"
                 "   ✉️ *Message:* [body]\n"
-                "   Ask for confirmation before sending. DO NOT invent attachments if the user hasn't uploaded any."
+                "   Always ask for confirmation before sending. Apply any modifications the user requests patiently."
             )
 
         return types.GenerateContentConfig(
@@ -80,7 +85,7 @@ class AI_Engine:
             if user_id not in self.active_chats:
                 self.active_chats[user_id] = self.client.chats.create(
                     model=self.model_name,
-                    config=self._get_agent_config()
+                    config=self._get_agent_config(user_id)
                 )
                 
             response = self.active_chats[user_id].send_message(text)

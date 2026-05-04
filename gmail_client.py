@@ -11,14 +11,28 @@ from email import encoders
 class GmailClient:
     def __init__(self, auth_manager):
         self.auth = auth_manager
-        # NEW: Global array for AI voice attachments
-        self.current_global_attachments = []
+        # Dictionary isolating attachments securely per user session
+        self.user_attachments = {} 
 
     def get_service(self):
         creds = self.auth.get_credentials()
         if creds and creds.valid:
             return build('gmail', 'v1', credentials=creds)
         return None
+
+    def add_user_attachment(self, user_id: str, file_path: str):
+        if user_id not in self.user_attachments:
+            self.user_attachments[user_id] = []
+        self.user_attachments[user_id].append(file_path)
+
+    def get_user_attachments(self, user_id: str):
+        return self.user_attachments.get(user_id, [])
+
+    def clear_user_attachments(self, user_id: str):
+        for fp in self.user_attachments.get(user_id, []):
+            if os.path.exists(fp):
+                os.remove(fp)
+        self.user_attachments[user_id] = []
 
     def get_email_metadata(self, msg_id):
         service = self.get_service()
@@ -27,7 +41,6 @@ class GmailClient:
         subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
         sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
         
-        # Extract attachment names for notification
         parts = msg.get('payload', {}).get('parts', [])
         attachments = [p['filename'] for p in parts if p.get('filename')]
         
@@ -56,11 +69,10 @@ class GmailClient:
              
         if not body: return "No text content identified."
         
-        # NEW: Text Cleaner to remove messy forum footers and dashes
-        body = re.sub(r'-{3,}', '---', body) # Reduce huge dash lines
+        body = re.sub(r'-{3,}', '---', body)
         body = re.sub(r'To reply click on this link:.*', '', body, flags=re.IGNORECASE | re.DOTALL)
         body = re.sub(r'Unsubscribe from this forum:.*', '', body, flags=re.IGNORECASE | re.DOTALL)
-        body = os.linesep.join([s for s in body.splitlines() if s.strip()]) # Remove empty blank lines
+        body = os.linesep.join([s for s in body.splitlines() if s.strip()]) 
         
         return body[:3000]
 
@@ -96,17 +108,17 @@ class GmailClient:
         except:
             return []
 
-    def send_email(self, to: str, subject: str, body: str, manual_attachments: list):
+    def send_email(self, to: str, subject: str, body: str, manual_attachments: list, user_id: str = None):
         service = self.get_service()
-        if not service: return "❌ Authentication Required"
+        if not service: return "❌ Error: Authentication Required."
         try:
             message = MIMEMultipart()
             message['to'] = to
             message['subject'] = subject
             message.attach(MIMEText(body, 'plain'))
 
-            # Combine manual upload and global AI memory uploads
-            all_files = manual_attachments + self.current_global_attachments
+            global_atts = self.get_user_attachments(user_id) if user_id else []
+            all_files = manual_attachments + global_atts
 
             for file_path in all_files:
                 if os.path.exists(file_path):
@@ -126,14 +138,15 @@ class GmailClient:
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
             
-            # Clean up all temp files
-            for file_path in all_files:
+            # Auto-purge RAM and Disk after sending successfully
+            for file_path in manual_attachments:
                 if os.path.exists(file_path): os.remove(file_path)
-            self.current_global_attachments = []
+            if user_id:
+                self.clear_user_attachments(user_id)
             
-            return "✅ Transmission Successful!"
+            return "✅ Email transmitted successfully."
         except Exception as e:
-            return f"❌ Transmission Error: {str(e)}"
+            return f"❌ Transmission Error: Please check the format of the email address or content. ({str(e)})"
 
     def delete_email(self, msg_id):
         service = self.get_service()
