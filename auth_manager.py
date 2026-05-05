@@ -15,6 +15,7 @@ class AuthManager:
         self.scopes = SCOPES
         self.creds_file = CREDENTIALS_FILE
         self.token_file = TOKEN_FILE
+        self.last_login_msg_id = None # FIXED: Variable to track login message ID
 
     def get_login_link(self):
         """Generates the Google OAuth login link automatically."""
@@ -64,6 +65,15 @@ async def callback(request: Request):
         email_addr = profile.get('emailAddress')
         
         bot = Bot(token=BOT_TOKEN)
+        
+        # FIXED: Delete the old "Please login first!" message automatically
+        if auth_manager_instance.last_login_msg_id:
+            try:
+                await bot.delete_message(chat_id=OWNER_TELEGRAM_ID, message_id=auth_manager_instance.last_login_msg_id)
+            except Exception:
+                pass
+            auth_manager_instance.last_login_msg_id = None # Reset the tracker
+
         kb = [
             [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
              InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
@@ -71,7 +81,6 @@ async def callback(request: Request):
             [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
         ]
         
-        # FIXED: Much shorter, cleaner success message
         success_text = (
             f"✅ *Logged In Successfully!*\n"
             f"Account: `{email_addr}`\n\n"

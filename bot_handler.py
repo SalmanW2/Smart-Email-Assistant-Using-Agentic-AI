@@ -45,6 +45,19 @@ class BotHandler:
             filters.TEXT & ~filters.COMMAND, self.handle_text
         ))
 
+    # FIXED: A centralized helper function to handle login prompts and track message ID
+    async def request_login(self, update: Update):
+        link = self.auth.get_login_link()
+        kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
+        text = "⚠️ *Please login first!*\nYou need to connect your Google Account to proceed."
+        
+        if update.callback_query:
+            msg = await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            self.auth.last_login_msg_id = update.callback_query.message.message_id
+        elif update.message:
+            msg = await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            self.auth.last_login_msg_id = msg.message_id
+
     def get_main_menu_kb(self):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
@@ -107,11 +120,7 @@ class BotHandler:
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
 
         if not self.gmail.get_service():
-            link = self.auth.get_login_link()
-            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
-            text = "⚠️ *Please login first!*\nYou need to connect your Google Account to proceed."
-            if update.message:
-                await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await self.request_login(update)
             return
 
         text = "🎛️ *Workspace Dashboard*\nSelect an action below or type your request."
@@ -266,9 +275,7 @@ class BotHandler:
         data = query.data
 
         if not self.gmail.get_service() and data not in ["action_logout"]:
-            link = self.auth.get_login_link()
-            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
-            await query.edit_message_text("⚠️ *Please login first!*\nYou need to connect your Google Account to proceed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await self.request_login(update)
             return
 
         if data == "menu_main":
@@ -437,6 +444,11 @@ class BotHandler:
         user_id = str(update.effective_user.id)
         if user_id != str(OWNER_TELEGRAM_ID): return
 
+        # FIXED: Check login before processing attachments!
+        if not self.gmail.get_service():
+            await self.request_login(update)
+            return
+
         attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None) or update.message.audio or update.message.video)
         if not attachment: return
 
@@ -467,9 +479,7 @@ class BotHandler:
         if user_id != str(OWNER_TELEGRAM_ID): return
             
         if not self.gmail.get_service():
-            link = self.auth.get_login_link()
-            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
-            await update.message.reply_text("⚠️ *Please login first!*\nYou need to connect your Google Account to proceed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await self.request_login(update)
             return
 
         text = update.message.text
@@ -503,7 +513,6 @@ class BotHandler:
                 await update.message.reply_text("Please upload an attachment file, or click Send Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
             return
 
-        # NOTE: Removed the manual "search" interceptor here so AI handles it!
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
@@ -518,9 +527,7 @@ class BotHandler:
         if user_id != str(OWNER_TELEGRAM_ID): return
         
         if not self.gmail.get_service():
-            link = self.auth.get_login_link()
-            kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
-            await update.message.reply_text("⚠️ *Please login first!*\nYou need to connect your Google Account to proceed.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await self.request_login(update)
             return
 
         msg = await update.message.reply_text("🎙️ Processing voice note...")
@@ -535,8 +542,6 @@ class BotHandler:
             if transcribed_text.startswith("System Error:") or "[Audio Unclear]" in transcribed_text:
                 await msg.edit_text(f"⚠️ *Transcription Error:*\nThe audio was unclear or cut off. Could you please repeat that professionally?", parse_mode="Markdown")
                 return
-
-            # NOTE: Removed the manual "search" interceptor here so AI handles it!
             
             task_id = str(int(time.time() * 1000))
             self.active_voice_tasks.add(task_id)
