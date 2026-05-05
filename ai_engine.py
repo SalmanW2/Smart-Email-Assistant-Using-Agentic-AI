@@ -24,6 +24,7 @@ class AI_Engine:
             return self._parse_error(e)
 
     def get_search_query(self, user_text: str) -> str:
+        # Kept for manual UI search button compatibility
         try:
             prompt = f"Convert this user request into a strict Gmail search query. Reply ONLY with the query string, nothing else.\nUser: {user_text}\nExamples:\nUser: search for emails from ali\nAI: from:ali\nUser: find project emails\nAI: project"
             response = self.client.models.generate_content(
@@ -52,20 +53,42 @@ class AI_Engine:
                 """Queues a new email message for sending. Attachments previously uploaded by the user are automatically included."""
                 return self.gmail.queue_ai_email(to, subject, body, user_id)
 
-            tools = [send_new_email]
+            def search_emails(query: str) -> str:
+                """Searches the user's Gmail using a standard Gmail query (e.g., 'from:ali', 'is:unread', 'project'). Returns a list of up to 5 matching emails with their IDs, Sendernames, and Subjects."""
+                service = self.gmail.get_service()
+                if not service: return "Error: Authentication required."
+                try:
+                    results = service.users().messages().list(userId='me', q=query, maxResults=5).execute()
+                    messages = results.get('messages', [])
+                    if not messages: return "No emails found matching the query."
+                    
+                    output = []
+                    for m in messages:
+                        meta = self.gmail.get_email_metadata(m['id'])
+                        output.append(f"Email ID: {m['id']} | From: {meta['sender']} | Subject: {meta['subject']}")
+                    return "\n".join(output)
+                except Exception as e:
+                    return f"Search failed: {str(e)}"
+
+            def read_email_content(msg_id: str) -> str:
+                """Reads the full text content of a specific email using its ID. Use this after searching to read a specific email to the user."""
+                return self.gmail.get_full_body(msg_id)
+
+            def delete_email_by_id(msg_id: str) -> str:
+                """Moves a specific email to the trash using its ID."""
+                success = self.gmail.delete_email(msg_id)
+                return "Email successfully moved to trash." if success else "Failed to delete email."
+
+            tools = [send_new_email, search_emails, read_email_content, delete_email_by_id]
             
             system_instruction = (
-                "You are a highly professional Smart Email Assistant. Communicate exclusively in polite, clear, and professional English.\n\n"
-                "UI/UX RULES (CRITICAL):\n"
+                "You are a highly professional Smart Email Assistant powered by Google Gemini. Communicate exclusively in polite, clear, and professional English.\n\n"
+                "UI/UX RULES & TOOL USAGE (CRITICAL):\n"
                 "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets).\n"
-                "2. ERROR HANDLING: If a system tool returns an error, explain the issue gracefully.\n"
-                "3. DRAFTING & SENDING CONFIRMATION:\n"
-                "   - IMMEDIATE SEND: If the user explicitly says 'send without double checking' or 'direct send', execute the 'send_new_email' tool. Inform the user that the email is queued and they have a few seconds to undo it via the button.\n"
-                "   - DOUBLE CHECK (DRAFT PREVIEW): If they ask to double check, or if the content is highly sensitive/formal, present a draft preview first.\n"
-                "     📝 *Draft Preview*\n"
-                "     👤 *To:* [email]\n"
-                "     🏷 *Subject:* [subject]\n"
-                "     ✉️ *Message:* [body]\n"
+                "2. SEARCHING: Use the 'search_emails' tool when asked to find or check emails. Summarize the results nicely for the user and mention who sent them and the subjects.\n"
+                "3. READING: Use the 'read_email_content' tool if the user asks to read or summarize a specific email from the search results.\n"
+                "4. DELETING: Use 'delete_email_by_id' if explicitly requested to delete an email.\n"
+                "5. SENDING: If the user says 'send without double checking', execute 'send_new_email' directly. Otherwise, ALWAYS present a Draft Preview for confirmation first."
             )
 
         return types.GenerateContentConfig(

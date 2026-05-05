@@ -26,7 +26,7 @@ class BotHandler:
         self.current_queries = {}
         self.navigation_history = {} 
         self.active_voice_tasks = set()
-        self.pending_sends = {} # Queue for Manual Delayed Sends
+        self.pending_sends = {}
         
         self.email_lock = asyncio.Lock()
 
@@ -84,7 +84,6 @@ class BotHandler:
                         if internal_date > self.startup_time:
                             meta = self.gmail.get_email_metadata(m_id)
                             att_count = len(meta.get('attachments', []))
-                            # FIXED: Cleaned up Notification UI
                             att_text = f"\n📎 *Attachments:* {att_count} File(s) enclosed." if att_count > 0 else ""
                             
                             text = (
@@ -154,7 +153,6 @@ class BotHandler:
             await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     async def render_full_email(self, query, m_id, nav_context, nav_offset):
-        """Helper function to render full email UI cleanly."""
         await query.edit_message_text("⏳ Fetching...")
         body = self.gmail.get_full_body(m_id)
         meta = self.gmail.get_email_metadata(m_id)
@@ -181,7 +179,6 @@ class BotHandler:
         await query.edit_message_text(formatted_email, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
     async def send_ai_response(self, message_obj, res_text, user_id):
-        """Helper to send AI message and append Undo Send timer if queued."""
         kb = []
         has_pending = user_id in self.gmail.pending_ai_sends
         if has_pending:
@@ -339,7 +336,6 @@ class BotHandler:
         elif data == "add_att":
             await query.edit_message_text("📎 *Please upload the next file directly in this chat.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
-        # FIXED: Undo Logic for Manual Sends
         elif data == "send_manual_draft":
             state = self.compose_states.get(user_id)
             if state:
@@ -364,7 +360,6 @@ class BotHandler:
                 self.compose_states.pop(user_id, None)
             await query.edit_message_text("🚫 *Send Canceled.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
-        # FIXED: Undo Logic for AI Sends
         elif data == "undosend_ai":
             if user_id in self.gmail.pending_ai_sends:
                 self.gmail.pending_ai_sends.pop(user_id)
@@ -395,7 +390,6 @@ class BotHandler:
             elif action == "full":
                 await self.render_full_email(query, m_id, nav_context, nav_offset)
 
-            # FIXED: Undo logic for Trash
             elif action == "del":
                 self.gmail.delete_email(m_id)
                 kb = [
@@ -437,7 +431,6 @@ class BotHandler:
                         with open(fp, 'rb') as f:
                             await context.bot.send_document(chat_id=user_id, document=f)
                         os.remove(fp)
-                    # FIXED: Send user back to the specific Email UI instead of Main Menu
                     await query.edit_message_text("✅ Attachments sent successfully!", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,13 +503,7 @@ class BotHandler:
                 await update.message.reply_text("Please upload an attachment file, or click Send Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
             return
 
-        if text.lower().startswith(('search ', 'find ', 'dhundo ', 'check ')):
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-            waiting_msg = await update.message.reply_text(f"🔍 Let me search that for you...", parse_mode="Markdown")
-            query = await asyncio.to_thread(self.ai.get_search_query, text)
-            await self.show_paginated_emails(waiting_msg, query=query, offset=0, user_id=user_id, is_search=True)
-            return
-
+        # NOTE: Removed the manual "search" interceptor here so AI handles it!
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
         res = await asyncio.to_thread(self.ai.agent_chat, text, user_id)
         
@@ -549,11 +536,8 @@ class BotHandler:
                 await msg.edit_text(f"⚠️ *Transcription Error:*\nThe audio was unclear or cut off. Could you please repeat that professionally?", parse_mode="Markdown")
                 return
 
-            if transcribed_text.lower().startswith(('search', 'find', 'dhundo', 'check')):
-                query = await asyncio.to_thread(self.ai.get_search_query, transcribed_text)
-                await self.show_paginated_emails(msg, query=query, offset=0, user_id=user_id, is_search=True)
-                return
-
+            # NOTE: Removed the manual "search" interceptor here so AI handles it!
+            
             task_id = str(int(time.time() * 1000))
             self.active_voice_tasks.add(task_id)
 
@@ -608,7 +592,6 @@ async def on_shutdown():
             await bot_handler_instance.ptb_app.shutdown()
             print("✅ Bot shutdown gracefully.")
     except RuntimeError as e:
-        # Ignore the error if the bot is already stopped
         print(f"ℹ️ Bot shutdown note: {e}")
     except Exception as e:
         print(f"⚠️ Shutdown Error: {e}")
