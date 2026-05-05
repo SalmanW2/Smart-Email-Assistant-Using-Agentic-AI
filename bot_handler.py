@@ -602,8 +602,16 @@ async def on_startup():
 
 @fastapi_app.on_event("shutdown")
 async def on_shutdown():
-    await bot_handler_instance.ptb_app.stop()
-    await bot_handler_instance.ptb_app.shutdown()
+    try:
+        if bot_handler_instance.ptb_app.running:
+            await bot_handler_instance.ptb_app.stop()
+            await bot_handler_instance.ptb_app.shutdown()
+            print("✅ Bot shutdown gracefully.")
+    except RuntimeError as e:
+        # Ignore the error if the bot is already stopped
+        print(f"ℹ️ Bot shutdown note: {e}")
+    except Exception as e:
+        print(f"⚠️ Shutdown Error: {e}")
 
 @fastapi_app.post("/webhook")
 async def webhook(request: Request):
