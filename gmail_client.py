@@ -11,8 +11,8 @@ from email import encoders
 class GmailClient:
     def __init__(self, auth_manager):
         self.auth = auth_manager
-        # Dictionary isolating attachments securely per user session
         self.user_attachments = {} 
+        self.pending_ai_sends = {} # Queue for AI delayed sending
 
     def get_service(self):
         creds = self.auth.get_credentials()
@@ -30,8 +30,7 @@ class GmailClient:
 
     def clear_user_attachments(self, user_id: str):
         for fp in self.user_attachments.get(user_id, []):
-            if os.path.exists(fp):
-                os.remove(fp)
+            if os.path.exists(fp): os.remove(fp)
         self.user_attachments[user_id] = []
 
     def get_email_metadata(self, msg_id):
@@ -101,12 +100,14 @@ class GmailClient:
                     if 'parts' in part:
                         extract_parts(part['parts'])
 
-            if 'parts' in payload:
-                extract_parts(payload['parts'])
-                
+            if 'parts' in payload: extract_parts(payload['parts'])
             return attachments
-        except:
-            return []
+        except: return []
+
+    def queue_ai_email(self, to: str, subject: str, body: str, user_id: str):
+        """Temporarily holds the AI email in memory to allow an Undo window."""
+        self.pending_ai_sends[user_id] = {'to': to, 'subj': subject, 'body': body}
+        return "Email queued successfully. It will be sent in 7 seconds unless the user clicks Undo."
 
     def send_email(self, to: str, subject: str, body: str, manual_attachments: list, user_id: str = None):
         service = self.get_service()
@@ -138,15 +139,13 @@ class GmailClient:
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
             
-            # Auto-purge RAM and Disk after sending successfully
             for file_path in manual_attachments:
                 if os.path.exists(file_path): os.remove(file_path)
-            if user_id:
-                self.clear_user_attachments(user_id)
+            if user_id: self.clear_user_attachments(user_id)
             
             return "✅ Email transmitted successfully."
         except Exception as e:
-            return f"❌ Transmission Error: Please check the format of the email address or content. ({str(e)})"
+            return f"❌ Transmission Error: ({str(e)})"
 
     def delete_email(self, msg_id):
         service = self.get_service()
@@ -154,5 +153,12 @@ class GmailClient:
         try:
             service.users().messages().trash(userId='me', id=msg_id).execute()
             return True
-        except:
-            return False
+        except: return False
+
+    def untrash_email(self, msg_id):
+        service = self.get_service()
+        if not service: return False
+        try:
+            service.users().messages().untrash(userId='me', id=msg_id).execute()
+            return True
+        except: return False

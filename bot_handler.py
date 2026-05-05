@@ -26,8 +26,8 @@ class BotHandler:
         self.current_queries = {}
         self.navigation_history = {} 
         self.active_voice_tasks = set()
+        self.pending_sends = {} # Queue for Manual Delayed Sends
         
-        # FIXED: Lock to prevent race conditions causing double notifications
         self.email_lock = asyncio.Lock()
 
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -63,11 +63,9 @@ class BotHandler:
     async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
         try:
             await asyncio.to_thread(urllib.request.urlopen, WEBHOOK_URL)
-        except Exception:
-            pass
+        except Exception: pass
 
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        # FIXED: Enforce absolute lock so duplicate jobs wait and get filtered
         async with self.email_lock:
             service = self.gmail.get_service()
             if not service: return
@@ -86,14 +84,14 @@ class BotHandler:
                         if internal_date > self.startup_time:
                             meta = self.gmail.get_email_metadata(m_id)
                             att_count = len(meta.get('attachments', []))
-                            att_text = f"📎 *Attachments:* {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
+                            # FIXED: Cleaned up Notification UI
+                            att_text = f"\n📎 *Attachments:* {att_count} File(s) enclosed." if att_count > 0 else ""
                             
                             text = (
                                 f"🔔 *New Email Received!*\n\n"
                                 f"👤 *From:* {meta['sender']}\n"
-                                f"📝 *Subject:* {meta['subject']}\n"
-                                f"{att_text}\n"
-                                f"What would you like to do?"
+                                f"📝 *Subject:* {meta['subject']}"
+                                f"{att_text}"
                             )
                             kb = [
                                 [InlineKeyboardButton("🤖 Generate Summary", callback_data=f"sum_{m_id}")],
@@ -154,6 +152,55 @@ class BotHandler:
             await message_obj.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         else:
             await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+    async def render_full_email(self, query, m_id, nav_context, nav_offset):
+        """Helper function to render full email UI cleanly."""
+        await query.edit_message_text("⏳ Fetching...")
+        body = self.gmail.get_full_body(m_id)
+        meta = self.gmail.get_email_metadata(m_id)
+        
+        if len(body) > 3500: body = body[:3500] + "\n\n[Truncated]"
+        
+        safe_body = body.replace('<', '').replace('>', '') 
+        safe_sender = meta['sender'].replace('<', '').replace('>', '')
+        safe_subject = meta['subject'].replace('<', '').replace('>', '')
+        
+        url_pattern = re.compile(r'(https?://[^\s]+)')
+        safe_body = url_pattern.sub(r'<a href="\1">🔗 Click Here</a>', safe_body)
+        
+        att_count = len(meta.get('attachments', []))
+        att_text = f"\n📎 <b>Attachments:</b> {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
+        
+        formatted_email = f"📧 <b>From:</b> {safe_sender}\n📝 <b>Subject:</b> {safe_subject}{att_text}\n━━━━━━━━━━━━━━━━━━\n\n{safe_body}"
+        
+        kb = []
+        kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}")])
+        kb.append([InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{m_id}_{nav_context}"), InlineKeyboardButton("🗑️ Trash", callback_data=f"del_{m_id}_{nav_context}")])
+        kb.append(self.get_back_button(nav_context, nav_offset))
+        
+        await query.edit_message_text(formatted_email, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+
+    async def send_ai_response(self, message_obj, res_text, user_id):
+        """Helper to send AI message and append Undo Send timer if queued."""
+        kb = []
+        has_pending = user_id in self.gmail.pending_ai_sends
+        if has_pending:
+            kb.append([InlineKeyboardButton("↩️ Undo Send", callback_data="undosend_ai")])
+        kb.append(self.get_back_button())
+        
+        sent_msg = await message_obj.edit_text(res_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        
+        if has_pending:
+            async def process_ai_send():
+                await asyncio.sleep(7)
+                if user_id in self.gmail.pending_ai_sends:
+                    draft = self.gmail.pending_ai_sends.pop(user_id)
+                    res = await asyncio.to_thread(self.gmail.send_email, draft['to'], draft['subj'], draft['body'], [], user_id=user_id)
+                    try:
+                        new_kb = [self.get_back_button()]
+                        await sent_msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
+                    except: pass
+            asyncio.create_task(process_ai_send())
 
     async def show_paginated_emails(self, message_obj, query='label:INBOX', offset=0, user_id=None, is_search=False):
         service = self.gmail.get_service()
@@ -252,8 +299,7 @@ class BotHandler:
             await query.edit_message_text("⚙️ *Settings*\n\nConfigure your assistant or logout of your Google account.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         
         elif data == "action_logout":
-            if os.path.exists(self.auth.token_file):
-                os.remove(self.auth.token_file)
+            if os.path.exists(self.auth.token_file): os.remove(self.auth.token_file)
             self.auth.cached_creds = None
             self.gmail.service = None
             await query.edit_message_text("✅ *Logged out successfully.*\n\nSend /start to connect a new Google Account.", parse_mode="Markdown")
@@ -293,13 +339,37 @@ class BotHandler:
         elif data == "add_att":
             await query.edit_message_text("📎 *Please upload the next file directly in this chat.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
+        # FIXED: Undo Logic for Manual Sends
         elif data == "send_manual_draft":
             state = self.compose_states.get(user_id)
             if state:
-                await query.edit_message_text("⏳ Sending Email...")
-                res = await asyncio.to_thread(self.gmail.send_email, state['to'], state['subj'], state['body'], state['attachments'], user_id=user_id)
+                self.pending_sends[user_id] = state
+                kb = [[InlineKeyboardButton("↩️ Undo Send", callback_data="undosend_manual")], self.get_back_button()]
+                msg = await query.edit_message_text("⏳ *Email queued.* Sending in 7 seconds...", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+                
+                async def process_manual_send():
+                    await asyncio.sleep(7)
+                    if user_id in self.pending_sends:
+                        draft = self.pending_sends.pop(user_id)
+                        res = await asyncio.to_thread(self.gmail.send_email, draft['to'], draft['subj'], draft['body'], draft['attachments'], user_id=user_id)
+                        self.compose_states.pop(user_id, None)
+                        try:
+                            await msg.edit_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                        except: pass
+                asyncio.create_task(process_manual_send())
+
+        elif data == "undosend_manual":
+            if user_id in self.pending_sends:
+                self.pending_sends.pop(user_id)
                 self.compose_states.pop(user_id, None)
-                await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            await query.edit_message_text("🚫 *Send Canceled.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
+        # FIXED: Undo Logic for AI Sends
+        elif data == "undosend_ai":
+            if user_id in self.gmail.pending_ai_sends:
+                self.gmail.pending_ai_sends.pop(user_id)
+            await query.edit_message_text("🚫 *AI Send Canceled.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
         else:
             parts = data.split("_")
             if len(parts) < 2: return
@@ -323,42 +393,43 @@ class BotHandler:
                 await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
             elif action == "full":
-                await query.edit_message_text("⏳ Fetching...")
-                body = self.gmail.get_full_body(m_id)
-                meta = self.gmail.get_email_metadata(m_id)
-                
-                if len(body) > 3500: body = body[:3500] + "\n\n[Truncated]"
-                
-                safe_body = body.replace('<', '').replace('>', '') 
-                safe_sender = meta['sender'].replace('<', '').replace('>', '')
-                safe_subject = meta['subject'].replace('<', '').replace('>', '')
-                
-                # FIXED: Made links correctly clickable inside Telegram using HTML tags
-                url_pattern = re.compile(r'(https?://[^\s]+)')
-                safe_body = url_pattern.sub(r'<a href="\1">🔗 Click Here</a>', safe_body)
-                
-                att_count = len(meta.get('attachments', []))
-                att_text = f"\n📎 <b>Attachments:</b> {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
-                
-                formatted_email = f"📧 <b>From:</b> {safe_sender}\n📝 <b>Subject:</b> {safe_subject}{att_text}\n━━━━━━━━━━━━━━━━━━\n\n{safe_body}"
-                
-                kb = []
-                kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}")])
-                kb.append([InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{m_id}_{nav_context}"), InlineKeyboardButton("🗑️ Trash", callback_data=f"del_{m_id}_{nav_context}")])
-                kb.append(self.get_back_button(nav_context, nav_offset))
-                
-                await query.edit_message_text(formatted_email, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+                await self.render_full_email(query, m_id, nav_context, nav_offset)
 
+            # FIXED: Undo logic for Trash
             elif action == "del":
                 self.gmail.delete_email(m_id)
-                await query.edit_message_text("🗑️ Email moved to trash securely.", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, nav_offset)]))
+                kb = [
+                    [InlineKeyboardButton("↩️ Undo Delete", callback_data=f"undodel_{m_id}_{nav_context}")],
+                    self.get_back_button(nav_context, nav_offset)
+                ]
+                await query.edit_message_text("🗑️ *Email moved to trash.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+                
+                async def remove_del_undo():
+                    await asyncio.sleep(7)
+                    try:
+                        new_kb = [self.get_back_button(nav_context, nav_offset)]
+                        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
+                    except: pass
+                asyncio.create_task(remove_del_undo())
+            
+            elif action == "undodel":
+                self.gmail.untrash_email(m_id)
+                await self.render_full_email(query, m_id, nav_context, nav_offset)
+                
+            elif action == "reply":
+                meta = self.gmail.get_email_metadata(m_id)
+                sender_email = re.search(r'<(.+?)>', meta['sender']).group(1) if '<' in meta['sender'] else meta['sender']
+                self.compose_states[user_id] = {'step': 'AWAIT_BODY', 'to': sender_email, 'subj': f"Re: {meta['subject']}", 'attachments': []}
+                kb = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
+                await query.edit_message_text(f"↩️ *Replying to {sender_email}*\n\nPlease type your message below. 📎 You can attach a file in the next step.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
             elif action == "getatt":
                 await query.edit_message_text("⏳ Fetching attachments...")
                 file_paths = await asyncio.to_thread(self.gmail.get_attachments, m_id)
                 
+                back_to_email_kb = [[InlineKeyboardButton("🔙 Back to Email", callback_data=f"full_{m_id}_{nav_context}")]]
+                
                 if not file_paths:
-                    back_to_email_kb = [[InlineKeyboardButton("🔙 Back to Email", callback_data=f"full_{m_id}_{nav_context}")]]
                     await query.edit_message_text("📭 *No attachments found in this specific email.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
                 else:
                     await query.edit_message_text("📤 Sending attachments, please wait...")
@@ -366,7 +437,8 @@ class BotHandler:
                         with open(fp, 'rb') as f:
                             await context.bot.send_document(chat_id=user_id, document=f)
                         os.remove(fp)
-                    await query.edit_message_text("✅ Attachments sent successfully!", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, nav_offset)]))
+                    # FIXED: Send user back to the specific Email UI instead of Main Menu
+                    await query.edit_message_text("✅ Attachments sent successfully!", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -451,7 +523,8 @@ class BotHandler:
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
-            await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            msg_obj = await update.message.reply_text("⏳ Processing...")
+            await self.send_ai_response(msg_obj, res, user_id)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -496,13 +569,12 @@ class BotHandler:
             if res.startswith("Error:"):
                 await msg.edit_text(f"⚠️ System Alert: {res}")
             else:
-                await msg.edit_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+                await self.send_ai_response(msg, res, user_id)
         except Exception as e:
             await msg.edit_text(f"❌ Voice processing error: {str(e)}")
 
 bot_handler_instance = BotHandler()
 
-# FIXED: Prevent duplicate initialization of job_queue due to worker reloads
 @fastapi_app.on_event("startup")
 async def on_startup():
     if getattr(fastapi_app.state, "bot_initialized", False):

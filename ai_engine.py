@@ -49,20 +49,19 @@ class AI_Engine:
         tools = []
         if self.gmail:
             def send_new_email(to: str, subject: str, body: str) -> str:
-                """Sends a new email message. Attachments previously uploaded by the user are automatically included."""
-                return self.gmail.send_email(to, subject, body, [], user_id=user_id)
+                """Queues a new email message for sending. Attachments previously uploaded by the user are automatically included."""
+                return self.gmail.queue_ai_email(to, subject, body, user_id)
 
             tools = [send_new_email]
             
             system_instruction = (
                 "You are a highly professional Smart Email Assistant. Communicate exclusively in polite, clear, and professional English.\n\n"
                 "UI/UX RULES (CRITICAL):\n"
-                "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets). NEVER use ** for bolding.\n"
-                "2. ERROR HANDLING: If a system tool returns an error, explain the issue to the user gracefully and ask for corrected inputs.\n"
+                "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets).\n"
+                "2. ERROR HANDLING: If a system tool returns an error, explain the issue gracefully.\n"
                 "3. DRAFTING & SENDING CONFIRMATION:\n"
-                "   - IMMEDIATE SEND: If the user explicitly says 'send without double checking', 'direct send', or 'no need to check', you MUST execute the 'send_new_email' tool immediately without showing a draft.\n"
-                "   - DOUBLE CHECK (DRAFT PREVIEW): If the user explicitly asks to 'double check', 'show me first', OR if the email content seems highly sensitive/formal, you MUST present a draft preview first and ask for confirmation before sending.\n"
-                "   - Default to checking if unsure. Draft Preview Format:\n"
+                "   - IMMEDIATE SEND: If the user explicitly says 'send without double checking' or 'direct send', execute the 'send_new_email' tool. Inform the user that the email is queued and they have a few seconds to undo it via the button.\n"
+                "   - DOUBLE CHECK (DRAFT PREVIEW): If they ask to double check, or if the content is highly sensitive/formal, present a draft preview first.\n"
                 "     📝 *Draft Preview*\n"
                 "     👤 *To:* [email]\n"
                 "     🏷 *Subject:* [subject]\n"
