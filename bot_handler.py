@@ -26,6 +26,9 @@ class BotHandler:
         self.current_queries = {}
         self.navigation_history = {} 
         self.active_voice_tasks = set()
+        
+        # FIXED: Lock to prevent race conditions causing double notifications
+        self.email_lock = asyncio.Lock()
 
         self.ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
         self._register_handlers()
@@ -64,42 +67,44 @@ class BotHandler:
             pass
 
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        service = self.gmail.get_service()
-        if not service: return
-        try:
-            results = service.users().messages().list(userId='me', q='is:unread', maxResults=3).execute()
-            messages = results.get('messages', [])
+        # FIXED: Enforce absolute lock so duplicate jobs wait and get filtered
+        async with self.email_lock:
+            service = self.gmail.get_service()
+            if not service: return
+            try:
+                results = service.users().messages().list(userId='me', q='is:unread', maxResults=3).execute()
+                messages = results.get('messages', [])
 
-            for msg in messages:
-                m_id = msg['id']
-                if m_id not in self.notified_emails:
-                    self.notified_emails.add(m_id)
-                    
-                    msg_data = service.users().messages().get(userId='me', id=m_id, format='minimal').execute()
-                    internal_date = int(msg_data.get('internalDate', 0))
-
-                    if internal_date > self.startup_time:
-                        meta = self.gmail.get_email_metadata(m_id)
-                        att_count = len(meta.get('attachments', []))
-                        att_text = f"📎 *Attachments:* {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
+                for msg in messages:
+                    m_id = msg['id']
+                    if m_id not in self.notified_emails:
+                        self.notified_emails.add(m_id)
                         
-                        text = (
-                            f"🔔 *New Email Received!*\n\n"
-                            f"👤 *From:* {meta['sender']}\n"
-                            f"📝 *Subject:* {meta['subject']}\n"
-                            f"{att_text}\n"
-                            f"What would you like to do?"
-                        )
-                        kb = [
-                            [InlineKeyboardButton("🤖 Generate Summary", callback_data=f"sum_{m_id}")],
-                            [InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}_main")],
-                            [InlineKeyboardButton("🗑️ Delete", callback_data=f"del_{m_id}_main")]
-                        ]
-                        await context.bot.send_message(
-                            chat_id=OWNER_TELEGRAM_ID,
-                            text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
-                        )
-        except Exception: pass
+                        msg_data = service.users().messages().get(userId='me', id=m_id, format='minimal').execute()
+                        internal_date = int(msg_data.get('internalDate', 0))
+
+                        if internal_date > self.startup_time:
+                            meta = self.gmail.get_email_metadata(m_id)
+                            att_count = len(meta.get('attachments', []))
+                            att_text = f"📎 *Attachments:* {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
+                            
+                            text = (
+                                f"🔔 *New Email Received!*\n\n"
+                                f"👤 *From:* {meta['sender']}\n"
+                                f"📝 *Subject:* {meta['subject']}\n"
+                                f"{att_text}\n"
+                                f"What would you like to do?"
+                            )
+                            kb = [
+                                [InlineKeyboardButton("🤖 Generate Summary", callback_data=f"sum_{m_id}")],
+                                [InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}_main")],
+                                [InlineKeyboardButton("🗑️ Delete", callback_data=f"del_{m_id}_main")]
+                            ]
+                            await context.bot.send_message(
+                                chat_id=OWNER_TELEGRAM_ID,
+                                text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
+                            )
+            except Exception: pass
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if str(update.effective_user.id) != str(OWNER_TELEGRAM_ID): return
@@ -129,7 +134,6 @@ class BotHandler:
                 await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
             return
 
-        # FIXED: Added the Instruction Tip for AI usage
         text = f"📁 *File(s) Saved to Memory*\nTotal Files: {len(files)}\n\n"
         text += "💡 *Tip for AI:* To send these files using the AI, simply send a voice or text message saying: _'Send an email to Ali and attach the files.'_\n\n"
         
@@ -268,7 +272,6 @@ class BotHandler:
             self.search_states.pop(user_id, None)
             await query.edit_message_text("🚫 *Process Canceled*\n\nThe action was safely terminated. How else may I assist you?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
         
-        # FIXED: Voice Cancellation Logic (Aborts task silently)
         elif data.startswith("cancel_voice_"):
             task_id = data.split("_")[2]
             if task_id in self.active_voice_tasks:
@@ -330,8 +333,9 @@ class BotHandler:
                 safe_sender = meta['sender'].replace('<', '').replace('>', '')
                 safe_subject = meta['subject'].replace('<', '').replace('>', '')
                 
+                # FIXED: Made links correctly clickable inside Telegram using HTML tags
                 url_pattern = re.compile(r'(https?://[^\s]+)')
-                safe_body = url_pattern.sub(r'[Link]', safe_body)
+                safe_body = url_pattern.sub(r'<a href="\1">🔗 Click Here</a>', safe_body)
                 
                 att_count = len(meta.get('attachments', []))
                 att_text = f"\n📎 <b>Attachments:</b> {att_count} File(s) ({', '.join(meta['attachments'])})" if att_count > 0 else ""
@@ -339,9 +343,7 @@ class BotHandler:
                 formatted_email = f"📧 <b>From:</b> {safe_sender}\n📝 <b>Subject:</b> {safe_subject}{att_text}\n━━━━━━━━━━━━━━━━━━\n\n{safe_body}"
                 
                 kb = []
-                # FIXED: The Get Attachments button is now ALWAYS visible
                 kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}")])
-                
                 kb.append([InlineKeyboardButton("↩️ Reply", callback_data=f"reply_{m_id}_{nav_context}"), InlineKeyboardButton("🗑️ Trash", callback_data=f"del_{m_id}_{nav_context}")])
                 kb.append(self.get_back_button(nav_context, nav_offset))
                 
@@ -355,7 +357,6 @@ class BotHandler:
                 await query.edit_message_text("⏳ Fetching attachments...")
                 file_paths = await asyncio.to_thread(self.gmail.get_attachments, m_id)
                 
-                # FIXED: If no attachments, inform user and provide a Back button to the SAME email
                 if not file_paths:
                     back_to_email_kb = [[InlineKeyboardButton("🔙 Back to Email", callback_data=f"full_{m_id}_{nav_context}")]]
                     await query.edit_message_text("📭 *No attachments found in this specific email.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
@@ -450,7 +451,6 @@ class BotHandler:
         if res.startswith("Error:"):
             await update.message.reply_text(f"⚠️ System Alert: {res}")
         else:
-            # FIXED: Removed 'Forget Task' from text chat
             await update.message.reply_text(res, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -476,13 +476,11 @@ class BotHandler:
                 await msg.edit_text(f"⚠️ *Transcription Error:*\nThe audio was unclear or cut off. Could you please repeat that professionally?", parse_mode="Markdown")
                 return
 
-            # Search interceptor
             if transcribed_text.lower().startswith(('search', 'find', 'dhundo', 'check')):
                 query = await asyncio.to_thread(self.ai.get_search_query, transcribed_text)
                 await self.show_paginated_emails(msg, query=query, offset=0, user_id=user_id, is_search=True)
                 return
 
-            # FIXED: The Voice Cancel Process Button
             task_id = str(int(time.time() * 1000))
             self.active_voice_tasks.add(task_id)
 
@@ -491,7 +489,6 @@ class BotHandler:
 
             res = await asyncio.to_thread(self.ai.agent_chat, transcribed_text, user_id)
             
-            # Check if user pressed Cancel Button during LLM processing
             if task_id not in self.active_voice_tasks:
                 return 
             self.active_voice_tasks.remove(task_id)
@@ -505,8 +502,13 @@ class BotHandler:
 
 bot_handler_instance = BotHandler()
 
+# FIXED: Prevent duplicate initialization of job_queue due to worker reloads
 @fastapi_app.on_event("startup")
 async def on_startup():
+    if getattr(fastapi_app.state, "bot_initialized", False):
+        return
+    fastapi_app.state.bot_initialized = True
+    
     await bot_handler_instance.ptb_app.initialize()
     try:
         await bot_handler_instance.ptb_app.bot.delete_webhook(drop_pending_updates=True)
