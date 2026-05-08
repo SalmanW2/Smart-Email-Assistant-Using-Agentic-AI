@@ -6,8 +6,7 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from config_env import SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOT_TOKEN, OWNER_TELEGRAM_ID
-
+from config import SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOT_TOKEN, OWNER_TELEGRAM_ID
 app = FastAPI()
 
 class AuthManager:

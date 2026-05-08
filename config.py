@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
-
+CREDENTIALS_FILE = "credentials.json"
+TOKEN_FILE = "token.json"
 # ===== TELEGRAM & BOT =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_TELEGRAM_ID = int(os.getenv("OWNER_TELEGRAM_ID", "0"))

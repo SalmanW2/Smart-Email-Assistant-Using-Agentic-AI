@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from database import (get_all_users, update_user_status, is_blocked, verify_admin_password, 
                       set_admin_password, get_admin_role, get_all_admins, add_new_admin, 
                       remove_admin, get_all_blocked, remove_blocked_record)
-from auth import get_admin_login_url
+from api.auth import get_admin_login_url
 import logging
 
 frontend_router = APIRouter()
