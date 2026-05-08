@@ -4,6 +4,13 @@ python-telegram-bot[job-queue]==21.10.0
 google-api-python-client==2.118.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.0
-google-genai
+google-genai==0.3.0
 python-dotenv==1.0.1
 requests==2.31.0
+supabase==2.4.0
+python-multipart==0.0.6
+pydantic==2.5.0
+pyttsx3==2.90
+google-cloud-texttospeech==2.14.1
+redis==5.0.0
+aioredis==2.0.1

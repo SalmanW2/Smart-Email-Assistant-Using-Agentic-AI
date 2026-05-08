@@ -1,6 +1,64 @@
-.env
 .venv
 __pycache__
 token.json
 credentials.json
 
+# Environment variables
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Node (agar JS use ho raha ho)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build folders
+dist/
+build/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Testing
+.coverage
+pytest_cache/
+
+# Render local files
+.render
+
+# Supabase local files
+.supabase
+
+# Telegram session files
+*.session
