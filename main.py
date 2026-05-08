@@ -18,7 +18,7 @@ from telegram.ext import Application
 
 from config import BOT_TOKEN, RENDER_URL
 from db.models import UserModel, LoginModel
-from auth import get_login_url, get_admin_login_url, process_callback
+from api.auth import get_login_url, get_admin_login_url, process_callback
 from bot.telegram_handler import bot_handler
 from frontend import frontend_router
 from api.user import user_router
