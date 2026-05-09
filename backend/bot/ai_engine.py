@@ -2,19 +2,19 @@ import asyncio
 import json
 from typing import Any
 from google import genai
+from google.genai import types
 from config import settings
 from db.memory import memory_manager
 from bot.contact_manager import ContactManager
 from bot.gmail_client import GmailClient
-
-genai.configure(api_key=settings.GEMINI_API_KEY)
 
 class AIEngine:
     def __init__(self) -> None:
         self.memory = memory_manager
         self.contact_manager = ContactManager()
         self.gmail_client = GmailClient()
-        self.client = genai.Client()
+        # NEW: Initialize the client using the correct modern SDK syntax
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
     async def process_message(self, telegram_id: int, message: str, ai_mode: bool) -> tuple[str, str | None, dict[str, Any]]:
         if not ai_mode:
@@ -26,25 +26,26 @@ class AIEngine:
             "Always keep responses concise and confirm actions before completing them."
         )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "system", "content": memory_prompt},
-            {"role": "user", "content": message},
-        ]
-
         functions = self._build_functions()
 
-        response = await asyncio.to_thread(
-            self.client.generate_text,
-            model="gemini-pro",
-            messages=messages,
-            functions=functions,
-            function_call="auto",
+        # NEW: Setup configuration and tools for the new SDK
+        config = types.GenerateContentConfig(
             temperature=0.2,
+            system_instruction=system_prompt + "\n\n" + memory_prompt,
+            tools=[{"function_declarations": functions}]
+        )
+
+        # NEW: Calling the model using the correct method
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=message,
+            config=config,
         )
 
         parsed_text = self._extract_text(response)
         function_call = self._extract_function_call(response)
+        
         if function_call:
             result_text, action, metadata = await self._run_function_call(telegram_id, function_call)
             await self.extract_and_save_contacts(telegram_id, message)
@@ -116,27 +117,30 @@ class AIEngine:
         ]
 
     def _extract_text(self, response: Any) -> str:
-        if hasattr(response, "text") and response.text:
+        if hasattr(response, 'text') and response.text:
             return response.text
-        if hasattr(response, "candidates") and response.candidates:
-            return getattr(response.candidates[0], "content", "") or ""
         return ""
 
     def _extract_function_call(self, response: Any) -> dict[str, Any] | None:
-        if hasattr(response, "function_call") and response.function_call:
-            return response.function_call
-
-        if hasattr(response, "candidates") and response.candidates:
-            metadata = getattr(response.candidates[0], "metadata", {})
-            function_call = metadata.get("function_call")
-            if function_call:
-                return function_call
-
+        # NEW: Parsing function calls for the modern SDK
+        if hasattr(response, 'function_calls') and response.function_calls:
+            fc = response.function_calls[0]
+            return {
+                "name": fc.name,
+                "arguments": fc.args
+            }
         return None
 
     async def _run_function_call(self, telegram_id: int, function_call: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         name = function_call.get("name")
-        arguments = json.loads(function_call.get("arguments", "{}"))
+        arguments = function_call.get("arguments", {})
+        
+        # Safely handle arguments whether they are dict or string
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except Exception:
+                arguments = {}
 
         if name == "send_email":
             recipient = await self.contact_manager.resolve_contact(telegram_id, arguments.get("to", ""))
@@ -180,11 +184,17 @@ class AIEngine:
 
     async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
         prompt = f"Summarize or answer the following document request:\n{query}\n\nDocument path: {file_path}"
-        response = await asyncio.to_thread(
-            self.client.generate_text,
-            model="gemini-pro",
-            messages=[{"role": "system", "content": "You are a document Q&A assistant."}, {"role": "user", "content": prompt}],
+        
+        config = types.GenerateContentConfig(
             temperature=0.2,
+            system_instruction="You are a document Q&A assistant."
+        )
+        
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=config,
         )
         return self._extract_text(response)
 
