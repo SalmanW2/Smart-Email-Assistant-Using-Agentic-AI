@@ -1,98 +1,175 @@
-import json
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import List, Dict, Any, Optional
+from config import settings
 from db.models import db_manager
 
+
 class ContactManager:
-    def __init__(self) -> None:
+    def __init__(self):
         self.db = db_manager
 
-    async def get_contact_by_email(self, telegram_id: int, email_address: str) -> Optional[Dict[str, Any]]:
-        def action():
-            return (
-                self.db.db.client.table("contacts")
-                .select("*")
-                .eq("telegram_id", telegram_id)
-                .eq("email_address", email_address)
-                .maybe_single()
-                .execute()
-            )
+    async def get_user_contacts(self, telegram_id: int) -> List[Dict[str, Any]]:
+        """Get all contacts for a user."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .order("name")
+                                         .execute())
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"DB Error in get_user_contacts: {e}")
+            return []
 
-        response = await self.db.db.run(action)
-        return response.data if response.data else None
+    async def add_contact(self, telegram_id: int, name: str, email: str, phone: Optional[str] = None,
+                         company: Optional[str] = None, notes: Optional[str] = None) -> bool:
+        """Add a new contact for the user."""
+        try:
+            await self.db.db.run(lambda: self.db.db.client.table("contacts").insert({
+                "telegram_id": telegram_id,
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "company": company,
+                "notes": notes
+            }).execute())
+            return True
+        except Exception as e:
+            print(f"DB Error in add_contact: {e}")
+            return False
 
-    async def save_contact(
-        self,
-        telegram_id: int,
-        email_address: str,
-        contact_name: str | None = None,
-        contact_alias: str | None = None,
-        frequency_of_contact: int = 1,
-        tags: List[str] | None = None,
-    ) -> bool:
-        existing = await self.get_contact_by_email(telegram_id, email_address)
-        tags = tags or []
-        if existing:
-            merged_tags = list({*json.loads(existing.get("tags", "[]")), *tags})
-            payload = {
-                "contact_name": contact_name or existing.get("contact_name"),
-                "contact_alias": contact_alias or existing.get("contact_alias"),
-                "frequency_of_contact": existing.get("frequency_of_contact", 0) + frequency_of_contact,
-                "tags": json.dumps(merged_tags),
+    async def update_contact(self, contact_id: str, updates: Dict[str, Any]) -> bool:
+        """Update an existing contact."""
+        try:
+            await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                .update(updates)
+                                .eq("id", contact_id)
+                                .execute())
+            return True
+        except Exception as e:
+            print(f"DB Error in update_contact: {e}")
+            return False
+
+    async def delete_contact(self, contact_id: str) -> bool:
+        """Delete a contact."""
+        try:
+            await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                .delete()
+                                .eq("id", contact_id)
+                                .execute())
+            return True
+        except Exception as e:
+            print(f"DB Error in delete_contact: {e}")
+            return False
+
+    async def find_contacts_by_email(self, telegram_id: int, email: str) -> List[Dict[str, Any]]:
+        """Find contacts by email address."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .ilike("email", f"%{email}%")
+                                         .execute())
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"DB Error in find_contacts_by_email: {e}")
+            return []
+
+    async def find_contacts_by_name(self, telegram_id: int, name: str) -> List[Dict[str, Any]]:
+        """Find contacts by name."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .ilike("name", f"%{name}%")
+                                         .execute())
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"DB Error in find_contacts_by_name: {e}")
+            return []
+
+    async def get_contact_by_id(self, contact_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific contact by ID."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("id", contact_id)
+                                         .maybe_single()
+                                         .execute())
+            return result.data if result.data else None
+        except Exception as e:
+            print(f"DB Error in get_contact_by_id: {e}")
+            return None
+
+    async def get_contact_relationships(self, telegram_id: int) -> List[Dict[str, Any]]:
+        """Get contact relationships for mapping."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contact_relationships")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .execute())
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"DB Error in get_contact_relationships: {e}")
+            return []
+
+    async def add_contact_relationship(self, telegram_id: int, contact_id: str, relationship_type: str,
+                                      related_contact_id: str, notes: Optional[str] = None) -> bool:
+        """Add a relationship between contacts."""
+        try:
+            await self.db.db.run(lambda: self.db.db.client.table("contact_relationships").insert({
+                "telegram_id": telegram_id,
+                "contact_id": contact_id,
+                "relationship_type": relationship_type,
+                "related_contact_id": related_contact_id,
+                "notes": notes
+            }).execute())
+            return True
+        except Exception as e:
+            print(f"DB Error in add_contact_relationship: {e}")
+            return False
+
+    async def get_contact_network(self, telegram_id: int, contact_id: str) -> Dict[str, Any]:
+        """Get the contact network for a specific contact."""
+        try:
+            contact = await self.get_contact_by_id(contact_id)
+            if not contact:
+                return {}
+
+            relationships = await self.db.db.run(lambda: self.db.db.client.table("contact_relationships")
+                                                .select("*")
+                                                .or_(
+                                                    self.db.db.client.table("contact_relationships").eq("contact_id", contact_id),
+                                                    self.db.db.client.table("contact_relationships").eq("related_contact_id", contact_id)
+                                                )
+                                                .eq("telegram_id", telegram_id)
+                                                .execute())
+
+            network = {
+                "contact": contact,
+                "relationships": relationships.data if relationships.data else []
             }
-
-            def action():
-                return self.db.db.client.table("contacts").update(payload).eq("id", existing["id"]).execute()
-
-            response = await self.db.db.run(action)
-            return bool(response.data)
-
-        payload = {
-            "telegram_id": telegram_id,
-            "email_address": email_address,
-            "contact_name": contact_name or email_address.split("@")[0].replace('.', ' ').title(),
-            "contact_alias": contact_alias,
-            "frequency_of_contact": frequency_of_contact,
-            "tags": json.dumps(tags),
-        }
-
-        def action():
-            return self.db.db.client.table("contacts").insert(payload).execute()
-
-        response = await self.db.db.run(action)
-        return bool(response.data)
+            return network
+        except Exception as e:
+            print(f"DB Error in get_contact_network: {e}")
+            return {}
 
     async def search_contacts(self, telegram_id: int, query: str) -> List[Dict[str, Any]]:
-        def action():
-            return (
-                self.db.db.client.table("contacts")
-                .select("*")
-                .eq("telegram_id", telegram_id)
-                .or_(f"contact_name.ilike.%{query}%,contact_alias.ilike.%{query}%,email_address.ilike.%{query}%")
-                .execute()
-            )
+        """Search contacts by name, email, or company."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .or_(
+                                             self.db.db.client.table("contacts").ilike("name", f"%{query}%"),
+                                             self.db.db.client.table("contacts").ilike("email", f"%{query}%"),
+                                             self.db.db.client.table("contacts").ilike("company", f"%{query}%")
+                                         )
+                                         .execute())
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"DB Error in search_contacts: {e}")
+            return []
 
-        response = await self.db.db.run(action)
-        return response.data or []
-
-    async def get_top_contacts(self, telegram_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-        def action():
-            return (
-                self.db.db.client.table("contacts")
-                .select("*")
-                .eq("telegram_id", telegram_id)
-                .order("frequency_of_contact", desc=True)
-                .limit(limit)
-                .execute()
-            )
-
-        response = await self.db.db.run(action)
-        return response.data or []
-
-    async def update_contact_tags(self, contact_id: str, tags: List[str]) -> bool:
-        def action():
-            return self.db.db.client.table("contacts").update({"tags": json.dumps(tags)}).eq("id", contact_id).execute()
-
-        response = await self.db.db.run(action)
-        return bool(response.data)
 
 contact_manager = ContactManager()

@@ -1,8 +1,9 @@
 import base64
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from email.mime.text import MIMEText
-from google.auth.transport.requests import Request
+import httpx
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -42,7 +43,25 @@ class GmailClient:
         )
 
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            # Use httpx for async refresh
+            async with httpx.AsyncClient() as client:
+                refresh_data = {
+                    'client_id': settings.GOOGLE_OAUTH_CLIENT_ID,
+                    'client_secret': settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                    'refresh_token': creds.refresh_token,
+                    'grant_type': 'refresh_token'
+                }
+                response = await client.post(
+                    'https://oauth2.googleapis.com/token',
+                    data=refresh_data
+                )
+                response.raise_for_status()
+                token_data = response.json()
+
+                creds.token = token_data['access_token']
+                if 'expires_in' in token_data:
+                    creds.expiry = datetime.utcnow() + timedelta(seconds=token_data['expires_in'])
+
             auth_token["token"] = creds.token
             auth_token["expires_at"] = creds.expiry.isoformat() if creds.expiry else None
             await self.db.upsert_user_token(telegram_id, user.get("email", ""), auth_token)

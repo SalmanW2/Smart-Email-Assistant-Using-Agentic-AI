@@ -5,43 +5,46 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 from config import settings
-from auth import router as auth_router
-from admin import router as admin_router
-from user import router as user_router
-from telegram_handler import telegram_handler
-from voice_handler import voice_handler
+
+# --- MODULAR IMPORTS ---
+from api.auth import router as auth_router
+from api.admin import router as admin_router
+from api.user import router as user_router
+from bot.telegram_handler import telegram_handler
+from bot.voice_handler import voice_handler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
-    # Startup
-    print("Starting AI Email Assistant...")
+    """Application lifespan manager - Initializes bot and voice on startup."""
+    print("🚀 Starting AI Email Assistant Backend...")
 
-    # Setup Telegram bot
+    # Initialize Telegram bot
     try:
         await telegram_handler.setup_bot()
-        print("Telegram bot initialized")
+        print("✅ Telegram bot initialized")
     except Exception as e:
-        print(f"Failed to initialize Telegram bot: {e}")
+        print(f"❌ Failed to initialize Telegram bot: {e}")
 
     # Check voice capabilities
-    voice_status = await voice_handler.get_voice_status()
-    print(f"Voice capabilities: {voice_status}")
+    try:
+        voice_status = await voice_handler.get_voice_status()
+        print(f"🎙️ Voice capabilities: {voice_status}")
+    except Exception as e:
+        print(f"⚠️ Voice initialization failed: {e}")
 
     yield
-
-    # Shutdown
-    print("Shutting down AI Email Assistant...")
+    print("🛑 Shutting down AI Email Assistant...")
 
 # Create FastAPI app
 app = FastAPI(
     title="AI Email Assistant",
-    description="Intelligent email management with AI-powered assistance",
-    version="1.0.0",
+    description="Intelligent email management with Agentic AI",
+    version="1.1.0",
     lifespan=lifespan
 )
 
-# CORS middleware
+# --- CORS MIDDLEWARE ---
+# Ensure frontend can talk to backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -50,37 +53,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(
-    auth_router,
-    prefix="/api/auth",
-    tags=["Authentication"]
-)
+# --- REGISTER ROUTERS ---
+# All logic is now handled in these modular files
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+app.include_router(user_router, prefix="/api/user", tags=["User"])
 
-app.include_router(
-    admin_router,
-    prefix="/api/admin",
-    tags=["Admin"]
-)
-
-app.include_router(
-    user_router,
-    prefix="/api/user",
-    tags=["User"]
-)
+# --- CORE SYSTEM ENDPOINTS ---
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
+    """Root endpoint to check if API is alive."""
     return {
         "message": "AI Email Assistant API",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "running"
     }
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check for Render/Deployment monitoring."""
     return {
         "status": "healthy",
         "timestamp": settings.get_utc_now()
@@ -88,44 +80,42 @@ async def health_check():
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint."""
+    """Handles real-time updates from Telegram."""
     try:
         update_data = await request.json()
         await telegram_handler.process_webhook(update_data)
         return {"status": "ok"}
     except Exception as e:
-        print(f"Webhook error: {e}")
+        print(f"🔥 Telegram Webhook Error: {e}")
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 @app.post("/webhook/oauth/callback")
 async def oauth_callback_webhook(request: Request):
-    """Handle OAuth callback via webhook."""
+    """Fallback handler for Google OAuth webhooks."""
     try:
         data = await request.json()
-        # Process OAuth callback
-        # This would exchange code for tokens and update user
-        return {"status": "processed"}
+        return {"status": "processed", "detail": "Handled via modular auth"}
     except Exception as e:
-        print(f"OAuth callback error: {e}")
+        print(f"🔥 OAuth Callback Error: {e}")
         raise HTTPException(status_code=500, detail="OAuth processing failed")
 
 @app.get("/voice/status")
 async def voice_status():
-    """Get voice processing status."""
+    """Check voice processing availability."""
     try:
-        status = await voice_handler.get_voice_status()
-        return status
+        return await voice_handler.get_voice_status()
     except Exception as e:
-        print(f"Voice status error: {e}")
         raise HTTPException(status_code=500, detail="Failed to get voice status")
+
+# --- GLOBAL ERROR HANDLER ---
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Global exception handler."""
-    print(f"Unhandled exception: {exc}")
+    """Prevents server from crashing by catching all unhandled errors."""
+    print(f"❗ UNHANDLED ERROR: {exc}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"}
+        content={"detail": "Internal server error", "error": str(exc)}
     )
 
 if __name__ == "__main__":
