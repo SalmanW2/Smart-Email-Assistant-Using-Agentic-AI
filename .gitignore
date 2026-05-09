@@ -1,5 +1,16 @@
 credentials.json
 .env
+__pycache__/
+*.pyc
+*.pyo
+*.sqlite3
 node_modules/
 frontend/node_modules/
 dist/
+backend/__pycache__/
+backend/*/cache/
+__pycache__/
+*.log
+.DS_Store
+/reference
+/venv
