@@ -1,92 +1,191 @@
-import google.generativeai as genai
-from config import config
+import asyncio
+import json
+from typing import Any
+from google import genai
+from config import settings
 from db.memory import memory_manager
 from bot.contact_manager import ContactManager
 from bot.gmail_client import GmailClient
-import json
-from typing import Tuple, Optional
 
-genai.configure(api_key=config.GEMINI_API_KEY)
+genai.configure(api_key=settings.GEMINI_API_KEY)
 
 class AIEngine:
-    def __init__(self):
+    def __init__(self) -> None:
         self.memory = memory_manager
         self.contact_manager = ContactManager()
         self.gmail_client = GmailClient()
+        self.client = genai.Client()
 
-    async def process_message(self, user_id: str, message: str, ai_mode: bool) -> Tuple[str, Optional[str]]:
+    async def process_message(self, telegram_id: int, message: str, ai_mode: bool) -> tuple[str, str | None, dict[str, Any]]:
         if not ai_mode:
-            return "AI mode is off. Please use manual commands.", None
+            return ("AI mode is off. Please use manual email commands.", None, {"interaction_type": "system"})
 
-        # Get context
-        context = await self.memory.get_conversation_context(user_id)
+        memory_prompt = await self.memory.build_memory_prompt(telegram_id)
+        system_prompt = (
+            "You are a professional email assistant. Use a natural, helpful tone and only make Gmail changes when the user explicitly requests it. "
+            "Always keep responses concise and confirm actions before completing them."
+        )
 
-        # System prompt with context
-        system_prompt = f"""
-        You are a smart email assistant. Help users manage their emails naturally.
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": memory_prompt},
+            {"role": "user", "content": message},
+        ]
 
-        Context from previous conversations:
-        {context}
+        functions = self._build_functions()
 
-        Available actions:
-        - Check recent emails
-        - Send emails (use contact names like 'boss' or 'john@example.com')
-        - Reply to emails
-        - Delete emails
-        - Search emails
+        response = await asyncio.to_thread(
+            self.client.generate_text,
+            model="gemini-pro",
+            messages=messages,
+            functions=functions,
+            function_call="auto",
+            temperature=0.2,
+        )
 
-        Respond conversationally and take actions when appropriate.
-        If sending email, extract recipient from contacts or ask for clarification.
-        """
+        parsed_text = self._extract_text(response)
+        function_call = self._extract_function_call(response)
+        if function_call:
+            result_text, action, metadata = await self._run_function_call(telegram_id, function_call)
+            await self.extract_and_save_contacts(telegram_id, message)
+            return result_text, action, metadata
 
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(f"{system_prompt}\n\nUser: {message}")
+        await self.extract_and_save_contacts(telegram_id, message)
+        return parsed_text, None, {"interaction_type": "chat"}
 
-        # Parse response for actions
-        action = self.parse_action(response.text)
+    def _build_functions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "send_email",
+                "description": "Send a new email from the user's Gmail account.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "Recipient email address or contact alias."},
+                        "subject": {"type": "string", "description": "Email subject line."},
+                        "body": {"type": "string", "description": "Email body content."},
+                    },
+                    "required": ["to", "subject", "body"],
+                },
+            },
+            {
+                "name": "reply_email",
+                "description": "Reply to the most recent email thread.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "thread_id": {"type": "string", "description": "Gmail thread ID."},
+                        "body": {"type": "string", "description": "Reply content."},
+                    },
+                    "required": ["thread_id", "body"],
+                },
+            },
+            {
+                "name": "delete_email",
+                "description": "Delete a Gmail message by message ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "email_id": {"type": "string", "description": "The Gmail message ID to delete."},
+                    },
+                    "required": ["email_id"],
+                },
+            },
+            {
+                "name": "list_recent_emails",
+                "description": "Fetch a summary of the user's most recent emails.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"type": "integer", "description": "Number of emails to list."},
+                    },
+                    "required": ["count"],
+                },
+            },
+            {
+                "name": "search_emails",
+                "description": "Search email subjects and senders with natural keywords.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query for Gmail."},
+                    },
+                    "required": ["query"],
+                },
+            },
+        ]
 
-        # Extract contacts mentioned
-        await self.extract_and_save_contacts(user_id, message)
+    def _extract_text(self, response: Any) -> str:
+        if hasattr(response, "text") and response.text:
+            return response.text
+        if hasattr(response, "candidates") and response.candidates:
+            return getattr(response.candidates[0], "content", "") or ""
+        return ""
 
-        return response.text, action
+    def _extract_function_call(self, response: Any) -> dict[str, Any] | None:
+        if hasattr(response, "function_call") and response.function_call:
+            return response.function_call
 
-    def parse_action(self, response: str) -> Optional[str]:
-        # Simple parsing - in full implementation, use function calling
-        if "send" in response.lower() and "email" in response.lower():
-            return "send"
-        elif "reply" in response.lower():
-            return "reply"
-        elif "delete" in response.lower():
-            return "delete"
+        if hasattr(response, "candidates") and response.candidates:
+            metadata = getattr(response.candidates[0], "metadata", {})
+            function_call = metadata.get("function_call")
+            if function_call:
+                return function_call
+
         return None
 
-    async def extract_and_save_contacts(self, user_id: str, message: str):
-        # Simple extraction - use NLP in full implementation
-        words = message.split()
-        for word in words:
-            if "@" in word and "." in word:
-                # Potential email
-                name = word.split("@")[0].replace(".", " ").title()
-                await self.contact_manager.save_contact(user_id, name, word)
+    async def _run_function_call(self, telegram_id: int, function_call: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        name = function_call.get("name")
+        arguments = json.loads(function_call.get("arguments", "{}"))
 
-    async def process_attachment(self, user_id: str, file_path: str, query: str) -> str:
-        # Use Gemini Vision or Document AI for attachment processing
-        # Simplified implementation
-        model = genai.GenerativeModel('gemini-pro-vision')
-        # Assume file is uploaded and accessible
-        # response = model.generate_content([query, image/file])
-        return "Attachment processed. Summary: [placeholder]"
+        if name == "send_email":
+            recipient = await self.contact_manager.resolve_contact(telegram_id, arguments.get("to", ""))
+            success = await self.gmail_client.send_email(telegram_id, recipient, arguments.get("subject", ""), arguments.get("body", ""))
+            return (
+                "Email sent successfully." if success else "Unable to send the email. Please check your account connection.",
+                "send",
+                {"interaction_type": "send_email", "details": arguments},
+            )
 
-    async def generate_summary(self, user_id: str, content: str) -> Tuple[str, list]:
-        model = genai.GenerativeModel('gemini-pro')
-        prompt = f"Summarize this conversation in 50 words and extract key facts:\n{content}"
-        response = model.generate_content(prompt)
-        
-        # Parse summary and facts
-        text = response.text
-        summary = text.split("\n")[0][:50]
-        facts = [line for line in text.split("\n")[1:] if line.strip()]
-        
-        return summary, facts
+        if name == "reply_email":
+            success = await self.gmail_client.reply_email(telegram_id, arguments.get("thread_id", ""), arguments.get("body", ""))
+            return (
+                "Reply sent successfully." if success else "Unable to reply to the email.",
+                "reply",
+                {"interaction_type": "reply_email", "details": arguments},
+            )
+
+        if name == "delete_email":
+            success = await self.gmail_client.delete_email(telegram_id, arguments.get("email_id", ""))
+            return (
+                "Email deleted successfully." if success else "Unable to delete that email.",
+                "delete",
+                {"interaction_type": "delete_email", "details": arguments},
+            )
+
+        if name == "list_recent_emails":
+            emails = await self.gmail_client.get_recent_emails(telegram_id, count=arguments.get("count", 5))
+            summary = "\n".join([f"- {email['subject']} from {email['sender']}" for email in emails[:5]])
+            return (f"Here are your recent emails:\n{summary}", None, {"interaction_type": "list_recent_emails"})
+
+        if name == "search_emails":
+            results = await self.gmail_client.search_emails(telegram_id, arguments.get("query", ""))
+            formatted = "\n".join([f"- {item['subject']} from {item['sender']}" for item in results[:5]])
+            return (f"Search results:\n{formatted}", None, {"interaction_type": "search_emails"})
+
+        return ("I processed your request, but no direct Gmail action was required.", None, {"interaction_type": "chat"})
+
+    async def extract_and_save_contacts(self, telegram_id: int, message: str) -> None:
+        await self.contact_manager.extract_contacts_from_text(telegram_id, message)
+
+    async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
+        prompt = f"Summarize or answer the following document request:\n{query}\n\nDocument path: {file_path}"
+        response = await asyncio.to_thread(
+            self.client.generate_text,
+            model="gemini-pro",
+            messages=[{"role": "system", "content": "You are a document Q&A assistant."}, {"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        return self._extract_text(response)
 
 ai_engine = AIEngine()

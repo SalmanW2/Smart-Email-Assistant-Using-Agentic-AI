@@ -1,66 +1,169 @@
-from supabase import create_client, Client
-from config import config
-from typing import Optional, Dict, Any
+import asyncio
 import json
+from typing import Any, Dict, Optional
+from supabase import create_client, Client
+from config import settings
+
+class SupabaseDB:
+    def __init__(self) -> None:
+        self.client: Client = create_client(str(settings.supabase_url), settings.supabase_key.get_secret_value())
+
+    async def run(self, action):
+        return await asyncio.to_thread(action)
 
 class DBManager:
-    def __init__(self):
-        self.client: Client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+    def __init__(self) -> None:
+        self.db = SupabaseDB()
 
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
-        response = self.client.table("users").select("*").eq("telegram_id", telegram_id).execute()
-        return response.data[0] if response.data else None
+        def action():
+            return self.db.client.table("users").select("*").eq("telegram_id", telegram_id).maybe_single().execute()
 
-    async def create_user(self, telegram_id: int, username: str, first_name: str, last_name: str = None) -> Dict[str, Any]:
-        user_data = {
+        response = await self.db.run(action)
+        return response.data if response.data else None
+
+    async def create_user(self, telegram_id: int, email: str | None = None, auth_token: dict | None = None) -> Dict[str, Any]:
+        user_payload = {
             "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name,
-            "last_name": last_name,
-            "role": "user",
-            "ai_mode": True,
-            "voice_preference": "text"
+            "email": email,
+            "auth_token": auth_token,
+            "is_verified": bool(auth_token),
+            "ai_mode_enabled": True,
         }
-        response = self.client.table("users").insert(user_data).execute()
+
+        def action():
+            return self.db.client.table("users").insert(user_payload).execute()
+
+        response = await self.db.run(action)
         return response.data[0]
+
+    async def upsert_user_token(self, telegram_id: int, email: str, auth_token: dict) -> Optional[Dict[str, Any]]:
+        payload = {
+            "telegram_id": telegram_id,
+            "email": email,
+            "auth_token": auth_token,
+            "is_verified": True,
+            "ai_mode_enabled": True,
+        }
+
+        def action():
+            return self.db.client.table("users").upsert(payload, on_conflict="telegram_id").execute()
+
+        response = await self.db.run(action)
+        return response.data[0] if response.data else None
 
     async def update_user(self, telegram_id: int, updates: Dict[str, Any]) -> bool:
-        response = self.client.table("users").update(updates).eq("telegram_id", telegram_id).execute()
-        return len(response.data) > 0
+        def action():
+            return self.db.client.table("users").update(updates).eq("telegram_id", telegram_id).execute()
 
-    async def get_auth_session(self, user_id: str) -> Optional[Dict[str, Any]]:
-        response = self.client.table("auth_sessions").select("*").eq("user_id", user_id).execute()
-        return response.data[0] if response.data else None
+        response = await self.db.run(action)
+        return bool(response.data)
 
-    async def create_auth_session(self, user_id: str, access_token: str, refresh_token: str, expires_at: int) -> Dict[str, Any]:
-        session_data = {
-            "user_id": user_id,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_at": expires_at
+    async def get_auth_session(self, state_uuid: str) -> Optional[Dict[str, Any]]:
+        def action():
+            return self.db.client.table("auth_sessions").select("*").eq("state_uuid", state_uuid).maybe_single().execute()
+
+        response = await self.db.run(action)
+        return response.data if response.data else None
+
+    async def create_auth_session(self, state_uuid: str, telegram_id: int, expires_at: str) -> Dict[str, Any]:
+        payload = {
+            "state_uuid": state_uuid,
+            "telegram_id": telegram_id,
+            "expires_at": expires_at,
         }
-        response = self.client.table("auth_sessions").insert(session_data).execute()
+
+        def action():
+            return self.db.client.table("auth_sessions").insert(payload).execute()
+
+        response = await self.db.run(action)
         return response.data[0]
 
-    async def update_auth_session(self, user_id: str, access_token: str, refresh_token: str, expires_at: int) -> bool:
-        updates = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_at": expires_at
-        }
-        response = self.client.table("auth_sessions").update(updates).eq("user_id", user_id).execute()
-        return len(response.data) > 0
+    async def delete_auth_session(self, state_uuid: str) -> bool:
+        def action():
+            return self.db.client.table("auth_sessions").delete().eq("state_uuid", state_uuid).execute()
 
-    async def delete_auth_session(self, user_id: str) -> bool:
-        response = self.client.table("auth_sessions").delete().eq("user_id", user_id).execute()
-        return len(response.data) > 0
+        response = await self.db.run(action)
+        return bool(response.data)
 
-    async def get_admin_users(self) -> list:
-        response = self.client.table("admin_users").select("*").execute()
-        return response.data
+    async def get_user_preferences(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        def action():
+            return self.db.client.table("user_preferences").select("*").eq("telegram_id", telegram_id).maybe_single().execute()
+
+        response = await self.db.run(action)
+        return response.data if response.data else None
+
+    async def update_user_preferences(self, telegram_id: int, updates: Dict[str, Any]) -> bool:
+        def action():
+            return self.db.client.table("user_preferences").update(updates).eq("telegram_id", telegram_id).execute()
+
+        response = await self.db.run(action)
+        return bool(response.data)
+
+    async def get_admin_users(self) -> list[Dict[str, Any]]:
+        def action():
+            return self.db.client.table("admin_users").select("*").execute()
+
+        response = await self.db.run(action)
+        return response.data or []
 
     async def is_blocked(self, telegram_id: int) -> bool:
-        response = self.client.table("blocked_users").select("*").eq("telegram_id", telegram_id).execute()
-        return len(response.data) > 0
+        def action():
+            return self.db.client.table("blocked_users").select("*").eq("telegram_id", telegram_id).execute()
+
+        response = await self.db.run(action)
+        return bool(response.data)
+
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        def action():
+            return self.db.client.table("users").select("*").eq("id", user_id).maybe_single().execute()
+
+        response = await self.db.run(action)
+        return response.data if response.data else None
+
+    async def get_admin_emails(self) -> list[str]:
+        def action():
+            return self.db.client.table("admin_users").select("email").execute()
+
+        response = await self.db.run(action)
+        return [row["email"] for row in (response.data or [])]
+
+    async def get_summary_history_count(self, telegram_id: int) -> int:
+        def action():
+            return self.db.client.table("conversation_summaries").select("id", count="exact").eq("telegram_id", telegram_id).execute()
+
+        response = await self.db.run(action)
+        return int(response.count or 0)
+
+    async def get_all_users(self) -> list[Dict[str, Any]]:
+        def action():
+            return self.db.client.table("users").select("*").execute()
+
+        response = await self.db.run(action)
+        return response.data or []
+
+    async def count_table(self, table_name: str, filters: Dict[str, Any] | None = None) -> int:
+        def action():
+            query = self.db.client.table(table_name).select("id", count="exact")
+            if filters:
+                for key, value in filters.items():
+                    query = query.eq(key, value)
+            return query.execute()
+
+        response = await self.db.run(action)
+        return int(response.count or 0)
+
+    async def upsert_user_preferences(self, telegram_id: int, updates: Dict[str, Any]) -> bool:
+        payload = {
+            "telegram_id": telegram_id,
+            **updates,
+        }
+
+        def action():
+            return self.db.client.table("user_preferences").upsert(payload, on_conflict="telegram_id").execute()
+
+        response = await self.db.run(action)
+        return bool(response.data)
+
 
 db_manager = DBManager()

@@ -1,43 +1,46 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import asyncio
-from bot.telegram_handler import setup_bot
+from telegram import Update
+from bot.telegram_handler import TelegramBotManager
 from api.auth import router as auth_router
 from api.admin import router as admin_router
-from api.user import router as user_router
-from config import config
+from config import settings
+
+bot_manager = TelegramBotManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    bot_task = asyncio.create_task(setup_bot())
+    await bot_manager.start()
     yield
-    # Shutdown
-    bot_task.cancel()
-    try:
-        await bot_task
-    except asyncio.CancelledError:
-        pass
+    await bot_manager.stop()
 
-app = FastAPI(title="Smart Email Assistant", lifespan=lifespan)
-
+app = FastAPI(title="Smart Email Assistant", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config.FRONTEND_URL],
+    allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(admin_router, prefix="/admin", tags=["admin"])
-app.include_router(user_router, prefix="/user", tags=["user"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    payload = await request.json()
+    if not bot_manager.application or not bot_manager.application.bot:
+        raise HTTPException(status_code=503, detail="Telegram bot is not initialized")
+
+    update = Update.de_json(payload, bot_manager.application.bot)
+    await bot_manager.application.process_update(update)
+    return {"ok": True}
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "Smart Email Assistant API"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=config.PORT)
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT)

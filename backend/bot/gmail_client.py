@@ -1,123 +1,140 @@
+import base64
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from email.mime.text import MIMEText
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from db.models import db_manager
-from config import config
-import base64
-from email.mime.text import MIMEText
-from typing import List, Dict, Any, Optional
+from config import settings
 
 class GmailClient:
-    def __init__(self):
+    def __init__(self) -> None:
         self.db = db_manager
 
-    async def get_credentials(self, user_id: str) -> Optional[Credentials]:
-        session = await self.db.get_auth_session(user_id)
-        if not session:
+    async def _get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        return await self.db.get_user(telegram_id)
+
+    async def _build_credentials(self, telegram_id: int) -> Optional[Credentials]:
+        user = await self._get_user(telegram_id)
+        if not user:
             return None
 
-        return Credentials(
-            token=session["access_token"],
-            refresh_token=session["refresh_token"],
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=config.GOOGLE_CLIENT_ID,  # Assuming added to config
-            client_secret=config.GOOGLE_CLIENT_SECRET,
-            expiry=session["expires_at"]
+        auth_token = user.get("auth_token") or {}
+        token = auth_token.get("token")
+        if not token:
+            return None
+
+        expiry = None
+        expires_at = auth_token.get("expires_at")
+        if expires_at:
+            expiry = datetime.fromisoformat(expires_at)
+
+        creds = Credentials(
+            token=token,
+            refresh_token=auth_token.get("refresh_token"),
+            token_uri=auth_token.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+            client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+            scopes=auth_token.get("scopes"),
+            expiry=expiry,
         )
 
-    async def refresh_credentials(self, user_id: str) -> bool:
-        creds = await self.get_credentials(user_id)
-        if creds and creds.expired:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            await self.db.update_auth_session(
-                user_id, 
-                creds.token, 
-                creds.refresh_token, 
-                creds.expiry.timestamp()
-            )
-        return True
+            auth_token["token"] = creds.token
+            auth_token["expires_at"] = creds.expiry.isoformat() if creds.expiry else None
+            await self.db.upsert_user_token(telegram_id, user.get("email", ""), auth_token)
 
-    async def get_recent_emails(self, user_id: str, max_results: int = 10) -> List[Dict[str, Any]]:
-        creds = await self.get_credentials(user_id)
+        return creds
+
+    def _build_service(self, creds: Credentials):
+        return build("gmail", "v1", credentials=creds)
+
+    async def get_recent_emails(self, telegram_id: int, count: int = 5) -> List[Dict[str, Any]]:
+        creds = await self._build_credentials(telegram_id)
         if not creds:
             return []
 
         try:
-            service = build('gmail', 'v1', credentials=creds)
-            results = service.users().messages().list(userId='me', maxResults=max_results).execute()
-            messages = results.get('messages', [])
-
+            service = self._build_service(creds)
+            results = service.users().messages().list(userId="me", maxResults=count).execute()
+            messages = results.get("messages", [])
             emails = []
             for msg in messages:
-                msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
-                email = self.parse_email(msg_data)
-                emails.append(email)
-
+                message_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
+                emails.append(self._parse_email(message_data))
             return emails
-        except HttpError as e:
-            print(f"Gmail API error: {e}")
+        except HttpError:
             return []
 
-    def parse_email(self, msg_data: Dict) -> Dict[str, Any]:
-        headers = msg_data['payload']['headers']
-        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
-        sender = next((h['value'] for h in headers if h['name'] == 'From'), '')
-        snippet = msg_data.get('snippet', '')
+    async def search_emails(self, telegram_id: int, query: str) -> List[Dict[str, Any]]:
+        creds = await self._build_credentials(telegram_id)
+        if not creds:
+            return []
 
+        try:
+            service = self._build_service(creds)
+            results = service.users().messages().list(userId="me", q=query, maxResults=10).execute()
+            messages = results.get("messages", [])
+            return [self._parse_email(service.users().messages().get(userId="me", id=msg["id"]).execute()) for msg in messages]
+        except HttpError:
+            return []
+
+    def _parse_email(self, msg_data: Dict[str, Any]) -> Dict[str, Any]:
+        headers = msg_data.get("payload", {}).get("headers", [])
+        subject = next((item["value"] for item in headers if item["name"] == "Subject"), "")
+        sender = next((item["value"] for item in headers if item["name"] == "From"), "")
+        snippet = msg_data.get("snippet", "")
         return {
-            'id': msg_data['id'],
-            'subject': subject,
-            'sender': sender,
-            'snippet': snippet,
-            'thread_id': msg_data['threadId']
+            "id": msg_data.get("id"),
+            "thread_id": msg_data.get("threadId"),
+            "subject": subject,
+            "sender": sender,
+            "snippet": snippet,
         }
 
-    async def send_email(self, user_id: str, to: str, subject: str, body: str) -> bool:
-        creds = await self.get_credentials(user_id)
+    async def send_email(self, telegram_id: int, to: str, subject: str, body: str) -> bool:
+        creds = await self._build_credentials(telegram_id)
         if not creds:
             return False
 
-        try:
-            service = build('gmail', 'v1', credentials=creds)
-            message = MIMEText(body)
-            message['to'] = to
-            message['subject'] = subject
-            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        message = MIMEText(body)
+        message["to"] = to
+        message["subject"] = subject
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-            service.users().messages().send(userId='me', body={'raw': raw}).execute()
+        try:
+            service = self._build_service(creds)
+            service.users().messages().send(userId="me", body={"raw": raw}).execute()
             return True
         except HttpError:
             return False
 
-    async def reply_email(self, user_id: str, thread_id: str, body: str) -> bool:
-        creds = await self.get_credentials(user_id)
+    async def reply_email(self, telegram_id: int, thread_id: str, body: str) -> bool:
+        creds = await self._build_credentials(telegram_id)
         if not creds:
             return False
 
-        try:
-            service = build('gmail', 'v1', credentials=creds)
-            message = MIMEText(body)
-            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        message = MIMEText(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-            service.users().messages().send(
-                userId='me', 
-                body={
-                    'raw': raw,
-                    'threadId': thread_id
-                }
-            ).execute()
+        try:
+            service = self._build_service(creds)
+            service.users().messages().send(userId="me", body={"raw": raw, "threadId": thread_id}).execute()
             return True
         except HttpError:
             return False
 
-    async def delete_email(self, user_id: str, email_id: str) -> bool:
-        creds = await self.get_credentials(user_id)
+    async def delete_email(self, telegram_id: int, email_id: str) -> bool:
+        creds = await self._build_credentials(telegram_id)
         if not creds:
             return False
 
         try:
-            service = build('gmail', 'v1', credentials=creds)
-            service.users().messages().delete(userId='me', id=email_id).execute()
+            service = self._build_service(creds)
+            service.users().messages().delete(userId="me", id=email_id).execute()
             return True
         except HttpError:
             return False

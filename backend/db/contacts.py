@@ -1,55 +1,98 @@
-from db.models import db_manager
-from typing import List, Dict, Any, Optional
 import json
+from typing import Any, Dict, List, Optional
+from db.models import db_manager
 
 class ContactManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.db = db_manager
 
-    async def save_contact(self, user_id: str, name: str, email: str, role: str = None, frequency: int = 1, tags: List[str] = None) -> bool:
-        # Check if contact exists
-        existing = await self.get_contact_by_email(user_id, email)
+    async def get_contact_by_email(self, telegram_id: int, email_address: str) -> Optional[Dict[str, Any]]:
+        def action():
+            return (
+                self.db.db.client.table("contacts")
+                .select("*")
+                .eq("telegram_id", telegram_id)
+                .eq("email_address", email_address)
+                .maybe_single()
+                .execute()
+            )
+
+        response = await self.db.db.run(action)
+        return response.data if response.data else None
+
+    async def save_contact(
+        self,
+        telegram_id: int,
+        email_address: str,
+        contact_name: str | None = None,
+        contact_alias: str | None = None,
+        frequency_of_contact: int = 1,
+        tags: List[str] | None = None,
+    ) -> bool:
+        existing = await self.get_contact_by_email(telegram_id, email_address)
+        tags = tags or []
         if existing:
-            # Update frequency and merge tags
-            new_freq = existing["frequency"] + frequency
-            existing_tags = json.loads(existing.get("tags", "[]"))
-            merged_tags = list(set(existing_tags + (tags or [])))
-            updates = {
-                "frequency": new_freq,
-                "tags": json.dumps(merged_tags)
+            merged_tags = list({*json.loads(existing.get("tags", "[]")), *tags})
+            payload = {
+                "contact_name": contact_name or existing.get("contact_name"),
+                "contact_alias": contact_alias or existing.get("contact_alias"),
+                "frequency_of_contact": existing.get("frequency_of_contact", 0) + frequency_of_contact,
+                "tags": json.dumps(merged_tags),
             }
-            if role and not existing.get("role"):
-                updates["role"] = role
-            response = self.db.client.table("contacts").update(updates).eq("id", existing["id"]).execute()
-            return len(response.data) > 0
-        else:
-            # Create new contact
-            data = {
-                "user_id": user_id,
-                "name": name,
-                "email": email,
-                "role": role,
-                "frequency": frequency,
-                "tags": json.dumps(tags or [])
-            }
-            response = self.db.client.table("contacts").insert(data).execute()
-            return len(response.data) > 0
 
-    async def get_contact_by_email(self, user_id: str, email: str) -> Optional[Dict[str, Any]]:
-        response = self.db.client.table("contacts").select("*").eq("user_id", user_id).eq("email", email).execute()
-        return response.data[0] if response.data else None
+            def action():
+                return self.db.db.client.table("contacts").update(payload).eq("id", existing["id"]).execute()
 
-    async def search_contacts(self, user_id: str, query: str) -> List[Dict[str, Any]]:
-        # Search by name or email
-        response = self.db.client.table("contacts").select("*").eq("user_id", user_id).or_(f"name.ilike.%{query}%,email.ilike.%{query}%").execute()
-        return response.data
+            response = await self.db.db.run(action)
+            return bool(response.data)
 
-    async def get_top_contacts(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        response = self.db.client.table("contacts").select("*").eq("user_id", user_id).order("frequency", desc=True).limit(limit).execute()
-        return response.data
+        payload = {
+            "telegram_id": telegram_id,
+            "email_address": email_address,
+            "contact_name": contact_name or email_address.split("@")[0].replace('.', ' ').title(),
+            "contact_alias": contact_alias,
+            "frequency_of_contact": frequency_of_contact,
+            "tags": json.dumps(tags),
+        }
 
-    async def update_contact_tags(self, contact_id: int, tags: List[str]) -> bool:
-        response = self.db.client.table("contacts").update({"tags": json.dumps(tags)}).eq("id", contact_id).execute()
-        return len(response.data) > 0
+        def action():
+            return self.db.db.client.table("contacts").insert(payload).execute()
+
+        response = await self.db.db.run(action)
+        return bool(response.data)
+
+    async def search_contacts(self, telegram_id: int, query: str) -> List[Dict[str, Any]]:
+        def action():
+            return (
+                self.db.db.client.table("contacts")
+                .select("*")
+                .eq("telegram_id", telegram_id)
+                .or_(f"contact_name.ilike.%{query}%,contact_alias.ilike.%{query}%,email_address.ilike.%{query}%")
+                .execute()
+            )
+
+        response = await self.db.db.run(action)
+        return response.data or []
+
+    async def get_top_contacts(self, telegram_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        def action():
+            return (
+                self.db.db.client.table("contacts")
+                .select("*")
+                .eq("telegram_id", telegram_id)
+                .order("frequency_of_contact", desc=True)
+                .limit(limit)
+                .execute()
+            )
+
+        response = await self.db.db.run(action)
+        return response.data or []
+
+    async def update_contact_tags(self, contact_id: str, tags: List[str]) -> bool:
+        def action():
+            return self.db.db.client.table("contacts").update({"tags": json.dumps(tags)}).eq("id", contact_id).execute()
+
+        response = await self.db.db.run(action)
+        return bool(response.data)
 
 contact_manager = ContactManager()

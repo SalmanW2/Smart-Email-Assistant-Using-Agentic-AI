@@ -1,23 +1,20 @@
-import os
-from dotenv import load_dotenv
+from pydantic import BaseSettings, Field, HttpUrl, SecretStr
 
-load_dotenv()
+class Settings(BaseSettings):
+    BOT_TOKEN: str = Field(..., env="BOT_TOKEN")
+    GEMINI_API_KEY: str = Field(..., env="GEMINI_API_KEY")
+    SUPABASE_URL: HttpUrl = Field(..., env="SUPABASE_URL")
+    SUPABASE_KEY: SecretStr = Field(..., env="SUPABASE_KEY")
+    REDIRECT_URI: HttpUrl = Field(..., env="REDIRECT_URI")
+    RENDER_WEB_SERVICE_URL: HttpUrl = Field(..., env="RENDER_WEB_SERVICE_URL")
+    FRONTEND_URL: HttpUrl = Field(..., env="FRONTEND_URL")
+    PORT: int = Field(10000, env="PORT")
+    GOOGLE_TTS_API_KEY: str | None = Field(None, env="GOOGLE_TTS_API_KEY")
+    GOOGLE_OAUTH_CLIENT_ID: str = Field(..., env="GOOGLE_OAUTH_CLIENT_ID")
+    GOOGLE_OAUTH_CLIENT_SECRET: str = Field(..., env="GOOGLE_OAUTH_CLIENT_SECRET")
 
-class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-    REDIRECT_URI = os.getenv("REDIRECT_URI")
-    RENDER_WEB_SERVICE_URL = os.getenv("RENDER_WEB_SERVICE_URL")
-    FRONTEND_URL = os.getenv("FRONTEND_URL")
-    PORT = int(os.getenv("PORT", 10000))
-    GOOGLE_TTS_API_KEY = os.getenv("GOOGLE_TTS_API_KEY")
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
 
-    # Validate required configs
-    REQUIRED = ["BOT_TOKEN", "GEMINI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "REDIRECT_URI", "RENDER_WEB_SERVICE_URL", "FRONTEND_URL"]
-    for key in REQUIRED:
-        if not getattr(Config, key):
-            raise ValueError(f"Missing required environment variable: {key}")
-
-config = Config()
+settings = Settings()

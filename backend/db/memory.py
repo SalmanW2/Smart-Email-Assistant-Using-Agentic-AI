@@ -1,62 +1,73 @@
-from db.models import db_manager
-from typing import List, Dict, Any, Optional
 import json
+from typing import Any, Dict, List, Optional
+from db.models import db_manager
 
 class MemoryManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.db = db_manager
 
-    async def save_conversation_summary(self, user_id: str, summary: str, facts: List[str]) -> bool:
-        data = {
-            "user_id": user_id,
-            "summary": summary,
-            "extracted_facts": json.dumps(facts)
+    async def save_conversation_summary(self, telegram_id: int, summary_text: str, key_facts: List[str], current_topic: str | None = None) -> bool:
+        payload = {
+            "telegram_id": telegram_id,
+            "summary_text": summary_text,
+            "key_facts": key_facts,
+            "current_topic": current_topic,
         }
-        response = self.db.client.table("conversation_summaries").insert(data).execute()
-        return len(response.data) > 0
 
-    async def get_recent_summaries(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
-        response = self.db.client.table("conversation_summaries").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(limit).execute()
-        return response.data
+        def action():
+            return self.db.db.client.table("conversation_summaries").insert(payload).execute()
 
-    async def save_conversation_history(self, user_id: str, message: str, response: str, action: str = None) -> bool:
-        data = {
-            "user_id": user_id,
-            "user_message": message,
-            "bot_response": response,
-            "action_taken": action
+        response = await self.db.db.run(action)
+        return bool(response.data)
+
+    async def get_recent_summaries(self, telegram_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+        def action():
+            return (
+                self.db.db.client.table("conversation_summaries")
+                .select("*")
+                .eq("telegram_id", telegram_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+
+        response = await self.db.db.run(action)
+        return response.data or []
+
+    async def save_conversation_history(self, telegram_id: int, user_message: str, bot_response: str, interaction_type: str = "chat") -> bool:
+        payload = {
+            "telegram_id": telegram_id,
+            "user_message": user_message,
+            "bot_response": bot_response,
+            "interaction_type": interaction_type,
         }
-        response = self.db.client.table("conversation_history").insert(data).execute()
-        return len(response.data) > 0
 
-    async def get_conversation_context(self, user_id: str) -> str:
-        summaries = await self.get_recent_summaries(user_id)
-        facts = []
-        for summary in summaries:
-            facts.extend(json.loads(summary.get("extracted_facts", "[]")))
-        
-        context = "Recent conversation summaries:\n"
-        for summary in summaries:
-            context += f"- {summary['summary']}\n"
-        
-        if facts:
-            context += "\nExtracted facts:\n" + "\n".join(f"- {fact}" for fact in facts[:10])  # Limit to 10 facts
-        
-        return context
+        def action():
+            return self.db.db.client.table("conversation_history").insert(payload).execute()
 
-    async def save_email_cache(self, user_id: str, email_id: str, subject: str, sender: str, snippet: str) -> bool:
-        data = {
-            "user_id": user_id,
-            "email_id": email_id,
-            "subject": subject,
-            "sender": sender,
-            "snippet": snippet
-        }
-        response = self.db.client.table("email_cache").insert(data).execute()
-        return len(response.data) > 0
+        response = await self.db.db.run(action)
+        return bool(response.data)
 
-    async def get_email_cache(self, user_id: str, email_id: str) -> Optional[Dict[str, Any]]:
-        response = self.db.client.table("email_cache").select("*").eq("user_id", user_id).eq("email_id", email_id).execute()
-        return response.data[0] if response.data else None
+    async def build_memory_prompt(self, telegram_id: int) -> str:
+        summaries = await self.get_recent_summaries(telegram_id)
+        if not summaries:
+            return "No prior conversation memory available."
+
+        prompt_lines = ["User memory context:"]
+        for item in summaries:
+            facts = item.get("key_facts") or []
+            if isinstance(facts, str):
+                try:
+                    facts = json.loads(facts)
+                except json.JSONDecodeError:
+                    facts = [facts]
+
+            prompt_lines.append(f"Summary: {item['summary_text']}")
+            if facts:
+                prompt_lines.append(f"Facts: {', '.join(facts[:5])}")
+            if item.get("current_topic"):
+                prompt_lines.append(f"Topic: {item['current_topic']}")
+
+        return "\n".join(prompt_lines)
 
 memory_manager = MemoryManager()
