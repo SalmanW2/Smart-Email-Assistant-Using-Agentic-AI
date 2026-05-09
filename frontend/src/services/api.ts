@@ -1,34 +1,36 @@
-import axios, { AxiosInstance } from 'axios'
-import Cookies from 'js-cookie'
+import axios from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:10000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-const api: AxiosInstance = axios.create({
-  baseURL: API_URL,
+const api = axios.create({
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-})
+});
 
-// Add auth token to requests
+// Add request interceptor for auth if needed
 api.interceptors.request.use((config) => {
-  const token = Cookies.get('admin_session')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+  // Add auth headers if available
+  return config;
+});
 
-// Handle errors
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      Cookies.remove('admin_session')
-      window.location.href = '/admin/login'
-    }
-    return Promise.reject(error)
-  }
-)
+export const authAPI = {
+  login: (token: string) => api.get(`/auth/login?token=${token}`),
+  logout: (userId: string) => api.post('/auth/logout', { user_id: userId }),
+};
 
-export default api
+export const userAPI = {
+  getPreferences: (telegramId: number) => api.get(`/user/preferences/${telegramId}`),
+  updatePreferences: (telegramId: number, prefs: any) => api.put(`/user/preferences/${telegramId}`, prefs),
+  getContacts: (telegramId: number) => api.get(`/user/contacts/${telegramId}`),
+};
+
+export const adminAPI = {
+  getStats: () => api.get('/admin/stats'),
+  getUsers: () => api.get('/admin/users'),
+  blockUser: (telegramId: number) => api.post(`/admin/block/${telegramId}`),
+  unblockUser: (telegramId: number) => api.delete(`/admin/block/${telegramId}`),
+};
+
+export default api;
