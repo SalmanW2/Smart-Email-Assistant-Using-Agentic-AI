@@ -6,7 +6,7 @@ from config import settings
 
 class SupabaseDB:
     def __init__(self) -> None:
-        self.client: Client = create_client(str(settings.supabase_url), settings.supabase_key.get_secret_value())
+        self.client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
     async def run(self, action):
         return await asyncio.to_thread(action)
