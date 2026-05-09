@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 
+interface User {
+  name: string;
+}
+
 const Dashboard = () => {
-  const [user, setUser] = useState(null);
+  const [_user, setUser] = useState<User | null>(null);
   const [connectionStatus, setConnectionStatus] = useState('checking');
 
   useEffect(() => {

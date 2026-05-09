@@ -1,9 +1,8 @@
 import { useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 
 const Login = () => {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const token = searchParams.get('token');
 
   useEffect(() => {
@@ -14,7 +13,8 @@ const Login = () => {
     }
 
     // Redirect to backend auth
-    window.location.href = `http://localhost:8000/auth/login?token=${token}`;
+    const backendUrl = (import.meta as any).env.VITE_API_URL || 'http://localhost:8000';
+    window.location.href = `${backendUrl}/auth/login?token=${token}`;
   }, [token]);
 
   return (

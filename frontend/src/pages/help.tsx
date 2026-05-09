@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 
+interface Admin {
+  name: string;
+  email: string;
+}
+
 const Help = () => {
-  const [admins, setAdmins] = useState([]);
+  const [admins, setAdmins] = useState<Admin[]>([]);
 
   useEffect(() => {
     loadAdmins();

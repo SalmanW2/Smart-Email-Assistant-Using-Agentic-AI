@@ -1,8 +1,22 @@
 import { useState, useEffect } from 'react';
 
+interface Stats {
+  total_users: number;
+  total_emails_processed: number;
+  active_sessions: number;
+}
+
+interface User {
+  id: number;
+  username: string;
+  first_name: string;
+  role: string;
+  ai_mode: boolean;
+}
+
 const Admin = () => {
-  const [stats, setStats] = useState(null);
-  const [users, setUsers] = useState([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
     loadStats();
@@ -34,7 +48,7 @@ const Admin = () => {
     }
   };
 
-  const toggleBlock = async (userId: number, blocked: boolean) => {
+  const toggleBlock = async (_userId: number, blocked: boolean) => {
     try {
       if (blocked) {
         // await api.unblockUser(userId);
