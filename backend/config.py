@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     GOOGLE_TTS_API_KEY: str | None = None
     GOOGLE_OAUTH_CLIENT_ID: str | None = None
     GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
+    
+    # --- MISSING VARIABLES ADDED HERE ---
+    MAX_CONTEXT_MESSAGES: int = 5
+    SUMMARY_GENERATION_THRESHOLD: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
