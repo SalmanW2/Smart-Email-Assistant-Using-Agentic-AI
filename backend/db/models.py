@@ -56,9 +56,6 @@ class DBManager:
     async def get_auth_session(self, state_uuid: str) -> Optional[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").eq("state_uuid", state_uuid).maybe_single().execute())
-            # Fallback agar "state" column use ho raha ho
-            if not result or not hasattr(result, 'data') or not result.data:
-                result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").eq("state", state_uuid).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             print(f"DB Error in get_auth_session: {e}")
@@ -70,7 +67,6 @@ class DBManager:
             state_uuid = str(uuid.uuid4())
             await self.db.run(lambda: self.db.client.table("auth_sessions").insert({
                 "state_uuid": state_uuid,
-                "state": state_uuid,  # Saving in both fields to be safe with older schema
                 "telegram_id": telegram_id
             }).execute())
             return state_uuid
@@ -82,7 +78,6 @@ class DBManager:
         try:
             await self.db.run(lambda: self.db.client.table("auth_sessions").insert({
                 "state_uuid": state_uuid,
-                "state": state_uuid,
                 "telegram_id": telegram_id,
                 "email": email
             }).execute())
@@ -94,7 +89,6 @@ class DBManager:
     async def delete_auth_session(self, state_uuid: str) -> bool:
         try:
             await self.db.run(lambda: self.db.client.table("auth_sessions").delete().eq("state_uuid", state_uuid).execute())
-            await self.db.run(lambda: self.db.client.table("auth_sessions").delete().eq("state", state_uuid).execute())
             return True
         except Exception as e:
             print(f"DB Error in delete_auth_session: {e}")

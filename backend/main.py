@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 import uvicorn
 from config import settings
 
@@ -61,14 +61,27 @@ app.include_router(user_router, prefix="/api/user", tags=["User"])
 
 # --- CORE SYSTEM ENDPOINTS ---
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint to check if API is alive."""
-    return {
-        "message": "AI Email Assistant API",
-        "version": "1.1.0",
-        "status": "running"
-    }
+    """Root endpoint with basic UI."""
+    return """
+    <html>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 100px; background-color: #f4f6f8;">
+            <div style="background: white; max-width: 600px; margin: 0 auto; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                <h1 style="color: #2563eb; font-size: 28px;">🚀 AI Email Assistant is Live</h1>
+                <p style="color: #475569; font-size: 16px; margin-top: 10px;">The backend API service is operating perfectly.</p>
+                <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+                <p style="color: #94a3b8; font-size: 14px;">Please use the Telegram Bot or Admin Dashboard to interact.</p>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.get("/callback")
+async def root_callback_redirect(request: Request):
+    """Catches Google's root callback and redirects it to the correct auth router."""
+    query_params = request.url.query
+    return RedirectResponse(url=f"/api/auth/callback?{query_params}")
 
 @app.get("/health")
 async def health_check():
@@ -106,6 +119,11 @@ async def voice_status():
         return await voice_handler.get_voice_status()
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to get voice status")
+
+@app.post("/admin/logout")
+async def admin_logout():
+    """Admin logout endpoint fallback."""
+    return {"message": "Logged out successfully"}
 
 # --- GLOBAL ERROR HANDLER ---
 
