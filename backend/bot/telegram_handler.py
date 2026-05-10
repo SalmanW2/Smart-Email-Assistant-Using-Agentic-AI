@@ -30,6 +30,7 @@ class TelegramHandler:
 
     def _register_handlers(self):
         self.application.add_handler(CommandHandler("start", self.start_command))
+        self.application.add_handler(CommandHandler("settings", self.settings_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_button_actions))
         self.application.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
         self.application.add_handler(MessageHandler(
@@ -64,7 +65,6 @@ class TelegramHandler:
 
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
         async with self.email_lock:
-            # Assume gmail_client has get_service method
             service = self.ai_engine.gmail_client.get_service()
             if not service: return
             try:
@@ -96,7 +96,7 @@ class TelegramHandler:
                                 [InlineKeyboardButton("🗑️ Delete", callback_data=f"del_{m_id}_main")]
                             ]
                             await context.bot.send_message(
-                                chat_id=settings.OWNER_TELEGRAM_ID,  # Need to define OWNER_TELEGRAM_ID
+                                chat_id=settings.OWNER_TELEGRAM_ID,
                                 text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb)
                             )
             except Exception: pass
@@ -169,10 +169,6 @@ class TelegramHandler:
         ]
         await update.message.reply_text("Settings:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        # This is now handle_text
-        pass
-
     async def handle_button_actions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         user_id = str(update.effective_user.id)
@@ -221,9 +217,6 @@ class TelegramHandler:
             except Exception:
                 pass
             await query.edit_message_text("🚫 *Process Canceled*\n\nThe action was safely terminated. How else may I assist you?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-        
-        # Add more handlers as in reference
-        # For brevity, implement key ones
 
     async def request_login(self, update: Update):
         state_uuid = uuid.uuid4().hex
@@ -283,7 +276,6 @@ class TelegramHandler:
             draft_text = f"📄 *Draft Ready!*\n\n*To:* {compose_state['to']}\n*Subject:* {compose_state['subj']}\n*Body:* {compose_state['body']}\n📎 *Attachments:* \n{files_list}\n\nYou can upload more files or click Send Now."
             await msg.edit_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         else:
-            # Save to memory
             try:
                 attachments = prefs.get("attachments", [])
                 attachments.append(file_path)
@@ -391,7 +383,6 @@ class TelegramHandler:
             return
 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-        ai_mode = prefs.get("ai_mode_enabled", True)
         res = await asyncio.to_thread(self.ai_engine.agent_chat, text, user_id)
         
         if res.startswith("Error:"):
@@ -516,8 +507,13 @@ class TelegramHandler:
                 return
             
             task_id = str(int(time.time() * 1000))
+            
+            # FIXED: Avoid set().add() which returns None and breaks the database
             try:
-                await self.db.upsert_user_preferences(int(user_id), {"active_voice_tasks": prefs.get("active_voice_tasks", set()).add(task_id)})
+                prefs = await self.db.get_user_preferences(int(user_id)) or {}
+                active_tasks = set(prefs.get("active_voice_tasks", []))
+                active_tasks.add(task_id)
+                await self.db.upsert_user_preferences(int(user_id), {"active_voice_tasks": list(active_tasks)})
             except Exception:
                 pass
 
@@ -528,17 +524,14 @@ class TelegramHandler:
             
             try:
                 prefs = await self.db.get_user_preferences(int(user_id)) or {}
+                active_tasks = set(prefs.get("active_voice_tasks", []))
+                if task_id in active_tasks:
+                    active_tasks.remove(task_id)
+                    await self.db.upsert_user_preferences(int(user_id), {"active_voice_tasks": list(active_tasks)})
+                else:
+                    return
             except Exception:
-                prefs = {}
-            active_tasks = prefs.get("active_voice_tasks", set())
-            if task_id in active_tasks:
-                active_tasks.remove(task_id)
-                try:
-                    await self.db.upsert_user_preferences(int(user_id), {"active_voice_tasks": active_tasks})
-                except Exception:
-                    pass
-            else:
-                return
+                pass
 
             if res.startswith("Error:"):
                 await msg.edit_text(f"⚠️ System Alert: {res}")
@@ -583,21 +576,33 @@ class TelegramHandler:
         engine.runAndWait()
         return str(file_path)
 
+# --- FIXED BOT MANAGER ---
 class TelegramBotManager:
     def __init__(self) -> None:
         self.application: Application | None = None
 
-    async def start(self) -> None:
+    async def setup_bot(self) -> None:
+        """Called by FastAPI startup event to initialize the bot and webhooks."""
         self.application = Application.builder().token(settings.BOT_TOKEN).build()
         handler = TelegramHandler(self.application)
         handler._register_handlers()
-        self.application.add_handler(CommandHandler("start", handler.start_command))
-        self.application.add_handler(CommandHandler("settings", handler.settings_command))
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler.handle_text))
-        self.application.add_handler(CallbackQueryHandler(handler.handle_button_actions))
         await self.application.initialize()
-        await self.application.bot.set_webhook(url=f"{settings.RENDER_WEB_SERVICE_URL}/webhook")
+        
+        # Set Webhook pointing to FastAPI route
+        webhook_url = f"{settings.RENDER_WEB_SERVICE_URL}/webhook/telegram"
+        await self.application.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
+
+    async def process_webhook(self, data: dict) -> None:
+        """Called by FastAPI webhook route to process incoming updates."""
+        if self.application:
+            update = Update.de_json(data, self.application.bot)
+            await self.application.process_update(update)
 
     async def stop(self) -> None:
+        """Called by FastAPI shutdown event."""
         if self.application:
             await self.application.stop()
+
+# Export a single instance for main.py to use
+telegram_handler = TelegramBotManager()
