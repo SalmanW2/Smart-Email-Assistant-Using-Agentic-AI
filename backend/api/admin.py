@@ -44,11 +44,10 @@ async def admin_login(payload: AdminLoginPayload):
     return {"status": "success", "email": payload.email, "role": role}
 
 @router.post("/set-password")
-async def set_admin_password(payload: SetPasswordPayload):
-    """Set or update admin password after first Google OAuth login."""
-    is_admin = await db_manager.check_admin(payload.email)
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Only recognized admins can set passwords")
+async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(get_current_admin)):
+    """Set or update admin password."""
+    if admin.get("email") != payload.email and admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Cannot change another user's password")
     
     success = await db_manager.set_admin_password(payload.email, payload.password)
     if not success:
@@ -56,17 +55,9 @@ async def set_admin_password(payload: SetPasswordPayload):
     return {"message": "Password set successfully"}
 
 @router.get("/role")
-async def get_role(x_admin_email: str | None = Header(None)):
+async def get_role(admin: Dict = Depends(get_current_admin)):
     """Simple role check for frontend routing."""
-    if not x_admin_email:
-        raise HTTPException(status_code=401, detail="Missing admin header")
-    try:
-        role = await db_manager.get_admin_role(x_admin_email)
-        return {"role": role}
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to get role")
-
-# --- Dashboard & Stats ---
+    return {"role": admin.get("role", "admin")}
 
 @router.get("/stats")
 async def get_stats(admin: Dict = Depends(get_current_admin)):
@@ -76,11 +67,10 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
         total_users = len(all_users)
         verified_users = sum(1 for u in all_users if u.get("is_verified"))
         
-        # Try to get blocked users count
         try:
-            blocked_users_list = await db_manager.get_all_blocked_users() # Needs implementation in models.py
+            blocked_users_list = await db_manager.get_all_blocked_users()
             blocked_count = len(blocked_users_list) if blocked_users_list else 0
-        except:
+        except Exception:
             blocked_count = 0
             
         admins_list = await db_manager.get_admin_users() or []
@@ -94,8 +84,6 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
     except Exception:
         return {"total_users": 0, "verified_users": 0, "blocked_users": 0, "total_admins": 0}
 
-# --- User Management ---
-
 @router.get("/users")
 async def get_users(admin: Dict = Depends(get_current_admin)):
     """List all registered bot users."""
@@ -104,7 +92,7 @@ async def get_users(admin: Dict = Depends(get_current_admin)):
 @router.post("/users/{telegram_id}/approve")
 async def approve_user(telegram_id: int, admin: Dict = Depends(get_current_admin)):
     """Approve a pending user."""
-    success = await db_manager.update_user(telegram_id, {"is_verified": True})
+    success = await db_manager.update_user_status(telegram_id, is_verified=True, status="approved")
     if not success:
         raise HTTPException(status_code=500, detail="Failed to approve user")
     return {"message": "User approved successfully"}
@@ -112,12 +100,10 @@ async def approve_user(telegram_id: int, admin: Dict = Depends(get_current_admin
 @router.post("/users/{telegram_id}/block")
 async def block_user(telegram_id: int, reason: str = Query(""), admin: Dict = Depends(get_current_admin)):
     """Block a user from using the bot."""
-    success = await db_manager.block_user(telegram_id)
+    success = await db_manager.update_user_status(telegram_id, is_verified=False, status="blocked", reason=reason)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to block user")
     return {"message": "User blocked"}
-
-# --- Admin Management ---
 
 @router.get("/admins")
 async def get_admins(admin: Dict = Depends(get_current_admin)):
@@ -127,37 +113,49 @@ async def get_admins(admin: Dict = Depends(get_current_admin)):
 @router.post("/admins")
 async def add_new_admin(payload: AddAdminPayload, admin: Dict = Depends(get_current_admin)):
     """Add a new admin email to the system."""
-    success = await db_manager.add_admin_user(payload.email, payload.role)
+    if admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+    success = await db_manager.add_admin_user(payload.email, payload.role, added_by=admin.get("email"))
     if not success:
         raise HTTPException(status_code=500, detail="Failed to add admin")
     return {"message": "Admin added successfully"}
 
-@router.delete("/admins/{email}")
-async def remove_admin(email: str, admin: Dict = Depends(get_current_admin)):
-    """Remove admin privileges from an email."""
-    success = await db_manager.remove_admin_user(email)
+@router.delete("/admins/{id_or_email}")
+async def remove_admin(id_or_email: str, admin: Dict = Depends(get_current_admin)):
+    """Remove admin privileges."""
+    if admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+    success = await db_manager.remove_admin_user(id_or_email)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to remove admin")
     return {"message": "Admin removed"}
-
-# --- Blocklist Management ---
 
 @router.get("/blocks")
 async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
     """List all blocked identifiers."""
     try:
         return await db_manager.get_all_blocked_users() or []
-    except:
+    except Exception:
         return []
 
-@router.delete("/blocks/{telegram_id}")
-async def unblock_user(telegram_id: int, admin: Dict = Depends(get_current_admin)):
+@router.delete("/blocks/{id_or_telegram_id}")
+async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
     """Remove a user from the blocklist."""
-    success = await db_manager.unblock_user(telegram_id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to unblock user")
-    return {"message": "User unblocked"}
+    try:
+        # Check if it's a telegram_id (numeric) or UUID string
+        if id_or_telegram_id.isdigit():
+            success = await db_manager.unblock_user(int(id_or_telegram_id))
+        else:
+            await db_manager.db.run(lambda: db_manager.db.client.table("blocked_users").delete().eq("id", id_or_telegram_id).execute())
+            success = True
+            
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to unblock user")
+        return {"message": "User unblocked"}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to process unblock request")
 
 @router.post("/logout")
 async def logout():
+    """Logout handler."""
     return {"message": "Logged out successfully"}

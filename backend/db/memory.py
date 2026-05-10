@@ -11,6 +11,9 @@ class MemoryManager:
         # TTL Cache for 1 hour to reduce database calls
         self.cache = TTLCache(maxsize=1000, ttl=3600)
 
+    def _safe_data(self, result):
+        return getattr(result, 'data', None) if result else None
+
     async def get_recent_summaries(self, telegram_id: int, limit: int = settings.MAX_CONTEXT_MESSAGES) -> List[Dict[str, Any]]:
         """Fetch the most recent conversation summaries for LLM context."""
         cache_key = f"summaries_{telegram_id}_{limit}"
@@ -24,7 +27,8 @@ class MemoryManager:
                                          .order("created_at", desc=True)
                                          .limit(limit)
                                          .execute())
-            summaries = result.data[::-1] if result.data else []  # Reverse to chronological order
+            data = self._safe_data(result) or []
+            summaries = data[::-1]  # Reverse to chronological order
             self.cache[cache_key] = summaries
             return summaries
         except Exception as e:
@@ -44,6 +48,7 @@ class MemoryManager:
                 "tokens_used": tokens_used,
                 "message_count": message_count
             }).execute())
+            
             # Invalidate cache for this user
             for key in list(self.cache.keys()):
                 if f"summaries_{telegram_id}" in key:
@@ -62,8 +67,9 @@ class MemoryManager:
                                          .order("created_at", desc=True)
                                          .limit(1)
                                          .execute())
-            if result.data:
-                return result.data[0].get("current_topic")
+            data = self._safe_data(result)
+            if data:
+                return data[0].get("current_topic")
             return None
         except Exception as e:
             print(f"DB Error in get_current_topic: {e}")
@@ -84,11 +90,11 @@ class MemoryManager:
                 except json.JSONDecodeError:
                     facts = [facts]
 
-            prompt_lines.append(f"Summary: {item['summary_text']}")
+            prompt_lines.append(f"Summary: {item.get('summary_text', '')}")
             if facts:
                 prompt_lines.append(f"Facts: {', '.join(facts[:5])}")
             if item.get("current_topic"):
-                prompt_lines.append(f"Topic: {item['current_topic']}")
+                prompt_lines.append(f"Topic: {item.get('current_topic', '')}")
 
         return "\n".join(prompt_lines)
 
@@ -119,8 +125,8 @@ class MemoryManager:
                                          .eq("telegram_id", telegram_id)
                                          .gte("created_at", f"{settings.get_utc_date()} 00:00:00")
                                          .execute())
-            message_count = len(result.data) if result.data else 0
-            return message_count >= settings.SUMMARY_GENERATION_THRESHOLD
+            data = self._safe_data(result) or []
+            return len(data) >= settings.SUMMARY_GENERATION_THRESHOLD
         except Exception as e:
             print(f"DB Error in should_generate_summary: {e}")
             return False
@@ -138,6 +144,7 @@ class MemoryManager:
                 "preview": preview,
                 "received_at": received_at
             }).execute())
+            
             # Invalidate cache for this user
             for key in list(self.cache.keys()):
                 if f"emails_{telegram_id}" in key:
@@ -160,7 +167,7 @@ class MemoryManager:
                                          .order("received_at", desc=True)
                                          .limit(limit)
                                          .execute())
-            emails = result.data if result.data else []
+            emails = self._safe_data(result) or []
             self.cache[cache_key] = emails
             return emails
         except Exception as e:

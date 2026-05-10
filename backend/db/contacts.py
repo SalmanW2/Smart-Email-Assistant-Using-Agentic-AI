@@ -8,15 +8,18 @@ class ContactManager:
     def __init__(self):
         self.db = db_manager
 
+    def _safe_data(self, result):
+        return getattr(result, 'data', None) if result else None
+
     async def get_user_contacts(self, telegram_id: int) -> List[Dict[str, Any]]:
         """Get all contacts for a user."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
                                          .select("*")
                                          .eq("telegram_id", telegram_id)
-                                         .order("name")
+                                         .order("contact_name")
                                          .execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_user_contacts: {e}")
             return []
@@ -27,8 +30,8 @@ class ContactManager:
         try:
             await self.db.db.run(lambda: self.db.db.client.table("contacts").insert({
                 "telegram_id": telegram_id,
-                "name": name,
-                "email": email,
+                "contact_name": name,
+                "email_address": email,
                 "phone": phone,
                 "company": company,
                 "notes": notes
@@ -68,9 +71,9 @@ class ContactManager:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
                                          .select("*")
                                          .eq("telegram_id", telegram_id)
-                                         .ilike("email", f"%{email}%")
+                                         .ilike("email_address", f"%{email}%")
                                          .execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in find_contacts_by_email: {e}")
             return []
@@ -81,9 +84,9 @@ class ContactManager:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
                                          .select("*")
                                          .eq("telegram_id", telegram_id)
-                                         .ilike("name", f"%{name}%")
+                                         .ilike("contact_name", f"%{name}%")
                                          .execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in find_contacts_by_name: {e}")
             return []
@@ -96,7 +99,7 @@ class ContactManager:
                                          .eq("id", contact_id)
                                          .maybe_single()
                                          .execute())
-            return result.data if result.data else None
+            return self._safe_data(result)
         except Exception as e:
             print(f"DB Error in get_contact_by_id: {e}")
             return None
@@ -108,7 +111,7 @@ class ContactManager:
                                          .select("*")
                                          .eq("telegram_id", telegram_id)
                                          .execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_contact_relationships: {e}")
             return []
@@ -139,15 +142,14 @@ class ContactManager:
             relationships = await self.db.db.run(lambda: self.db.db.client.table("contact_relationships")
                                                 .select("*")
                                                 .or_(
-                                                    self.db.db.client.table("contact_relationships").eq("contact_id", contact_id),
-                                                    self.db.db.client.table("contact_relationships").eq("related_contact_id", contact_id)
+                                                    f"contact_id.eq.{contact_id},related_contact_id.eq.{contact_id}"
                                                 )
                                                 .eq("telegram_id", telegram_id)
                                                 .execute())
 
             network = {
                 "contact": contact,
-                "relationships": relationships.data if relationships.data else []
+                "relationships": self._safe_data(relationships) or []
             }
             return network
         except Exception as e:
@@ -161,15 +163,12 @@ class ContactManager:
                                          .select("*")
                                          .eq("telegram_id", telegram_id)
                                          .or_(
-                                             self.db.db.client.table("contacts").ilike("name", f"%{query}%"),
-                                             self.db.db.client.table("contacts").ilike("email", f"%{query}%"),
-                                             self.db.db.client.table("contacts").ilike("company", f"%{query}%")
+                                             f"contact_name.ilike.%{query}%,email_address.ilike.%{query}%,company.ilike.%{query}%"
                                          )
                                          .execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in search_contacts: {e}")
             return []
-
 
 contact_manager = ContactManager()

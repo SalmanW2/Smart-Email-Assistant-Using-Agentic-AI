@@ -1,16 +1,38 @@
-credentials.json
+# ===== Python / Backend =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
 .env
-__pycache__/
-*.pyc
-*.pyo
-*.sqlite3
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Secrets & Credentials (NEVER PUSH THESE)
+credentials.json
+token.json
+secret*.json
+
+# ===== Node / Frontend (React/Vite) =====
 node_modules/
-frontend/node_modules/
 dist/
-backend/__pycache__/
-backend/*/cache/
-__pycache__/
-*.log
+dist-ssr/
+*.local
+
+# Vite / React logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== OS & IDEs =====
 .DS_Store
-/reference
-/venv
+.vscode/
+.idea/
+*.swp
+*.suo

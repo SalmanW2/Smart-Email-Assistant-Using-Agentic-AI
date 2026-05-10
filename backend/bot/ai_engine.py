@@ -1,159 +1,185 @@
 import asyncio
 import json
-from typing import Any
+import logging
+from typing import Any, Dict, Optional
 from google import genai
 from google.genai import types
 from config import settings
 from db.memory import memory_manager
-from bot.contact_manager import ContactManager
+from bot.contact_manager import contact_manager
 from bot.gmail_client import GmailClient
+
+logger = logging.getLogger(__name__)
 
 class AIEngine:
     def __init__(self) -> None:
         self.memory = memory_manager
-        self.contact_manager = ContactManager()
+        self.contact_manager = contact_manager
         self.gmail_client = GmailClient()
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self.model_name = "gemini-2.5-flash-lite"
+        self.model_name = "gemini-2.5-flash"
         self.active_chats = {}
 
     def _parse_error(self, e: Exception) -> str:
+        logger.error(f"AI Engine Runtime Error: {str(e)}")
         return f"System Error: {str(e)}"
 
     async def transcribe_audio(self, file_path: str) -> str:
+        """Transcribes voice notes using the LLM's multi-modal capabilities."""
         try:
-            sample_file = self.client.files.upload(file=file_path)
-            response = self.client.models.generate_content(
+            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
+            prompt = (
+                "Transcribe this audio accurately. Do not invent words if it is noisy. "
+                "If the audio is completely unintelligible, just output: '[Audio Unclear]'. "
+                "Provide ONLY the transcript text."
+            )
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name,
-                contents=[sample_file, "Transcribe this audio accurately. Do not invent words if it is noisy. If the audio is completely unintelligible, just output: '[Audio Unclear]'."]
+                contents=[sample_file, prompt]
             )
             return response.text.strip()
         except Exception as e:
             return self._parse_error(e)
 
-    def get_search_query(self, user_text: str) -> str:
+    async def get_search_query(self, user_text: str) -> str:
+        """Converts natural language into a strict Gmail search query."""
         try:
-            prompt = f"Convert this user request into a strict Gmail search query. Reply ONLY with the query string, nothing else.\nUser: {user_text}\nExamples:\nUser: search for emails from ali\nAI: from:ali\nUser: find project emails\nAI: project"
-            response = self.client.models.generate_content(
+            prompt = (
+                "Convert this user request into a strict Gmail search query. "
+                "Reply ONLY with the query string, nothing else.\n"
+                f"User: {user_text}\n"
+                "Examples:\nUser: search for emails from ali\nAI: from:ali\n"
+                "User: find project emails\nAI: project"
+            )
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name,
-                contents=[prompt]
+                contents=prompt
             )
             return response.text.strip()
-        except:
-            return "label:INBOX"
-
-    def get_summary(self, text: str, sender: str = "Unknown") -> str:
-        try:
-            prompt = f"Summarize this email concisely in 2-3 short bullet points using dashes (-). Start by explicitly stating who sent it.\nSender: {sender}\nEmail:\n{text}"
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[prompt]
-            )
-            return response.text
         except Exception as e:
-            return self._parse_error(e)
+            logger.error(f"Search Query Gen Error: {e}")
+            return ""
 
-    def _get_agent_config(self, user_id: str):
-        tools = []
-        if self.gmail_client:
-            def send_new_email(to: str, subject: str, body: str) -> str:
-                """Queues a new email message for sending. Attachments previously uploaded by the user are automatically included."""
-                return self.gmail_client.queue_ai_email(to, subject, body, user_id)
-
-            def search_emails(query: str) -> str:
-                """Searches the user's Gmail using a standard Gmail query (e.g., 'from:ali', 'is:unread', 'project'). Returns a list of up to 5 matching emails with their IDs, Sendernames, and Subjects."""
-                service = self.gmail_client.get_service()
-                if not service: return "Error: Authentication required."
-                try:
-                    results = service.users().messages().list(userId='me', q=query, maxResults=5).execute()
-                    messages = results.get('messages', [])
-                    if not messages: return "No emails found matching the query."
-                    
-                    output = []
-                    for m in messages:
-                        meta = self.gmail_client.get_email_metadata(m['id'])
-                        output.append(f"Email ID: {m['id']} | From: {meta['sender']} | Subject: {meta['subject']}")
-                    return "\n".join(output)
-                except Exception as e:
-                    return f"Search failed: {str(e)}"
-
-            def read_email_content(msg_id: str) -> str:
-                """Reads the full text content of a specific email using its ID. Use this after searching to read a specific email to the user."""
-                return self.gmail_client.get_full_body(msg_id)
-
-            def delete_email_by_id(msg_id: str) -> str:
-                """Moves a specific email to the trash using its ID."""
-                success = self.gmail_client.delete_email(msg_id)
-                return "Email successfully moved to trash." if success else "Failed to delete email."
-
-            tools = [send_new_email, search_emails, read_email_content, delete_email_by_id]
-            
-            system_instruction = (
-                "You are a highly professional Smart Email Assistant powered by Google Gemini. Communicate exclusively in polite, clear, and professional English.\n\n"
-                "UI/UX RULES & TOOL USAGE (CRITICAL):\n"
-                "1. SHORT & CLEAN: Keep responses concise. Use standard Markdown (*bold*, - bullets).\n"
-                "2. SEARCHING: Use the 'search_emails' tool when asked to find or check emails. Summarize the results nicely for the user and mention who sent them and the subjects.\n"
-                "3. READING: Use the 'read_email_content' tool if the user asks to read or summarize a specific email from the search results.\n"
-                "4. DELETING: Use 'delete_email_by_id' if explicitly requested to delete an email.\n"
-                "5. SENDING: If the user says 'send without double checking', execute 'send_new_email' directly. Otherwise, ALWAYS present a Draft Preview for confirmation first."
-            )
+    def _get_agent_config(self, memory_prompt: str) -> types.GenerateContentConfig:
+        """Constructs the strict behavior guidelines and memory context for the agent."""
+        system_instruction = (
+            "You are a highly professional, enterprise-grade AI Email Assistant. "
+            "You manage the user's Gmail. "
+            "CRITICAL RULES:\n"
+            "1. COMPOSING: Always confirm the 'To' address, 'Subject', and 'Body' with the user before sending, unless explicitly told to send immediately.\n"
+            "2. SEARCHING: Summarize results professionally (sender, subject, brief context).\n"
+            "3. READING: Present email content clearly and extract action items if present.\n"
+            "4. CONCISENESS: Keep responses extremely concise and use clean Markdown formatting.\n"
+            "5. CONTACTS: Rely on the provided user memory to resolve names to email addresses.\n\n"
+            f"{memory_prompt}"
+        )
 
         return types.GenerateContentConfig(
-            tools=tools if tools else None,
             system_instruction=system_instruction,
             temperature=0.2
         )
 
-    async def agent_chat(self, text: str, user_id: str) -> str:
-        if not self.client: return "Error: AI System offline."
+    async def agent_chat(self, text: str, user_id: int) -> str:
+        """Main interaction pipeline. Handles memory context, chat execution, and logging."""
+        if not self.client:
+            return "Error: AI System configuration missing."
+        
         try:
-            if user_id not in self.active_chats:
-                self.active_chats[user_id] = self.client.chats.create(
+            # 1. Proactively scan for and save new contacts
+            await self.contact_manager.extract_contacts_from_text(user_id, text)
+
+            # 2. Rebuild intelligent memory context to save tokens
+            memory_prompt = await self.memory.build_memory_prompt(user_id)
+
+            # 3. Setup or update the session
+            chat_id = str(user_id)
+            if chat_id not in self.active_chats:
+                config = self._get_agent_config(memory_prompt)
+                self.active_chats[chat_id] = self.client.chats.create(
                     model=self.model_name,
-                    config=self._get_agent_config(user_id)
+                    config=config
                 )
-                
-            response = self.active_chats[user_id].send_message(text)
-            return response.text
+
+            # 4. Generate the response
+            response = await asyncio.to_thread(self.active_chats[chat_id].send_message, text)
+            bot_response = response.text
+
+            # 5. Log the interaction to Supabase Memory Table
+            await self.memory.log_conversation(
+                telegram_id=user_id, 
+                user_message=text, 
+                bot_response=bot_response, 
+                interaction_type="chat"
+            )
+
+            # 6. Dynamically summarize memory if threshold is reached
+            if await self.memory.should_generate_summary(user_id):
+                await self._generate_and_save_summary(user_id, text, bot_response)
+
+            return bot_response
+
         except Exception as e:
-            if user_id in self.active_chats: del self.active_chats[user_id]
+            if str(user_id) in self.active_chats:
+                del self.active_chats[str(user_id)]  # Reset corrupted sessions
             return self._parse_error(e)
 
-    async def process_message(self, telegram_id: int, message: str, ai_mode: bool) -> tuple[str, str | None, dict[str, Any]]:
-        if not ai_mode:
-            return ("AI mode is off. Please use manual email commands.", None, {"interaction_type": "system"})
-
-        memory_prompt = await self.memory.build_memory_prompt(telegram_id)
-        system_prompt = (
-            "You are a professional email assistant. Use a natural, helpful tone and only make Gmail changes when the user explicitly requests it. "
-            "Always keep responses concise and confirm actions before completing them."
-        )
-
-        # Use the agent_chat method for function calling
-        full_prompt = system_prompt + "\n\n" + memory_prompt + "\n\n" + message
-        response_text = await asyncio.to_thread(self.agent_chat, full_prompt, str(telegram_id))
-
-        # For simplicity, assume response_text includes the result; in full implementation, parse function calls
-        await self.contact_manager.extract_contacts_from_text(telegram_id, message)
-        return response_text, None, {"interaction_type": "chat"}
-
-    async def extract_and_save_contacts(self, telegram_id: int, message: str) -> None:
-        await self.contact_manager.extract_contacts_from_text(telegram_id, message)
+    async def _generate_and_save_summary(self, user_id: int, last_user_msg: str, last_ai_msg: str) -> None:
+        """Summarizes recent chat activity into JSON and stores it to prevent token bloat."""
+        try:
+            prompt = (
+                "Analyze this recent interaction and generate a JSON summary for long-term memory.\n"
+                "Format required:\n"
+                "{\n"
+                "  \"summary_text\": \"Concise summary of what occurred\",\n"
+                "  \"key_facts\": [\"extracted fact 1\", \"fact 2\"],\n"
+                "  \"email_addresses_mentioned\": [\"email@example.com\"],\n"
+                "  \"current_topic\": \"Main topic\"\n"
+                "}\n\n"
+                f"User: {last_user_msg}\nAI: {last_ai_msg}"
+            )
+            
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model="gemini-2.5-flash-lite",
+                contents=prompt
+            )
+            
+            # Safely extract and parse JSON payload
+            json_str = response.text.replace('```json', '').replace('```', '').strip()
+            data = json.loads(json_str)
+            
+            await self.memory.save_conversation_summary(
+                telegram_id=user_id,
+                summary_text=data.get("summary_text", "Conversation summary."),
+                key_facts=data.get("key_facts", {}),
+                email_addresses=data.get("email_addresses_mentioned", []),
+                current_topic=data.get("current_topic", "General"),
+                tokens_used=0,
+                message_count=10
+            )
+        except Exception as e:
+            logger.error(f"Memory Summary Engine Error: {e}")
 
     async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
-        prompt = f"Summarize or answer the following document request:\n{query}\n\nDocument path: {file_path}"
-        
-        config = types.GenerateContentConfig(
-            temperature=0.2,
-            system_instruction="You are a document Q&A assistant."
-        )
-        
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
-            config=config,
-        )
-        return response.text if hasattr(response, 'text') else ""
-
-ai_engine = AIEngine()
+        """Analyzes uploaded documents (PDFs, Images) using Vision/Multi-modal capabilities."""
+        try:
+            prompt = f"Summarize or accurately answer the following request regarding this document:\n{query}"
+            
+            config = types.GenerateContentConfig(
+                temperature=0.2,
+                system_instruction="You are a highly capable document analysis assistant. Provide accurate, professional answers."
+            )
+            
+            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
+            
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=[sample_file, prompt],
+                config=config
+            )
+            return response.text
+        except Exception as e:
+            return self._parse_error(e)

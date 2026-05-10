@@ -5,7 +5,7 @@ An intelligent email management system powered by AI, featuring Telegram bot int
 ## Features
 
 ### 🤖 AI-Powered Email Assistant
-- Natural language processing with Google Gemini 2.0 Flash
+- Natural language processing with Google Gemini LLM Model
 - Intelligent email drafting and responses
 - Email analysis and insights
 - Conversation memory and context awareness
@@ -29,10 +29,10 @@ An intelligent email management system powered by AI, featuring Telegram bot int
 - Real-time notifications
 
 ### 🔊 Voice Processing
-- Text-to-speech with Google Cloud TTS
-- Speech-to-text with Google Cloud Speech
-- Fallback voice processing with pyttsx3
-- Multi-language support
+- Text-to-speech 
+- Speech-to-text 
+- Fallback voice processing with Google Cloud Speech Edge TTS, pyttsx3
+- Multi-Natural-language support
 
 ### 👨‍💼 Admin Dashboard
 - User management and approval system

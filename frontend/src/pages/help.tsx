@@ -1,0 +1,72 @@
+import { Link } from 'react-router-dom';
+import { ArrowLeft, Bot, Shield, Mic, Search, Send } from 'lucide-react';
+
+const Help = () => {
+  return (
+    <div className="min-h-screen bg-slate-50 pb-20">
+      {/* Header */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-6 h-16 flex items-center gap-4">
+          <Link to="/" className="p-2 -ml-2 rounded-full hover:bg-slate-100 text-slate-600">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <h1 className="text-xl font-bold text-slate-800">Documentation & Help</h1>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-6 pt-10 space-y-12">
+        {/* Section 1: Telegram Bot Guide */}
+        <section>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-blue-100 p-2 rounded-lg text-blue-700"><Bot className="w-6 h-6" /></div>
+            <h2 className="text-2xl font-bold text-slate-900">How to use the Telegram Bot</h2>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-bold text-lg text-slate-800 mb-2">1. Connect Your Account</h3>
+              <p className="text-slate-600">Open <a href="http://t.me/Smart_Emailbot" className="text-blue-600 hover:underline">@Smart_Emailbot</a> on Telegram and send <code>/start</code>. Click the generated secure link to connect your Gmail account via Google OAuth.</p>
+            </div>
+            <div className="p-6 border-b border-slate-100 bg-slate-50">
+              <h3 className="font-bold text-lg text-slate-800 mb-2 flex items-center gap-2"><Send className="w-5 h-5 text-green-600"/> 2. Send Emails via Chat</h3>
+              <p className="text-slate-600">Simply type naturally. Example: <i>"Send an email to my manager saying the project is complete."</i> The AI will auto-detect the contact, draft the email, and ask for your final confirmation.</p>
+            </div>
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-bold text-lg text-slate-800 mb-2 flex items-center gap-2"><Search className="w-5 h-5 text-indigo-600"/> 3. Search & Summarize</h3>
+              <p className="text-slate-600">Ask the bot to check your inbox: <i>"Read my last 3 unread emails"</i> or <i>"Search for emails from HR."</i> The AI will provide a concise summary to save your time.</p>
+            </div>
+            <div className="p-6">
+              <h3 className="font-bold text-lg text-slate-800 mb-2 flex items-center gap-2"><Mic className="w-5 h-5 text-red-500"/> 4. Voice Commands</h3>
+              <p className="text-slate-600">Don't want to type? Send a voice note to the bot. It will transcribe your voice, understand your intent, and execute the command flawlessly.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Section 2: Admin Portal Guide */}
+        <section>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-slate-800 p-2 rounded-lg text-white"><Shield className="w-6 h-6" /></div>
+            <h2 className="text-2xl font-bold text-slate-900">Admin Portal Guide</h2>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+            <div>
+              <h3 className="font-bold text-lg text-slate-800">Login Access</h3>
+              <p className="text-slate-600 mt-1">Only authorized Admins can access the dashboard. Use Google Login or the Manual Password option set by a Super Admin.</p>
+            </div>
+            <hr className="border-slate-100" />
+            <div>
+              <h3 className="font-bold text-lg text-slate-800">Managing Users</h3>
+              <p className="text-slate-600 mt-1">The dashboard allows you to view all bot users. If a user is misusing the bot, you can click the <b>Block</b> button to revoke their Telegram access immediately.</p>
+            </div>
+            <hr className="border-slate-100" />
+            <div>
+              <h3 className="font-bold text-lg text-slate-800">Admin Settings</h3>
+              <p className="text-slate-600 mt-1">In the Settings tab, you can set a fallback password for manual login. Super Admins also have the authority to add or remove other administrators from the system.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+};
+
+export default Help;

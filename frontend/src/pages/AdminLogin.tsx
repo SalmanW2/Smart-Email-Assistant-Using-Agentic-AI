@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { Lock, Mail, ShieldCheck } from 'lucide-react';
 
 const AdminLogin = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const error = searchParams.get('error');
-  const msg = searchParams.get('msg');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -13,7 +14,6 @@ const AdminLogin = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      // Updated to match the new modular backend route and JSON format
       const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -21,83 +21,64 @@ const AdminLogin = () => {
       });
       
       if (response.ok) {
-        window.location.href = '/dashboard';
+        localStorage.setItem('admin_email', email);
+        navigate('/admin/dashboard');
       } else {
-        const errorData = await response.json();
-        alert(errorData.detail || 'Invalid email or password');
+        alert('Access Denied: Invalid Credentials');
       }
     } catch (err) {
-      alert('Login failed. Please check your connection.');
+      alert('Network Error: Check Backend Status');
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = () => {
-    // Updated to point to the correct backend API prefix
-    window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/google`;
+    window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/admin_google_login`;
   };
 
   return (
-    <div className="bg-slate-100 flex items-center justify-center min-h-screen font-sans p-4">
-      <div className="bg-white p-8 md:p-10 rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-800">Admin Portal</h1>
-          <p className="text-slate-500 mt-2 text-sm">Secure access for authorized personnel.</p>
-        </div>
-
-        {error && <div className="bg-red-100 text-red-700 p-3 rounded-lg mb-4 text-sm font-semibold">{error}</div>}
-        {msg && <div className="bg-green-100 text-green-700 p-3 rounded-lg mb-4 text-sm font-semibold">{msg}</div>}
-
-        <div className="text-center mb-6">
-          <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 p-3 rounded-lg hover:bg-slate-50 transition-all shadow-sm">
-            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-            <span className="font-semibold text-slate-700">Continue with Google</span>
-          </button>
-        </div>
-
-        <div className="relative flex py-4 items-center">
-          <div className="flex-grow border-t border-slate-200"></div>
-          <span className="flex-shrink mx-4 text-slate-400 text-sm font-semibold">OR</span>
-          <div className="flex-grow border-t border-slate-200"></div>
-        </div>
-
-        <div className="text-center mb-4">
-          <p className="text-xs text-slate-500 mb-3 px-2">If you have configured a password, login below:</p>
-        </div>
-        <form onSubmit={handlePasswordLogin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1 text-left">Email Address</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-            />
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-[400px] space-y-8">
+        <div className="text-center">
+          <div className="inline-flex p-3 bg-indigo-600 rounded-2xl mb-4 shadow-xl shadow-indigo-100">
+            <ShieldCheck className="w-8 h-8 text-white" />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1 text-left">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-slate-900 text-white p-3 rounded-lg font-bold hover:bg-slate-800 transition-all shadow-md disabled:opacity-50"
-          >
-            {loading ? 'Logging in...' : 'Login to Dashboard'}
+          <h1 className="text-3xl font-black tracking-tighter text-slate-900">Admin Control</h1>
+          <p className="text-slate-500 font-medium mt-2">Sign in to manage the assistant ecosystem.</p>
+        </div>
+
+        {error && <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold border border-red-100 text-center">{error}</div>}
+
+        <div className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-200">
+          <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-100 p-4 rounded-2xl hover:bg-slate-50 transition-all font-bold text-slate-700 mb-6">
+            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="G" />
+            Sign in with Google
           </button>
-        </form>
+
+          <div className="relative flex items-center mb-6">
+            <div className="flex-grow border-t border-slate-100"></div>
+            <span className="px-4 text-xs font-black text-slate-300 uppercase tracking-widest">or secure login</span>
+            <div className="flex-grow border-t border-slate-100"></div>
+          </div>
+
+          <form onSubmit={handlePasswordLogin} className="space-y-4">
+            <div className="relative">
+              <Mail className="absolute left-4 top-4 w-5 h-5 text-slate-400" />
+              <input type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full pl-12 pr-4 py-4 bg-slate-50 border-transparent rounded-2xl focus:bg-white focus:ring-2 focus:ring-indigo-600 transition-all outline-none font-medium" />
+            </div>
+            <div className="relative">
+              <Lock className="absolute left-4 top-4 w-5 h-5 text-slate-400" />
+              <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full pl-12 pr-4 py-4 bg-slate-50 border-transparent rounded-2xl focus:bg-white focus:ring-2 focus:ring-indigo-600 transition-all outline-none font-medium" />
+            </div>
+            <button type="submit" disabled={loading} className="w-full bg-slate-950 text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50 shadow-xl shadow-slate-200">
+              {loading ? 'Authenticating...' : 'Access Dashboard'}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
 };
 
 export default AdminLogin;
-

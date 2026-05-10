@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from db.models import db_manager
-from db.contacts import contact_manager
 from pydantic import BaseModel
 from typing import Optional
 
@@ -48,8 +47,12 @@ async def update_preferences(telegram_id: int, prefs: UserPreferences):
 
 @router.get("/contacts/{telegram_id}")
 async def get_contacts(telegram_id: int):
+    """Retrieve top contacts for the user."""
     try:
-        contacts = await contact_manager.get_top_contacts(str(telegram_id))
+        from db.contacts import contact_manager
+        # Fetching directly using the contact manager
+        contacts = await contact_manager.get_user_contacts(telegram_id)
         return contacts
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching contacts: {e}")
         return []
