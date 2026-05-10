@@ -13,26 +13,29 @@ const AdminLogin = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/admin/login_with_password`, {
+      // Updated to match the new modular backend route and JSON format
+      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ email, password }),
-        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
+      
       if (response.ok) {
-        window.location.href = '/admin/dashboard';
+        window.location.href = '/dashboard';
       } else {
-        alert('Invalid email or password');
+        const errorData = await response.json();
+        alert(errorData.detail || 'Invalid email or password');
       }
     } catch (err) {
-      alert('Login failed');
+      alert('Login failed. Please check your connection.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = `${import.meta.env.VITE_BACKEND_URL}/admin/auth/google`;
+    // Updated to point to the correct backend API prefix
+    window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/google`;
   };
 
   return (
@@ -97,3 +100,4 @@ const AdminLogin = () => {
 };
 
 export default AdminLogin;
+
