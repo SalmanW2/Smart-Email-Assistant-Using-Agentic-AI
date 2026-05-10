@@ -107,7 +107,7 @@ class TelegramHandler:
             return
 
         try:
-            if await self.db.is_blocked(user.id):
+            if await self.db.is_blocked("telegram", str(user.id)):
                 await update.message.reply_text("You are blocked from using this service.")
                 return
         except Exception:
@@ -122,14 +122,12 @@ class TelegramHandler:
             await update.message.reply_text("Database error. Please try again.")
             return
 
-        state_uuid = uuid.uuid4().hex
-        expires_at = (datetime.utcnow() + timedelta(minutes=15)).isoformat()
-        try:
-            await self.db.create_auth_session(state_uuid, user.id, expires_at)
-        except Exception:
-            pass
-
-        login_url = f"{settings.FRONTEND_URL}/login?token={state_uuid}"
+        # FIXED: Generates state correctly based on your models.py
+        state_uuid = await self.db.create_auth_session(user.id)
+        
+        # FIXED: Pointing directly to Render backend API for Telegram users
+        login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={user.id}"
+        
         await update.message.reply_text(
             f"Welcome {user.first_name}! I'm your Smart Email Assistant.\n\n"
             "This bot learns your contacts, manages Gmail actions naturally, and preserves memory summaries.\n\n"
@@ -219,13 +217,13 @@ class TelegramHandler:
             await query.edit_message_text("🚫 *Process Canceled*\n\nThe action was safely terminated. How else may I assist you?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
     async def request_login(self, update: Update):
-        state_uuid = uuid.uuid4().hex
-        expires_at = (datetime.utcnow() + timedelta(minutes=15)).isoformat()
-        try:
-            await self.db.create_auth_session(state_uuid, update.effective_user.id, expires_at)
-        except Exception:
-            pass
-        link = f"{settings.FRONTEND_URL}/login?token={state_uuid}"
+        user_id = update.effective_user.id
+        # FIXED: Correct auth session creation
+        state_uuid = await self.db.create_auth_session(user_id)
+        
+        # FIXED: Direct Render URL
+        link = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={user_id}"
+        
         kb = [[InlineKeyboardButton("🔗 Connect Google Account", url=link)]]
         text = "⚠️ *Please login first!*\nYou need to connect your Google Account to proceed."
         
@@ -233,7 +231,7 @@ class TelegramHandler:
             await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         elif update.message:
             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-
+                    
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         try:

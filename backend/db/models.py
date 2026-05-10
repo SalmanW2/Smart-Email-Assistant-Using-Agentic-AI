@@ -3,6 +3,7 @@ import json
 from typing import Any, Dict, Optional, List
 from supabase import create_client, Client
 from config import settings
+import hashlib
 
 class SupabaseDB:
     def __init__(self) -> None:
@@ -15,10 +16,14 @@ class DBManager:
     def __init__(self) -> None:
         self.db = SupabaseDB()
 
+    # HELPER: Supabase ke NoneType crash ko rokne ke liye
+    def _safe_data(self, result):
+        return getattr(result, 'data', None) if result else None
+
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("users").select("*").eq("telegram_id", telegram_id).maybe_single().execute())
-            return result.data if result.data else None
+            return self._safe_data(result)
         except Exception as e:
             print(f"DB Error in get_user: {e}")
             return None
@@ -51,7 +56,10 @@ class DBManager:
     async def get_auth_session(self, state_uuid: str) -> Optional[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").eq("state_uuid", state_uuid).maybe_single().execute())
-            return result.data if result.data else None
+            # Fallback agar "state" column use ho raha ho
+            if not result or not hasattr(result, 'data') or not result.data:
+                result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").eq("state", state_uuid).maybe_single().execute())
+            return self._safe_data(result)
         except Exception as e:
             print(f"DB Error in get_auth_session: {e}")
             return None
@@ -62,6 +70,7 @@ class DBManager:
             state_uuid = str(uuid.uuid4())
             await self.db.run(lambda: self.db.client.table("auth_sessions").insert({
                 "state_uuid": state_uuid,
+                "state": state_uuid,  # Saving in both fields to be safe with older schema
                 "telegram_id": telegram_id
             }).execute())
             return state_uuid
@@ -69,9 +78,23 @@ class DBManager:
             print(f"DB Error in create_auth_session: {e}")
             return ""
 
+    async def save_auth_session(self, state_uuid: str, telegram_id: int, email: str) -> bool:
+        try:
+            await self.db.run(lambda: self.db.client.table("auth_sessions").insert({
+                "state_uuid": state_uuid,
+                "state": state_uuid,
+                "telegram_id": telegram_id,
+                "email": email
+            }).execute())
+            return True
+        except Exception as e:
+            print(f"DB Error in save_auth_session: {e}")
+            return False
+
     async def delete_auth_session(self, state_uuid: str) -> bool:
         try:
             await self.db.run(lambda: self.db.client.table("auth_sessions").delete().eq("state_uuid", state_uuid).execute())
+            await self.db.run(lambda: self.db.client.table("auth_sessions").delete().eq("state", state_uuid).execute())
             return True
         except Exception as e:
             print(f"DB Error in delete_auth_session: {e}")
@@ -80,7 +103,7 @@ class DBManager:
     async def get_user_preferences(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("user_preferences").select("*").eq("telegram_id", telegram_id).maybe_single().execute())
-            return result.data if result.data else None
+            return self._safe_data(result)
         except Exception as e:
             print(f"DB Error in get_user_preferences: {e}")
             return None
@@ -99,7 +122,8 @@ class DBManager:
     async def is_blocked(self, block_type: str, value: str) -> bool:
         try:
             result = await self.db.run(lambda: self.db.client.table("blocked_users").select("*").eq("block_type", block_type).eq("block_value", str(value)).execute())
-            return len(result.data) > 0
+            data = self._safe_data(result)
+            return len(data) > 0 if data else False
         except Exception as e:
             print(f"DB Error in is_blocked: {e}")
             return False
@@ -107,7 +131,7 @@ class DBManager:
     async def get_all_users(self) -> List[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("users").select("*").order("created_at", desc=True).execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_all_users: {e}")
             return []
@@ -132,7 +156,7 @@ class DBManager:
     async def get_admin_users(self) -> List[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").order("created_at", desc=True).execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_admin_users: {e}")
             return []
@@ -140,7 +164,8 @@ class DBManager:
     async def check_admin(self, email: str) -> bool:
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").eq("email", email).execute())
-            return len(result.data) > 0
+            data = self._safe_data(result)
+            return len(data) > 0 if data else False
         except Exception as e:
             print(f"DB Error in check_admin: {e}")
             return False
@@ -148,14 +173,15 @@ class DBManager:
     async def get_admin_role(self, email: str) -> str:
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("role").eq("email", email).execute())
-            if result.data:
-                return result.data[0].get("role", "admin")
+            data = self._safe_data(result)
+            if data:
+                return data[0].get("role", "admin")
             return "admin"
         except Exception as e:
             print(f"DB Error in get_admin_role: {e}")
             return "admin"
 
-    async def add_admin_user(self, email: str, role: str, added_by: str) -> bool:
+    async def add_admin_user(self, email: str, role: str = "admin", added_by: str = "system") -> bool:
         try:
             await self.db.run(lambda: self.db.client.table("admin_users").insert({
                 "email": email,
@@ -167,9 +193,12 @@ class DBManager:
             print(f"DB Error in add_admin_user: {e}")
             return False
 
-    async def remove_admin_user(self, admin_id: str) -> bool:
+    async def remove_admin_user(self, email_or_id: str) -> bool:
         try:
-            await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("id", admin_id).execute())
+            if "@" in email_or_id:
+                await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("email", email_or_id).execute())
+            else:
+                await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("id", email_or_id).execute())
             return True
         except Exception as e:
             print(f"DB Error in remove_admin_user: {e}")
@@ -178,14 +207,13 @@ class DBManager:
     async def verify_admin_password(self, email: str, password: str) -> bool:
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("password_hash").eq("email", email).execute())
-            if not result.data:
+            data = self._safe_data(result)
+            if not data:
                 return False
-            stored_hash = result.data[0].get("password_hash")
-            if not stored_hash:
+            stored_hash = data[0].get("password_hash")
+            if not stored_hash or ":" not in stored_hash:
                 return False
-            # Use the hash functions from reference
-            import hashlib
-            import os
+            
             salt_hex, hash_hex = stored_hash.split(':')
             salt = bytes.fromhex(salt_hex)
             pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
@@ -196,7 +224,6 @@ class DBManager:
 
     async def set_admin_password(self, email: str, password: str) -> bool:
         try:
-            import hashlib
             import os
             salt = os.urandom(16)
             pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
@@ -229,7 +256,7 @@ class DBManager:
     async def get_all_auth_sessions(self) -> List[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_all_auth_sessions: {e}")
             return []
@@ -237,111 +264,18 @@ class DBManager:
     async def get_all_conversation_history(self) -> List[Dict[str, Any]]:
         try:
             result = await self.db.run(lambda: self.db.client.table("conversation_history").select("*").execute())
-            return result.data if result.data else []
+            return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in get_all_conversation_history: {e}")
             return []
 
-    async def get_auth_session(self, state_uuid: str) -> Optional[Dict[str, Any]]:
-        """Get OAuth authentication session by state."""
-        try:
-            result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").eq("state", state_uuid).execute())
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"DB Error in get_auth_session: {e}")
-            return None
-
-    async def save_auth_session(self, state_uuid: str, telegram_id: int, email: str) -> bool:
-        """Save OAuth authentication session."""
-        try:
-            await self.db.run(lambda: self.db.client.table("auth_sessions").insert({
-                "state": state_uuid,
-                "telegram_id": telegram_id,
-                "email": email
-            }).execute())
-            return True
-        except Exception as e:
-            print(f"DB Error in save_auth_session: {e}")
-            return False
-
-    async def delete_auth_session(self, state_uuid: str) -> bool:
-        """Delete OAuth authentication session."""
-        try:
-            await self.db.run(lambda: self.db.client.table("auth_sessions").delete().eq("state", state_uuid).execute())
-            return True
-        except Exception as e:
-            print(f"DB Error in delete_auth_session: {e}")
-            return False
-
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Get user by email address."""
         try:
             result = await self.db.run(lambda: self.db.client.table("users").select("*").eq("email", email).execute())
-            return result.data[0] if result.data else None
+            data = self._safe_data(result)
+            return data[0] if data else None
         except Exception as e:
             print(f"DB Error in get_user_by_email: {e}")
             return None
-
-    async def get_admin_users(self) -> List[Dict[str, Any]]:
-        """Get all admin users."""
-        try:
-            result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").execute())
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"DB Error in get_admin_users: {e}")
-            return []
-
-    async def add_admin_user(self, email: str, role: str = "admin") -> bool:
-        """Add a new admin user."""
-        try:
-            await self.db.run(lambda: self.db.client.table("admin_users").insert({
-                "email": email,
-                "role": role
-            }).execute())
-            return True
-        except Exception as e:
-            print(f"DB Error in add_admin_user: {e}")
-            return False
-
-    async def remove_admin_user(self, email: str) -> bool:
-        """Remove an admin user."""
-        try:
-            await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("email", email).execute())
-            return True
-        except Exception as e:
-            print(f"DB Error in remove_admin_user: {e}")
-            return False
-
-    async def verify_admin_password(self, email: str, password: str) -> bool:
-        """Verify admin password using PBKDF2."""
-        try:
-            result = await self.db.run(lambda: self.db.client.table("admin_users").select("password_hash").eq("email", email).execute())
-            if not result.data:
-                return False
-
-            stored_hash = result.data[0]["password_hash"]
-            if not stored_hash or ":" not in stored_hash:
-                return False
-
-            salt_hex, hash_hex = stored_hash.split(":", 1)
-            salt = bytes.fromhex(salt_hex)
-            pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-            return pwd_hash.hex() == hash_hex
-        except Exception as e:
-            print(f"DB Error in verify_admin_password: {e}")
-            return False
-
-    async def set_admin_password(self, email: str, password: str) -> bool:
-        """Set admin password with PBKDF2 hashing."""
-        try:
-            import os
-            salt = os.urandom(16)
-            pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-            hashed_password = salt.hex() + ":" + pwd_hash.hex()
-            await self.db.run(lambda: self.db.client.table("admin_users").update({"password_hash": hashed_password}).eq("email", email).execute())
-            return True
-        except Exception as e:
-            print(f"DB Error in set_admin_password: {e}")
-            return False
 
 db_manager = DBManager()
