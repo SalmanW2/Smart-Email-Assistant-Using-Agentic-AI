@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -6,6 +7,9 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from google_auth_oauthlib.flow import Flow
 from config import settings
 from db.models import db_manager
+
+# Fix for "Scope has changed" error
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 router = APIRouter()
 
