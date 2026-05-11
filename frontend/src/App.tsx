@@ -9,7 +9,7 @@ import './index.css';
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-white transition-colors duration-300">
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/help" element={<Help />} />

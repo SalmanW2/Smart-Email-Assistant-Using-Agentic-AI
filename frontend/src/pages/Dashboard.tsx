@@ -32,6 +32,9 @@ interface Stats {
   total_admins: number;
 }
 
+// BACKEND FALLBACK DEFINED HERE!
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+
 const Dashboard = () => {
   const [activeTab, setActiveTab] = useState('stats');
   const [users, setUsers] = useState<User[]>([]);
@@ -60,7 +63,7 @@ const Dashboard = () => {
 
   const fetchRole = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/role`, {
+      const response = await fetch(`${backendUrl}/api/admin/role`, {
         headers: getHeaders()
       });
       if (response.ok) {
@@ -78,10 +81,10 @@ const Dashboard = () => {
   const fetchData = async () => {
     try {
       const [usersRes, adminsRes, blocksRes, statsRes] = await Promise.all([
-        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/users`, { headers: getHeaders() }),
-        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/admins`, { headers: getHeaders() }),
-        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/blocks`, { headers: getHeaders() }),
-        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/stats`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/users`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/admins`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/blocks`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/stats`, { headers: getHeaders() }),
       ]);
 
       if (usersRes.ok) setUsers(await usersRes.json());
@@ -102,7 +105,7 @@ const Dashboard = () => {
 
   const approveUser = async (tgId: number) => {
     try {
-      await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/users/${tgId}/approve`, { 
+      await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { 
         method: 'POST', 
         headers: getHeaders() 
       });
@@ -114,7 +117,7 @@ const Dashboard = () => {
 
   const blockUser = async (tgId: number, reason: string) => {
     try {
-      await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { 
+      await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { 
         method: 'POST', 
         headers: getHeaders() 
       });
@@ -126,7 +129,7 @@ const Dashboard = () => {
 
   const removeBlock = async (id: string) => {
     try {
-      await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/blocks/${id}`, { 
+      await fetch(`${backendUrl}/api/admin/blocks/${id}`, { 
         method: 'DELETE', 
         headers: getHeaders() 
       });
@@ -138,7 +141,7 @@ const Dashboard = () => {
 
   const addAdmin = async (email: string) => {
     try {
-      await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/admins`, {
+      await fetch(`${backendUrl}/api/admin/admins`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ email, role: 'admin' }),
@@ -151,7 +154,7 @@ const Dashboard = () => {
 
   const removeAdmin = async (id: string) => {
     try {
-      await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/admin/admins/${id}`, { 
+      await fetch(`${backendUrl}/api/admin/admins/${id}`, { 
         method: 'DELETE', 
         headers: getHeaders() 
       });
@@ -162,35 +165,34 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-20">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors">
       <Navbar />
 
-      {/* Modern Tab Navigation */}
-      <div className="bg-white border-b border-slate-200 sticky top-16 z-40">
+      <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 sticky top-16 z-40 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-8 overflow-x-auto hide-scrollbar">
             <button
               onClick={() => setActiveTab('stats')}
-              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'stats' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'stats' ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
               <Activity className="w-4 h-4" /> Overview
             </button>
             <button
               onClick={() => setActiveTab('users')}
-              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'users' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'users' ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
               <Users className="w-4 h-4" /> Users
             </button>
             <button
               onClick={() => setActiveTab('blocklist')}
-              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'blocklist' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'blocklist' ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
               <Ban className="w-4 h-4" /> Blocklist
             </button>
             {role === 'super_admin' && (
               <button
                 onClick={() => setActiveTab('admins')}
-                className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'admins' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                className={`flex items-center gap-2 py-4 border-b-2 font-bold text-sm whitespace-nowrap transition-colors ${activeTab === 'admins' ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
               >
                 <Shield className="w-4 h-4" /> Administrators
               </button>
@@ -205,33 +207,33 @@ const Dashboard = () => {
         {activeTab === 'stats' && stats && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <div className="flex items-center gap-3 mb-2 text-blue-600">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
+                <div className="flex items-center gap-3 mb-2 text-blue-600 dark:text-blue-400">
                   <Users className="w-5 h-5" />
-                  <h3 className="font-bold text-slate-500 text-sm uppercase tracking-wider">Total Users</h3>
+                  <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm uppercase tracking-wider">Total Users</h3>
                 </div>
-                <p className="text-4xl font-black text-slate-900">{stats.total_users}</p>
+                <p className="text-4xl font-black text-slate-900 dark:text-white">{stats.total_users}</p>
               </div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <div className="flex items-center gap-3 mb-2 text-green-600">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
+                <div className="flex items-center gap-3 mb-2 text-green-600 dark:text-green-400">
                   <CheckCircle className="w-5 h-5" />
-                  <h3 className="font-bold text-slate-500 text-sm uppercase tracking-wider">Verified</h3>
+                  <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm uppercase tracking-wider">Verified</h3>
                 </div>
-                <p className="text-4xl font-black text-slate-900">{stats.verified_users}</p>
+                <p className="text-4xl font-black text-slate-900 dark:text-white">{stats.verified_users}</p>
               </div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <div className="flex items-center gap-3 mb-2 text-red-600">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
+                <div className="flex items-center gap-3 mb-2 text-red-600 dark:text-red-400">
                   <ShieldAlert className="w-5 h-5" />
-                  <h3 className="font-bold text-slate-500 text-sm uppercase tracking-wider">Blocked</h3>
+                  <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm uppercase tracking-wider">Blocked</h3>
                 </div>
-                <p className="text-4xl font-black text-slate-900">{stats.blocked_users}</p>
+                <p className="text-4xl font-black text-slate-900 dark:text-white">{stats.blocked_users}</p>
               </div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <div className="flex items-center gap-3 mb-2 text-indigo-600">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
+                <div className="flex items-center gap-3 mb-2 text-purple-600 dark:text-purple-400">
                   <Shield className="w-5 h-5" />
-                  <h3 className="font-bold text-slate-500 text-sm uppercase tracking-wider">Admins</h3>
+                  <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm uppercase tracking-wider">Admins</h3>
                 </div>
-                <p className="text-4xl font-black text-slate-900">{stats.total_admins}</p>
+                <p className="text-4xl font-black text-slate-900 dark:text-white">{stats.total_admins}</p>
               </div>
             </div>
           </div>
@@ -239,23 +241,23 @@ const Dashboard = () => {
 
         {/* Users Tab */}
         {activeTab === 'users' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-              <h2 className="text-xl font-bold text-slate-900">User Management</h2>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
+            <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">User Management</h2>
               <div className="relative w-full sm:w-80">
                 <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search by name, ID, or email..."
+                  placeholder="Search users..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium text-sm"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all font-medium text-sm text-slate-900 dark:text-white placeholder:text-slate-400"
                 />
               </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-950/50 border-b border-slate-200 dark:border-slate-800 text-xs uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
                   <tr>
                     <th className="p-4 pl-6">Telegram User</th>
                     <th className="p-4">Status</th>
@@ -263,32 +265,32 @@ const Dashboard = () => {
                     <th className="p-4 pr-6 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                   {filteredUsers.length === 0 ? (
-                    <tr><td colSpan={4} className="p-8 text-center text-slate-500 font-medium">No users found.</td></tr>
+                    <tr><td colSpan={4} className="p-8 text-center text-slate-500 dark:text-slate-400 font-medium">No users found.</td></tr>
                   ) : (
                     filteredUsers.map((user) => (
-                      <tr key={user.telegram_id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={user.telegram_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                         <td className="p-4 pl-6">
-                          <div className="font-bold text-slate-900">{user.first_name || 'Unknown'}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">ID: {user.telegram_id} • @{user.username || 'none'}</div>
-                          <div className="text-sm text-indigo-600 font-medium mt-1">{user.email || 'No email linked'}</div>
+                          <div className="font-bold text-slate-900 dark:text-white">{user.first_name || 'Unknown'}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id} • @{user.username || 'none'}</div>
+                          <div className="text-sm text-blue-600 dark:text-blue-400 font-medium mt-1">{user.email || 'No email linked'}</div>
                         </td>
                         <td className="p-4">
-                          <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wide ${user.is_verified ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wide ${user.is_verified ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'}`}>
                             {user.is_verified ? 'APPROVED' : 'PENDING'}
                           </span>
                         </td>
-                        <td className="p-4 text-sm font-medium text-slate-600">
+                        <td className="p-4 text-sm font-medium text-slate-600 dark:text-slate-400">
                           {new Date(user.created_at).toLocaleDateString()}
                         </td>
                         <td className="p-4 pr-6 text-right space-x-2">
                           {!user.is_verified ? (
-                            <button onClick={() => approveUser(user.telegram_id)} className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold hover:bg-indigo-600 hover:text-white transition-all text-sm">
+                            <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-4 py-2 rounded-lg font-bold hover:bg-blue-600 hover:text-white transition-all text-sm">
                               Approve
                             </button>
                           ) : (
-                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 text-red-600 px-4 py-2 rounded-lg font-bold hover:bg-red-600 hover:text-white transition-all text-sm">
+                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-4 py-2 rounded-lg font-bold hover:bg-red-600 hover:text-white transition-all text-sm">
                               Block
                             </button>
                           )}
@@ -304,32 +306,32 @@ const Dashboard = () => {
 
         {/* Blocklist Tab */}
         {activeTab === 'blocklist' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-200">
-              <h2 className="text-xl font-bold text-slate-900">System Blocklist</h2>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
+            <div className="p-6 border-b border-slate-200 dark:border-slate-800">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">System Blocklist</h2>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
+                <thead className="bg-slate-50 dark:bg-slate-950/50 border-b border-slate-200 dark:border-slate-800 text-xs uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
                   <tr>
                     <th className="p-4 pl-6">Target</th>
                     <th className="p-4">Reason</th>
                     <th className="p-4 pr-6 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                   {blocks.length === 0 ? (
-                    <tr><td colSpan={3} className="p-8 text-center text-slate-500 font-medium">No blocked records found.</td></tr>
+                    <tr><td colSpan={3} className="p-8 text-center text-slate-500 dark:text-slate-400 font-medium">No blocked records found.</td></tr>
                   ) : (
                     blocks.map((block) => (
-                      <tr key={block.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 pl-6 font-bold text-slate-900">
+                      <tr key={block.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 pl-6 font-bold text-slate-900 dark:text-white">
                           <span className="text-xs font-black text-slate-400 uppercase mr-2">{block.block_type}:</span> 
                           {block.block_value}
                         </td>
-                        <td className="p-4 text-sm font-medium text-slate-600">{block.reason || 'No reason provided'}</td>
+                        <td className="p-4 text-sm font-medium text-slate-600 dark:text-slate-400">{block.reason || 'No reason provided'}</td>
                         <td className="p-4 pr-6 text-right">
-                          <button onClick={() => removeBlock(block.id)} className="text-indigo-600 hover:text-indigo-800 font-bold text-sm bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-lg transition-colors">
+                          <button onClick={() => removeBlock(block.id)} className="text-blue-600 dark:text-blue-400 font-bold text-sm bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-600 hover:text-white px-4 py-2 rounded-lg transition-colors">
                             Lift Block
                           </button>
                         </td>
@@ -345,10 +347,10 @@ const Dashboard = () => {
         {/* Admins Tab */}
         {activeTab === 'admins' && role === 'super_admin' && (
           <div className="space-y-6">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
               <div className="flex items-center gap-3 mb-4">
-                <div className="bg-indigo-100 p-2 rounded-lg"><UserPlus className="w-5 h-5 text-indigo-700" /></div>
-                <h2 className="text-lg font-bold text-slate-900">Provision New Admin</h2>
+                <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg"><UserPlus className="w-5 h-5 text-blue-700 dark:text-blue-400" /></div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Provision New Admin</h2>
               </div>
               <form onSubmit={(e) => {
                 e.preventDefault();
@@ -356,37 +358,37 @@ const Dashboard = () => {
                 addAdmin(email);
                 (e.target as HTMLFormElement).reset();
               }} className="flex flex-col sm:flex-row gap-4">
-                <input type="email" name="email" required placeholder="admin@company.com" className="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-600 outline-none transition-all font-medium" />
-                <button type="submit" className="bg-slate-900 text-white px-8 py-3 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-md">
+                <input type="email" name="email" required placeholder="admin@company.com" className="flex-1 p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-600 outline-none transition-all font-medium text-slate-900 dark:text-white placeholder:text-slate-400" />
+                <button type="submit" className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-md">
                   Grant Access
                 </button>
               </form>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-6 border-b border-slate-200">
-                <h2 className="text-xl font-bold text-slate-900">Active Administrators</h2>
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
+              <div className="p-6 border-b border-slate-200 dark:border-slate-800">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Active Administrators</h2>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-500 tracking-wider">
+                  <thead className="bg-slate-50 dark:bg-slate-950/50 border-b border-slate-200 dark:border-slate-800 text-xs uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
                     <tr>
                       <th className="p-4 pl-6">Email Address</th>
                       <th className="p-4">Access Level</th>
                       <th className="p-4 pr-6 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                     {admins.map((admin) => (
-                      <tr key={admin.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 pl-6 font-bold text-slate-900">{admin.email}</td>
+                      <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 pl-6 font-bold text-slate-900 dark:text-white">{admin.email}</td>
                         <td className="p-4">
-                          <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase ${admin.role === 'super_admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                          <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase ${admin.role === 'super_admin' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'}`}>
                             {admin.role.replace('_', ' ')}
                           </span>
                         </td>
                         <td className="p-4 pr-6 text-right">
-                          <button onClick={() => removeAdmin(admin.id)} className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors inline-flex items-center gap-2 text-sm font-bold">
+                          <button onClick={() => removeAdmin(admin.id)} className="text-red-500 dark:text-red-400 hover:text-white p-2 rounded-lg hover:bg-red-600 transition-colors inline-flex items-center gap-2 text-sm font-bold">
                             <Trash2 className="w-4 h-4" /> Revoke
                           </button>
                         </td>
