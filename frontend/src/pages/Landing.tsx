@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Mail, Bot, ShieldCheck, Zap, Key, Lock, ArrowRight, Sun, Moon, Globe, BotMessageSquare } from 'lucide-react';
+import { Mail, ShieldCheck, Zap, Key, ArrowRight, Sun, Moon, Globe, Bot } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const ThemeToggle = () => {
@@ -71,7 +71,7 @@ const Landing = () => {
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 pt-5">
             <a href="http://t.me/Smart_Emailbot" target="_blank" rel="noreferrer" className="group relative flex items-center justify-center gap-3.5 bg-blue-600 text-white px-10 py-5 rounded-2xl font-black text-xl hover:scale-105 transition-all w-full sm:w-auto overflow-hidden shadow-[0_10px_30px_rgba(59,130,246,0.3)] hover:shadow-[0_15px_40px_rgba(59,130,246,0.4)]">
-              <BotMessageSquare className="w-6 h-6 group-hover:rotate-6 transition-transform" /> Deploy AI Agent to Telegram
+              <Bot className="w-6 h-6 group-hover:rotate-6 transition-transform" /> Deploy AI Agent to Telegram
             </a>
           </div>
         </div>
