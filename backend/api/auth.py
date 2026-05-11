@@ -102,10 +102,11 @@ async def callback(code: str, state: str):
             email = None
 
     # Handle Admin Login Routing
+    
     if is_admin:
         if email and await db_manager.check_admin(email):
             await db_manager.delete_auth_session(db_state)
-            return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/dashboard?msg=Google+Login+Successful")
+            return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/dashboard?msg=Google+Login+Successful&email={email}")
         else:
             return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/login?error=Unauthorized+Admin+Email")
             
