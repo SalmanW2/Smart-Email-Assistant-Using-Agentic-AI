@@ -36,12 +36,8 @@ const AdminLogin = () => {
     e.preventDefault();
     setLoading(true);
     
-    const backendUrl = import.meta.env.VITE_BACKEND_URL;
-    if (!backendUrl) {
-      alert('System Setup Incomplete: VITE_BACKEND_URL is missing in Vercel settings.');
-      setLoading(false);
-      return;
-    }
+    // BACKEND FALLBACK URL ADDED HERE
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
     try {
       const response = await fetch(`${backendUrl}/api/admin/login`, {
@@ -64,11 +60,8 @@ const AdminLogin = () => {
   };
 
   const handleGoogleLogin = () => {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL;
-    if (!backendUrl) {
-      alert('System Setup Incomplete: VITE_BACKEND_URL is missing in Vercel settings. Please add it to Vercel Environment Variables.');
-      return;
-    }
+    // BACKEND FALLBACK URL ADDED HERE
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
     window.location.href = `${backendUrl}/api/auth/admin_google_login`;
   };
 
