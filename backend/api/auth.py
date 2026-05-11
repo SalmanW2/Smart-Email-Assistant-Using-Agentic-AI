@@ -27,6 +27,7 @@ async def telegram_login(state: str, telegram_id: int):
         client_config,
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
+        autogenerate_code_verifier=False  # ✅ PKCE FIX
     )
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
@@ -45,6 +46,7 @@ async def admin_google_login():
         client_config,
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
+        autogenerate_code_verifier=False  # ✅ PKCE FIX
     )
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
@@ -69,6 +71,7 @@ async def callback(code: str, state: str):
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
         state=state,
+        autogenerate_code_verifier=False  # ✅ PKCE FIX
     )
     flow.fetch_token(code=code)
     creds = flow.credentials
