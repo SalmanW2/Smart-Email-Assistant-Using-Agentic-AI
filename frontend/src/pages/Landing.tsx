@@ -28,7 +28,6 @@ const Landing = () => {
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 font-sans selection:bg-blue-500/30 selection:text-blue-900 dark:selection:text-blue-100 transition-colors duration-300">
       
-      {/* SaaS Premium Sticky Navbar */}
       <nav className="fixed top-0 w-full z-50 bg-white/95 dark:bg-slate-950/90 backdrop-blur-xl border-b border-slate-100 dark:border-slate-800/50">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -38,7 +37,8 @@ const Landing = () => {
             <span className="font-extrabold text-2xl tracking-tighter text-slate-950 dark:text-white">EmailAgent<span className="text-blue-600 dark:text-blue-500">.ai</span></span>
           </div>
           <div className="flex items-center gap-5">
-            <Link to="/help" className="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-white transition-colors">Documentation</Link>
+            {/* LINK NAME CHANGED HERE */}
+            <Link to="/help" className="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-white transition-colors">Knowledge Base</Link>
             <div className="h-5 w-px bg-slate-200 dark:bg-slate-800"></div>
             <ThemeToggle />
             <Link to="/admin/login" className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-full text-sm font-bold shadow-[0_4px_12px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_16px_rgba(59,130,246,0.4)] transition-all">
@@ -48,9 +48,7 @@ const Landing = () => {
         </div>
       </nav>
 
-      {/* Hero Section */}
       <main className="relative max-w-7xl mx-auto px-6 pt-44 pb-32 text-center">
-        {/* Background Radial Gradient Effect (Light/Dark) */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-100/50 dark:bg-blue-600/10 blur-[150px] rounded-full pointer-events-none transition-colors"></div>
 
         <div className="relative z-10 space-y-10">
@@ -77,12 +75,10 @@ const Landing = () => {
         </div>
       </main>
 
-      {/* Modern SaaS Feature Section (Grid + BYOK Highlight) */}
       <section className="relative bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 py-32 transition-colors">
         <div className="max-w-7xl mx-auto px-6">
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
             
-            {/* Bring Your Own Key (BYOK) - Highlight Feature */}
             <div className="group md:col-span-2 bg-slate-50 dark:bg-slate-950 p-10 rounded-3xl border border-blue-100 dark:border-blue-900/50 hover:border-blue-500 dark:hover:border-blue-500 transition-colors relative overflow-hidden shadow-sm dark:shadow-none">
               <div className="absolute top-0 right-0 w-48 h-48 bg-blue-100/50 dark:bg-blue-500/10 rounded-bl-full -z-10 group-hover:scale-110 transition-transform"></div>
               <div className="w-14 h-14 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-center mb-8 shadow-inner dark:shadow-none">
