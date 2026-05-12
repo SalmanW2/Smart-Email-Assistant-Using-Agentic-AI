@@ -4,26 +4,11 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class', // Ensure dark mode is class-based to allow toggling
+  darkMode: 'class', // Yahan se deep dark mode control hoga
   theme: {
     extend: {
-      colors: {
-        secondary: {
-          100: '#E8F5FE',
-          200: '#BDEDFF',
-          300: '#79D3FF',
-          400: '#38B2FF',
-          500: '#009EFF',
-          600: '#007ECC',
-          700: '#005C99',
-          800: '#003D66',
-          900: '#002033'
-        }
-      }
-    }
+      // Future mein agar custom colors chahiye honge toh yahan add karenge, bina plugins ke
+    },
   },
-  plugins: [
-    require('@tailwindcss/forms'),
-    require('@tailwindcss/typography'),
-  ],
-};
+  plugins: [], // Extra global plugins hata diye hain taake form inputs kharab na hon
+}
