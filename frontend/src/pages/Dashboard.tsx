@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock } from 'lucide-react';
+import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
@@ -20,6 +20,9 @@ const Dashboard = () => {
   const [role, setRole] = useState<string>('');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // Smart Password Setup Banner State
+  const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
 
   const urlEmail = searchParams.get('email');
   if (urlEmail) {
@@ -70,9 +73,37 @@ const Dashboard = () => {
   const addAdmin = async (email: string) => { await fetch(`${backendUrl}/api/admin/admins`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ email, role: 'admin' }) }); fetchData(); };
   const removeAdmin = async (id: string) => { await fetch(`${backendUrl}/api/admin/admins/${id}`, { method: 'DELETE', headers: getHeaders() }); fetchData(); };
 
+  const dismissBanner = () => {
+    localStorage.setItem('password_setup_dismissed', 'true');
+    setShowBanner(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
       <Navbar />
+
+      {/* SMART PASSWORD SETUP BANNER */}
+      {showBanner && (
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md animate-in slide-in-from-top-2 duration-500">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3 text-center sm:text-left">
+              <Zap className="w-5 h-5 text-amber-300 shrink-0 hidden sm:block" />
+              <p className="text-sm font-medium">
+                <strong className="font-bold mr-1">Want to login faster next time?</strong>
+                Set up a manual password in settings so you can bypass Google login.
+              </p>
+            </div>
+            <div className="flex items-center gap-4 shrink-0">
+              <Link to="/admin/settings" className="bg-white text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider hover:bg-blue-50 transition-colors shadow-sm">
+                Setup Password
+              </Link>
+              <button onClick={dismissBanner} className="p-1 hover:bg-white/20 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Premium Tab Navigation */}
       <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-16 z-40 transition-colors duration-500 shadow-sm">

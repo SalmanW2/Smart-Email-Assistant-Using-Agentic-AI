@@ -38,6 +38,8 @@ const Settings = () => {
       if (response.ok) {
         setMsg({ text: 'Fallback password updated successfully.', type: 'success' });
         setPassword('');
+        // Buraay waqt ka saathi: Yeh flag banner ko hamesha ke liye hide kar dega
+        localStorage.setItem('password_setup_dismissed', 'true');
       } else {
         const data = await response.json();
         setMsg({ text: data.detail || 'Failed to set password', type: 'error' });
