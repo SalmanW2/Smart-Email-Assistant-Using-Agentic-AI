@@ -8,7 +8,12 @@ const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assi
 const Settings = () => {
   const navigate = useNavigate();
   const adminEmail = localStorage.getItem('admin_email');
+  
+  // States
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passError, setPassError] = useState('');
+  
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ text: '', type: '' });
 
@@ -16,15 +21,37 @@ const Settings = () => {
     if (!adminEmail) navigate('/admin/login');
   }, [adminEmail, navigate]);
 
+  // FIX: Live Password Validation (At least 1 Letter, 1 Number, Min 6 Chars)
+  const validatePassword = (pass: string) => {
+    if (pass.length === 0) return '';
+    if (pass.length < 6) return 'Password must be at least 6 characters.';
+    if (!/[A-Za-z]/.test(pass)) return 'Password must contain at least one English letter.';
+    if (!/\d/.test(pass)) return 'Password must contain at least one number.';
+    return '';
+  };
+
+  const handlePassChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setPassword(val);
+    setPassError(validatePassword(val));
+  };
+
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      setMsg({ text: 'Password must be at least 6 characters.', type: 'error' });
+    setMsg({ text: '', type: '' });
+
+    // Final Validations Before Submit
+    const vError = validatePassword(password);
+    if (vError) {
+      setPassError(vError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setPassError('Passwords do not match!');
       return;
     }
     
     setLoading(true);
-    setMsg({ text: '', type: '' });
     try {
       const response = await fetch(`${backendUrl}/api/admin/set-password`, {
         method: 'POST',
@@ -38,7 +65,8 @@ const Settings = () => {
       if (response.ok) {
         setMsg({ text: 'Fallback password updated successfully.', type: 'success' });
         setPassword('');
-        // Buraay waqt ka saathi: Yeh flag banner ko hamesha ke liye hide kar dega
+        setConfirmPassword('');
+        setPassError('');
         localStorage.setItem('password_setup_dismissed', 'true');
       } else {
         const data = await response.json();
@@ -58,7 +86,7 @@ const Settings = () => {
       <div className="max-w-4xl mx-auto px-4 py-10">
         <h1 className="text-3xl font-black text-slate-900 dark:text-white mb-8 tracking-tight">Platform Settings</h1>
         
-        <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 transition-colors">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 sm:p-8 transition-colors">
           <div className="flex items-center gap-4 mb-6">
             <div className="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-2xl">
               <KeyRound className="w-6 h-6 text-blue-700 dark:text-blue-400" />
@@ -70,7 +98,7 @@ const Settings = () => {
           </div>
 
           {msg.text && (
-            <div className={`p-4 rounded-xl mb-6 font-bold text-sm border flex items-center gap-2 ${msg.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'}`}>
+            <div className={`p-4 rounded-xl mb-6 font-bold text-sm border flex items-center gap-2 ${msg.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'}`}>
               {msg.type === 'success' ? <ShieldCheck className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
               {msg.text}
             </div>
@@ -82,13 +110,37 @@ const Settings = () => {
               <input 
                 type="password" 
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-blue-600 outline-none font-medium transition-colors" 
-                placeholder="Minimum 6 characters"
+                onChange={handlePassChange}
+                className={`w-full p-4 bg-slate-50 dark:bg-slate-950 border text-slate-900 dark:text-white rounded-xl outline-none font-medium transition-colors focus:ring-2 ${passError ? 'border-red-400 focus:border-red-500 focus:ring-red-500/20' : 'border-slate-200 dark:border-slate-800 focus:border-blue-500 focus:ring-blue-500/20'}`} 
+                placeholder="e.g. Admin123"
                 required
               />
             </div>
-            <button type="submit" disabled={loading} className="bg-blue-600 text-white w-full py-4 rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50 shadow-md">
+            
+            {/* FIX: New Confirm Password Field */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Confirm Password</label>
+              <input 
+                type="password" 
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  if (passError === 'Passwords do not match!') setPassError('');
+                }}
+                className={`w-full p-4 bg-slate-50 dark:bg-slate-950 border text-slate-900 dark:text-white rounded-xl outline-none font-medium transition-colors focus:ring-2 ${passError === 'Passwords do not match!' ? 'border-red-400 focus:border-red-500 focus:ring-red-500/20' : 'border-slate-200 dark:border-slate-800 focus:border-blue-500 focus:ring-blue-500/20'}`} 
+                placeholder="Retype password"
+                required
+              />
+            </div>
+
+            {/* FIX: Red Validation Text */}
+            {passError && (
+              <p className="text-red-500 dark:text-red-400 text-sm font-bold flex items-center gap-1.5 animate-in fade-in">
+                <AlertCircle className="w-4 h-4" /> {passError}
+              </p>
+            )}
+
+            <button type="submit" disabled={loading || !!passError} className="bg-blue-600 text-white w-full py-4 rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50 shadow-md hover:shadow-blue-500/30">
               {loading ? 'Processing...' : 'Save Password'}
             </button>
           </form>

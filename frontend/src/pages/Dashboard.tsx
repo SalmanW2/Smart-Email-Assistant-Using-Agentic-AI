@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X } from 'lucide-react';
+import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
@@ -18,25 +18,34 @@ const Dashboard = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
+  
+  // Notification Toast State
+  const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-
-  // Smart Password Setup Banner State
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
-
-  const urlEmail = searchParams.get('email');
-  if (urlEmail) {
-    localStorage.setItem('admin_email', urlEmail);
-    window.history.replaceState(null, '', '/admin/dashboard'); 
-  }
 
   const adminEmail = localStorage.getItem('admin_email');
 
   useEffect(() => {
+    // FIX: Navbar Dashboard Click Glitch
+    const urlEmail = searchParams.get('email');
+    if (urlEmail) {
+      localStorage.setItem('admin_email', urlEmail);
+      navigate('/admin/dashboard', { replace: true });
+      return;
+    }
+
     if (!adminEmail) { navigate('/admin/login'); return; }
     fetchRole();
     fetchData();
-  }, [adminEmail, navigate]);
+  }, [searchParams, adminEmail, navigate]);
+
+  const showNotification = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-email': adminEmail || '' });
 
@@ -67,11 +76,46 @@ const Dashboard = () => {
 
   const filteredUsers = users.filter((u) => u.first_name?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const approveUser = async (tgId: number) => { await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { method: 'POST', headers: getHeaders() }); fetchData(); };
-  const blockUser = async (tgId: number, reason: string) => { await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { method: 'POST', headers: getHeaders() }); fetchData(); };
-  const removeBlock = async (id: string) => { await fetch(`${backendUrl}/api/admin/blocks/${id}`, { method: 'DELETE', headers: getHeaders() }); fetchData(); };
-  const addAdmin = async (email: string) => { await fetch(`${backendUrl}/api/admin/admins`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ email, role: 'admin' }) }); fetchData(); };
-  const removeAdmin = async (id: string) => { await fetch(`${backendUrl}/api/admin/admins/${id}`, { method: 'DELETE', headers: getHeaders() }); fetchData(); };
+  // FIX: Added Try/Catch & Notifications to all buttons
+  const approveUser = async (tgId: number) => { 
+    try {
+      const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { method: 'POST', headers: getHeaders() }); 
+      if(res.ok) { showNotification('User successfully authorized!'); fetchData(); }
+      else showNotification('Failed to authorize user', 'error');
+    } catch (e) { showNotification('Network Error', 'error'); }
+  };
+
+  const blockUser = async (tgId: number, reason: string) => { 
+    try {
+      const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { method: 'POST', headers: getHeaders() }); 
+      if(res.ok) { showNotification('User blocked and moved to Blocklist!', 'success'); fetchData(); }
+      else showNotification('Failed to block user', 'error');
+    } catch (e) { showNotification('Network Error', 'error'); }
+  };
+
+  const removeBlock = async (id: string) => { 
+    try {
+      const res = await fetch(`${backendUrl}/api/admin/blocks/${id}`, { method: 'DELETE', headers: getHeaders() }); 
+      if(res.ok) { showNotification('Restriction lifted successfully!'); fetchData(); }
+      else showNotification('Failed to lift restriction', 'error');
+    } catch (e) { showNotification('Network Error', 'error'); }
+  };
+
+  const addAdmin = async (email: string) => { 
+    try {
+      const res = await fetch(`${backendUrl}/api/admin/admins`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ email, role: 'admin' }) }); 
+      if(res.ok) { showNotification('New Admin added successfully!'); fetchData(); }
+      else showNotification('Failed to add admin', 'error');
+    } catch (e) { showNotification('Network Error', 'error'); }
+  };
+
+  const removeAdmin = async (id: string) => { 
+    try {
+      const res = await fetch(`${backendUrl}/api/admin/admins/${id}`, { method: 'DELETE', headers: getHeaders() }); 
+      if(res.ok) { showNotification('Admin revoked successfully!'); fetchData(); }
+      else showNotification('Failed to remove admin', 'error');
+    } catch (e) { showNotification('Network Error', 'error'); }
+  };
 
   const dismissBanner = () => {
     localStorage.setItem('password_setup_dismissed', 'true');
@@ -81,6 +125,14 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
       <Navbar />
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-8 right-8 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl font-bold text-sm shadow-2xl animate-in fade-in slide-in-from-bottom-5 duration-300 text-white ${toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
+          {toast.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          {toast.msg}
+        </div>
+      )}
 
       {/* SMART PASSWORD SETUP BANNER */}
       {showBanner && (
@@ -283,9 +335,14 @@ const Dashboard = () => {
                           </span>
                         </td>
                         <td className="p-5 pr-8 text-right">
-                          <button onClick={() => removeAdmin(admin.id)} className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-2 text-sm font-bold">
-                            <Trash2 className="w-5 h-5" />
-                          </button>
+                          {/* FIX: Super Admin Security Check applied here */}
+                          {admin.role !== 'super_admin' ? (
+                            <button onClick={() => removeAdmin(admin.id)} className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-2 text-sm font-bold">
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider mr-2">Protected</span>
+                          )}
                         </td>
                       </tr>
                     ))}
