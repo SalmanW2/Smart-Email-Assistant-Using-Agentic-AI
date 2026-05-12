@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { KeyRound, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { KeyRound, ShieldCheck, AlertCircle } from 'lucide-react';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
@@ -21,7 +21,7 @@ const Settings = () => {
     if (!adminEmail) navigate('/admin/login');
   }, [adminEmail, navigate]);
 
-  // FIX: Live Password Validation (At least 1 Letter, 1 Number, Min 6 Chars)
+  // Live Password Validation
   const validatePassword = (pass: string) => {
     if (pass.length === 0) return '';
     if (pass.length < 6) return 'Password must be at least 6 characters.';
@@ -97,13 +97,12 @@ const Settings = () => {
 
           {msg.text && (
             <div className={`p-4 rounded-2xl mb-8 flex items-center gap-3 text-sm font-bold border animate-in fade-in duration-300 ${msg.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20'}`}>
-              {msg.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+              {msg.type === 'success' ? <ShieldCheck className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
               {msg.text}
             </div>
           )}
 
           <form onSubmit={handleUpdatePassword} className="space-y-6 max-w-md">
-            {/* New Password Field */}
             <div className="space-y-2">
               <label className="block text-xs font-black text-slate-400 uppercase tracking-widest ml-1">New Password</label>
               <input 
@@ -117,15 +116,12 @@ const Settings = () => {
               {passError && <p className="text-[11px] text-red-500 font-bold flex items-center gap-1 ml-1 mt-1"><AlertCircle className="w-3 h-3" /> {passError}</p>}
             </div>
 
-            {/* Confirm Password Field */}
             <div className="space-y-2">
               <label className="block text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Confirm Password</label>
               <input 
                 type="password" 
                 value={confirmPassword}
-                onChange={(e) => {
-                  setConfirmPassword(e.target.value);
-                }}
+                onChange={(e) => setConfirmPassword(e.target.value)}
                 className={`w-full p-4 bg-slate-50 dark:bg-slate-950 border rounded-2xl outline-none font-medium transition-all dark:text-white ${isMismatch ? 'border-red-300 focus:ring-2 focus:ring-red-500/20' : 'border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-blue-500/20'}`} 
                 placeholder="Retype password"
                 required
