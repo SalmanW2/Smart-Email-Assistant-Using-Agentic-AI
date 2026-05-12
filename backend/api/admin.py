@@ -31,6 +31,29 @@ async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
         raise HTTPException(status_code=403, detail="Not authorized")
     return admin
 
+@router.delete("/blocks/{id_or_telegram_id}")
+async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
+    """Remove a user from the blocklist correctly."""
+    try:
+        # Check if input is numeric (Telegram ID)
+        if id_or_telegram_id.isdigit():
+            success = await db_manager.unblock_user(int(id_or_telegram_id))
+        else:
+            # It's a record UUID from the table. 
+            # We delete it directly from the blocked_users table using the database client.
+            # Assuming db_manager has access to the client.
+            from db.models import supabase
+            res = supabase.table("blocked_users").delete().eq("id", id_or_telegram_id).execute()
+            success = len(res.data) >= 0 # If no error, it's a success
+            
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to unblock user")
+            
+        return {"message": "User unblocked"}
+    except Exception as e:
+        print(f"Unblock error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- Authentication Endpoints ---
 
 @router.post("/login")
