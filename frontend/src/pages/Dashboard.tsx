@@ -19,9 +19,7 @@ const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
   
-  // Notification Toast State
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
-
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
@@ -29,7 +27,7 @@ const Dashboard = () => {
   const adminEmail = localStorage.getItem('admin_email');
 
   useEffect(() => {
-    // FIX: Navbar Dashboard Click Glitch
+    // URL Check
     const urlEmail = searchParams.get('email');
     if (urlEmail) {
       localStorage.setItem('admin_email', urlEmail);
@@ -37,7 +35,11 @@ const Dashboard = () => {
       return;
     }
 
-    if (!adminEmail) { navigate('/admin/login'); return; }
+    if (!adminEmail) { 
+      navigate('/admin/login'); 
+      return; 
+    }
+    
     fetchRole();
     fetchData();
   }, [searchParams, adminEmail, navigate]);
@@ -54,9 +56,15 @@ const Dashboard = () => {
       const response = await fetch(`${backendUrl}/api/admin/role`, { headers: getHeaders() });
       if (response.ok) {
         const data = await response.json();
-        setRole(data.role);
-      } else navigate('/admin/login');
-    } catch (err) { navigate('/admin/login'); }
+        setRole(data.role || 'admin');
+      } else if (response.status === 401 || response.status === 403) {
+        // FIX: Ab sirf 401/403 par logout hoga. Network error par crash nahi hoga.
+        localStorage.removeItem('admin_email');
+        navigate('/admin/login');
+      }
+    } catch (err) {
+      console.error("Role check delayed or failed", err);
+    }
   };
 
   const fetchData = async () => {
@@ -67,16 +75,22 @@ const Dashboard = () => {
         fetch(`${backendUrl}/api/admin/blocks`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/stats`, { headers: getHeaders() }),
       ]);
-      if (usersRes.ok) setUsers(await usersRes.json());
-      if (adminsRes.ok) setAdmins(await adminsRes.json());
-      if (blocksRes.ok) setBlocks(await blocksRes.json());
-      if (statsRes.ok) setStats(await statsRes.json());
-    } catch (err) { console.error('Data fetch failed'); }
+      if (usersRes.ok) setUsers(await usersRes.json() || []);
+      if (adminsRes.ok) setAdmins(await adminsRes.json() || []);
+      if (blocksRes.ok) setBlocks(await blocksRes.json() || []);
+      if (statsRes.ok) setStats(await statsRes.json() || null);
+    } catch (err) { 
+      console.error('Data fetch failed', err); 
+    }
   };
 
-  const filteredUsers = users.filter((u) => u.first_name?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase()));
+  // FIX: Bulletproof filter taake null string par crash na ho
+  const filteredUsers = users.filter((u) => 
+    (u.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (u.username || '').toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  // FIX: Added Try/Catch & Notifications to all buttons
   const approveUser = async (tgId: number) => { 
     try {
       const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { method: 'POST', headers: getHeaders() }); 
@@ -126,7 +140,6 @@ const Dashboard = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
       <Navbar />
 
-      {/* Floating Toast Notification */}
       {toast && (
         <div className={`fixed bottom-8 right-8 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl font-bold text-sm shadow-2xl animate-in fade-in slide-in-from-bottom-5 duration-300 text-white ${toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
           {toast.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
@@ -134,7 +147,6 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* SMART PASSWORD SETUP BANNER */}
       {showBanner && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md animate-in slide-in-from-top-2 duration-500">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -157,7 +169,6 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Premium Tab Navigation */}
       <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-16 z-40 transition-colors duration-500 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex space-x-2 sm:space-x-6 overflow-x-auto hide-scrollbar py-2">
@@ -182,14 +193,13 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* STATS VIEW */}
         {activeTab === 'stats' && stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { label: 'Total Users', val: stats.total_users, color: 'from-blue-500 to-indigo-600', icon: Users },
-              { label: 'Verified Accounts', val: stats.verified_users, color: 'from-emerald-500 to-teal-600', icon: CheckCircle },
-              { label: 'Blocked Threats', val: stats.blocked_users, color: 'from-rose-500 to-red-600', icon: ShieldAlert },
-              { label: 'Active Admins', val: stats.total_admins, color: 'from-purple-500 to-fuchsia-600', icon: Shield },
+              { label: 'Total Users', val: stats.total_users || 0, color: 'from-blue-500 to-indigo-600', icon: Users },
+              { label: 'Verified Accounts', val: stats.verified_users || 0, color: 'from-emerald-500 to-teal-600', icon: CheckCircle },
+              { label: 'Blocked Threats', val: stats.blocked_users || 0, color: 'from-rose-500 to-red-600', icon: ShieldAlert },
+              { label: 'Active Admins', val: stats.total_admins || 0, color: 'from-purple-500 to-fuchsia-600', icon: Shield },
             ].map((s) => (
               <div key={s.label} className="group relative bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden cursor-default">
                 <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${s.color} opacity-5 group-hover:opacity-10 rounded-bl-full transition-opacity duration-500`}></div>
@@ -206,7 +216,6 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* USERS VIEW */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50">
@@ -231,7 +240,7 @@ const Dashboard = () => {
                       <tr key={user.telegram_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                         <td className="p-5 pl-8 flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/50 dark:to-indigo-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold uppercase shadow-inner">
-                            {user.first_name ? user.first_name[0] : 'U'}
+                            {user.first_name ? user.first_name.charAt(0).toUpperCase() : 'U'}
                           </div>
                           <div>
                             <div className="font-bold text-slate-900 dark:text-white">{user.first_name || 'Unknown'}</div>
@@ -245,7 +254,7 @@ const Dashboard = () => {
                           </span>
                         </td>
                         <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">
-                          {new Date(user.created_at).toLocaleDateString()}
+                          {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-5 pr-8 text-right">
                           {!user.is_verified ? (
@@ -281,7 +290,7 @@ const Dashboard = () => {
                     blocks.map((block) => (
                       <tr key={block.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="p-5 pl-8 font-bold text-slate-900 dark:text-white">
-                          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-3 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{block.block_type}</span>
+                          <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-3 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{block.block_type || 'ID'}</span>
                           {block.block_value}
                         </td>
                         <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">{block.reason || 'Security Policy Violation'}</td>
@@ -330,12 +339,11 @@ const Dashboard = () => {
                       <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="p-5 pl-8 font-bold text-slate-900 dark:text-white">{admin.email}</td>
                         <td className="p-5">
-                          <span className={`px-3 py-1.5 rounded-full text-[10px] font-black tracking-widest uppercase border ${admin.role === 'super_admin' ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20' : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20'}`}>
-                            {admin.role.replace('_', ' ')}
+                          <span className={`px-3 py-1.5 rounded-full text-[10px] font-black tracking-widest uppercase border ${(admin.role || '').includes('super') ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20' : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20'}`}>
+                            {(admin.role || 'admin').replace('_', ' ')}
                           </span>
                         </td>
                         <td className="p-5 pr-8 text-right">
-                          {/* FIX: Super Admin Security Check applied here */}
                           {admin.role !== 'super_admin' ? (
                             <button onClick={() => removeAdmin(admin.id)} className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-2 text-sm font-bold">
                               <Trash2 className="w-5 h-5" />
