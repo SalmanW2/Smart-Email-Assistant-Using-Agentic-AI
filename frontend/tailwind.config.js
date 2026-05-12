@@ -4,9 +4,26 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class', // YEH LINE DARK MODE KO ACTIVATE KAREGI
+  darkMode: 'class', // Ensure dark mode is class-based to allow toggling
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        secondary: {
+          100: '#E8F5FE',
+          200: '#BDEDFF',
+          300: '#79D3FF',
+          400: '#38B2FF',
+          500: '#009EFF',
+          600: '#007ECC',
+          700: '#005C99',
+          800: '#003D66',
+          900: '#002033'
+        }
+      }
+    }
   },
-  plugins: [],
-}
+  plugins: [
+    require('@tailwindcss/forms'),
+    require('@tailwindcss/typography'),
+  ],
+};
