@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { KeyRound, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
-
+import { KeyRound, AlertCircle, CheckCircle2 } from 'lucide-react';
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
 const Settings = () => {

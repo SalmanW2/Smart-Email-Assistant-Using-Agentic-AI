@@ -1,3 +1,6 @@
+import jwt
+import os
+from datetime import datetime, timedelta, timezone
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
@@ -78,11 +81,41 @@ async def root():
     """
 
 @app.get("/callback")
-async def root_callback_redirect(request: Request):
-    """Catches Google's root callback and redirects it to the correct auth router."""
-    query_params = request.url.query
-    return RedirectResponse(url=f"/api/auth/callback?{query_params}")
+async def google_callback(request: Request):
+    code = request.query_params.get("code")
+    state_uuid = request.query_params.get("state")
+    
+    if not code or not state_uuid:
+        return RedirectResponse(url=f"/callback_success?msg=Invalid Request&success=false")
 
+    status_type, result_data = process_callback(code, state_uuid)
+    
+    # FIXED: Route Admin Login Success with JWT Token
+    if status_type == "admin":
+        email = result_data
+        
+        # Generate JWT Token for Google Login
+        JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-enterprise-key-321")
+        expire = datetime.now(timezone.utc) + timedelta(hours=24)
+        token_data = {"sub": email, "role": "admin", "exp": expire} 
+        access_token = jwt.encode(token_data, JWT_SECRET, algorithm="HS256")
+        
+        # Send token to React frontend via URL
+        return RedirectResponse(url=f"/admin/dashboard?token={access_token}&email={email}", status_code=302)
+        
+    # Route: Admin Login Failed
+    elif status_type == "error" and "Admin" in result_data:
+        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=false&is_admin_error=true")
+        
+    # Route: User Login Success
+    elif status_type == "user":
+        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=true")
+        
+    # Route: Standard Errors
+    else:
+        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=false")
+    
+    
 @app.get("/health")
 async def health_check():
     """Health check for Render/Deployment monitoring."""

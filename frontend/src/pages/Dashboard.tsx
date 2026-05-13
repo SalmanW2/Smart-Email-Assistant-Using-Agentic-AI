@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
@@ -20,14 +20,12 @@ const Dashboard = () => {
   const [role, setRole] = useState<string>('');
   
   // UI States
-  const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
   const [loadingId, setLoadingId] = useState<number | null>(null); 
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const adminToken = localStorage.getItem('admin_token'); // JWT Check
 
   // 10-Minute Auto Logout Feature
   useEffect(() => {
@@ -50,28 +48,34 @@ const Dashboard = () => {
     };
   }, [navigate]);
 
+  // Handle Authentication & JWT
   useEffect(() => {
     const urlEmail = searchParams.get('email');
-    if (urlEmail) {
+    const urlToken = searchParams.get('token');
+    
+    // If coming from Google Login
+    if (urlEmail && urlToken) {
       localStorage.setItem('admin_email', urlEmail);
-      // Wait for JWT token via callback or other process.
+      localStorage.setItem('admin_token', urlToken);
       navigate('/admin/dashboard', { replace: true });
       return;
     }
-    if (!adminToken) { 
+
+    const currentToken = localStorage.getItem('admin_token');
+    if (!currentToken) { 
       navigate('/admin/login'); 
       return; 
     }
+    
     fetchRole();
     fetchData();
-  }, [searchParams, adminToken, navigate]);
+  }, [searchParams, navigate]);
 
   const showNotification = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  // FIXED: JWT Authentication Headers
   const getHeaders = () => {
     const token = localStorage.getItem('admin_token');
     return { 
@@ -215,6 +219,7 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
+        {/* STATS VIEW */}
         {activeTab === 'stats' && stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
@@ -238,6 +243,7 @@ const Dashboard = () => {
           </div>
         )}
 
+        {/* USERS VIEW (MOBILE RESPONSIVE CARDS) */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
@@ -250,7 +256,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* RESPONSIVE GRID / CARDS */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
               {filteredUsers.length === 0 ? (
                 <div className="col-span-full text-center py-8 text-slate-500 font-medium">No users found.</div>
