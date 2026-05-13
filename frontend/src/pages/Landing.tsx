@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Mail, ShieldCheck, Zap, Key, ArrowRight, Sun, Moon, Globe, Bot, ChevronDown, ChevronUp } from 'lucide-react';
+import { Bot, ArrowRight, Sun, Moon, FileText, Edit3, Lock, Zap } from 'lucide-react';
 
 const ThemeToggle = () => {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -16,123 +16,111 @@ const ThemeToggle = () => {
 };
 
 const Landing = () => {
-  const [activeBox, setActiveBox] = useState<number | null>(null);
-  const toggleBox = (index: number) => setActiveBox(activeBox === index ? null : index);
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans transition-colors duration-500 overflow-x-hidden selection:bg-blue-500/30">
+      
       {/* Premium Navbar */}
       <nav className="fixed top-0 w-full z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 transition-colors duration-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer group">
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl p-2.5 shadow-lg shadow-blue-500/30 group-hover:scale-110 transition-transform duration-300">
-              <Mail className="w-6 h-6 text-white" />
-            </div>
-            <span className="font-extrabold text-2xl tracking-tighter text-slate-900 dark:text-white">EmailAgent<span className="text-blue-600 dark:text-blue-500">.ai</span></span>
+          <div className="flex items-center gap-2 sm:gap-3 cursor-pointer group">
+            <span className="text-2xl sm:text-3xl font-black text-blue-600 dark:text-blue-500 drop-shadow-md">📧</span>
+            <span className="font-extrabold text-xl sm:text-2xl tracking-tight text-slate-900 dark:text-white">
+              Smart Email <span className="hidden sm:inline font-light text-slate-400 dark:text-slate-500">| Agentic AI</span>
+            </span>
           </div>
-          <div className="flex items-center gap-6">
-            <a href="/help" className="text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors hidden sm:block">Knowledge Base</a>
+          <div className="flex items-center gap-3 sm:gap-6">
+            <a href="/about" className="text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors hidden sm:block">About</a>
             <ThemeToggle />
-            <a href="/admin/login" className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-2.5 rounded-full text-sm font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-2">
-              Admin Access <ArrowRight className="w-4 h-4" />
+            <a href="/admin/login" className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-4 sm:px-6 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 flex items-center gap-2">
+              Admin <ArrowRight className="w-3 h-3 sm:w-4 sm:h-4" />
             </a>
           </div>
         </div>
       </nav>
 
-      {/* Hero Section with Glowing Effects */}
-      <main className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-40 pb-24 text-center">
+      {/* Hero Section */}
+      <main className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-32 sm:pt-40 pb-20 sm:pb-24 text-center">
         {/* Background Glow */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] sm:w-[600px] h-[300px] sm:h-[600px] bg-blue-500/20 dark:bg-blue-600/10 blur-[100px] sm:blur-[120px] rounded-full pointer-events-none"></div>
         
-        <div className="relative z-10 space-y-8 animate-in fade-in slide-in-from-bottom-10 duration-1000">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 text-blue-600 dark:text-blue-400 text-xs font-black uppercase tracking-widest shadow-sm">
-            <Zap className="w-4 h-4 fill-current text-amber-500" /> Next-Gen Workspace Intelligence
+        <div className="relative z-10 space-y-6 sm:space-y-8 animate-in fade-in slide-in-from-bottom-10 duration-1000">
+          
+          {/* Badge */}
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800/50 text-blue-700 dark:text-blue-300 text-xs font-black uppercase tracking-widest shadow-sm">
+            <Zap className="w-4 h-4 text-amber-500" /> The Future of Email Management
           </div>
           
-          <h1 className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tighter leading-[1.1] text-slate-900 dark:text-white">
-            Command Gmail via <br className="hidden sm:block" />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-500">AI Agents in Telegram.</span>
+          <h1 className="text-4xl sm:text-6xl md:text-8xl font-black tracking-tighter leading-[1.1] text-slate-900 dark:text-white">
+            Your Inbox, Mastered by <br className="hidden md:block" />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-500">Agentic AI.</span>
           </h1>
           
-          <p className="max-w-2xl mx-auto text-lg sm:text-xl text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-            Draft, summarize, and manage your inbox dynamically. A zero-trust, enterprise-grade AI companion built for professionals.
+          <p className="max-w-2xl mx-auto text-base sm:text-xl text-slate-600 dark:text-slate-400 leading-relaxed font-medium px-2 sm:px-0">
+            Stop drowning in emails. Get instant summaries, draft context-aware replies, and command your professional communication—all through a simple Telegram chat.
           </p>
           
-          <div className="pt-8">
-            <a href="https://t.me/Smart_Emailbot" target="_blank" rel="noreferrer" className="group relative inline-flex items-center justify-center gap-3 bg-blue-600 text-white px-8 sm:px-12 py-5 rounded-2xl font-black text-lg overflow-hidden transition-all hover:scale-105 hover:shadow-2xl hover:shadow-blue-500/40 w-full sm:w-auto">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <Bot className="w-6 h-6 relative z-10 group-hover:animate-bounce" /> 
-              <span className="relative z-10">Deploy to Telegram</span>
+          <div className="pt-6 sm:pt-8 flex flex-col sm:flex-row items-center justify-center gap-4 w-full sm:w-auto px-4 sm:px-0">
+            <a href="https://t.me/Private_Mail_Assistent_Bot" target="_blank" rel="noreferrer" className="w-full sm:w-auto group relative inline-flex items-center justify-center gap-3 bg-blue-600 text-white px-8 py-4 sm:py-5 rounded-2xl font-black text-base sm:text-lg overflow-hidden transition-all hover:scale-105 hover:shadow-2xl hover:shadow-blue-500/40">
+              <Bot className="w-5 h-5 sm:w-6 sm:h-6 relative z-10 group-hover:animate-bounce" /> 
+              <span className="relative z-10">Start on Telegram 🚀</span>
+            </a>
+            <a href="#features" className="w-full sm:w-auto inline-flex items-center justify-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-8 py-4 sm:py-5 rounded-2xl font-bold text-base sm:text-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm">
+              See How It Works
             </a>
           </div>
+
+          <div className="mt-10 sm:mt-12 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm text-slate-500 dark:text-slate-400 bg-white/50 dark:bg-slate-900/50 px-4 sm:px-6 py-3 rounded-full border border-slate-200 dark:border-slate-800 shadow-sm max-w-fit mx-auto">
+            <div className="flex items-center gap-1.5">
+              <Lock className="w-4 h-4 text-emerald-500" />
+              <b className="text-slate-700 dark:text-slate-300">Bank-Level Security:</b>
+            </div>
+            <span className="text-center">Secured by Official Google OAuth. We never store your emails.</span>
+          </div>
+
         </div>
       </main>
 
-      {/* Premium Interactive Feature Boxes */}
-      <section className="relative bg-white dark:bg-slate-900/50 border-t border-slate-200/50 dark:border-slate-800/50 py-24 transition-colors duration-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-          
-          {/* Box 1 */}
-          <div onClick={() => toggleBox(1)} className="group bg-slate-50 dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 cursor-pointer hover:border-blue-500/50 dark:hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/5 transition-all duration-300">
-            <div className="flex justify-between items-start mb-6">
-              <div className="w-14 h-14 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
-                <Key className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="bg-slate-200/50 dark:bg-slate-800/50 p-2 rounded-full text-slate-500 dark:text-slate-400 group-hover:text-blue-500 transition-colors">
-                {activeBox === 1 ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-              </div>
-            </div>
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Bring Your Own Keys</h3>
-            <div className={`grid transition-all duration-500 ease-in-out ${activeBox === 1 ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0'}`}>
-              <div className="overflow-hidden">
-                <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                  Ultimate sovereignty over your data. Integrate your personal Google Gemini LLM keys and Workspace credentials. Zero intermediary data processing.
-                </p>
-              </div>
-            </div>
+      {/* Features Section */}
+      <section id="features" className="relative bg-white dark:bg-slate-900/50 border-t border-slate-200/50 dark:border-slate-800/50 py-16 sm:py-24 transition-colors duration-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="text-center mb-12 sm:mb-20">
+            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight">Why Use Smart Email Assistant?</h2>
+            <p className="text-slate-500 dark:text-slate-400 mt-3 sm:mt-4 text-lg sm:text-xl font-medium">Experience an inbox that practically manages itself.</p>
           </div>
 
-          {/* Box 2 */}
-          <div onClick={() => toggleBox(2)} className="group bg-slate-50 dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 cursor-pointer hover:border-indigo-500/50 dark:hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-500/5 transition-all duration-300">
-            <div className="flex justify-between items-start mb-6">
-              <div className="w-14 h-14 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300">
-                <Globe className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+            
+            <div className="group bg-slate-50 dark:bg-slate-900 p-8 sm:p-10 rounded-3xl border border-slate-200 dark:border-slate-800 hover:border-blue-500/50 dark:hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-2">
+              <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-2xl flex items-center justify-center shadow-sm mb-6 group-hover:scale-110 transition-transform duration-300">
+                <FileText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
-              <div className="bg-slate-200/50 dark:bg-slate-800/50 p-2 rounded-full text-slate-500 dark:text-slate-400 group-hover:text-indigo-500 transition-colors">
-                {activeBox === 2 ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-              </div>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight mb-4">Instant Summaries</h3>
+              <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                Skip the 20-message threads. Our Agentic AI reads the context and gives you the exact action points in bullet format instantly.
+              </p>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Enterprise Security</h3>
-            <div className={`grid transition-all duration-500 ease-in-out ${activeBox === 2 ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0'}`}>
-              <div className="overflow-hidden">
-                <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                  Official Google OAuth 2.0 integration. Conversations are processed dynamically in isolated RAM slots and never permanently stored on our servers.
-                </p>
-              </div>
-            </div>
-          </div>
 
-          {/* Box 3 */}
-          <div onClick={() => toggleBox(3)} className="group bg-slate-50 dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 cursor-pointer hover:border-purple-500/50 dark:hover:border-purple-500/50 hover:shadow-xl hover:shadow-purple-500/5 transition-all duration-300">
-            <div className="flex justify-between items-start mb-6">
-              <div className="w-14 h-14 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300">
-                <ShieldCheck className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+            <div className="group bg-slate-50 dark:bg-slate-900 p-8 sm:p-10 rounded-3xl border border-slate-200 dark:border-slate-800 hover:border-purple-500/50 dark:hover:border-purple-500/50 hover:shadow-xl hover:shadow-purple-500/5 transition-all duration-300 hover:-translate-y-2">
+              <div className="w-14 h-14 bg-purple-100 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-2xl flex items-center justify-center shadow-sm mb-6 group-hover:scale-110 transition-transform duration-300">
+                <Edit3 className="w-6 h-6 text-purple-600 dark:text-purple-400" />
               </div>
-              <div className="bg-slate-200/50 dark:bg-slate-800/50 p-2 rounded-full text-slate-500 dark:text-slate-400 group-hover:text-purple-500 transition-colors">
-                {activeBox === 3 ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-              </div>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight mb-4">Smart Drafting</h3>
+              <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                Tell the bot "Tell John I'll finish the report by Friday." The AI will instantly generate a highly professional email ready to send.
+              </p>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Granular Control</h3>
-            <div className={`grid transition-all duration-500 ease-in-out ${activeBox === 3 ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0'}`}>
-              <div className="overflow-hidden">
-                <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                  Verified administrators command the ecosystem. Monitor user analytics, audit interactions, and block rogue requests instantly from the dashboard.
-                </p>
-              </div>
-            </div>
-          </div>
 
+            <div className="group bg-slate-50 dark:bg-slate-900 p-8 sm:p-10 rounded-3xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/50 hover:shadow-xl hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-2">
+              <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center justify-center shadow-sm mb-6 group-hover:scale-110 transition-transform duration-300">
+                <Lock className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight mb-4">Absolute Privacy</h3>
+              <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                Your data remains yours. We use strict Google API standards to ensure your inbox remains completely encrypted and isolated.
+              </p>
+            </div>
+
+          </div>
         </div>
       </section>
     </div>
