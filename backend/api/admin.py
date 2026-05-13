@@ -117,41 +117,41 @@ async def get_users(admin: Dict = Depends(get_current_admin)):
 
 @router.post("/users/{telegram_id}/approve")
 async def approve_user(telegram_id: int, admin: Dict = Depends(get_current_admin)):
-    """Approve a pending user."""
+    """Approve a pending user and remove from blocklist."""
     try:
-        from db.models import supabase
-        # 1. Update is_verified to True
-        supabase.table("users").update({"is_verified": True}).eq("telegram_id", telegram_id).execute()
-        
-        # 2. Remove from blocked_users if they were blocked before (Unrevoke)
-        supabase.table("blocked_users").delete().eq("block_value", str(telegram_id)).execute()
-        
-        return {"message": "User approved successfully"}
+        def _approve():
+            # 1. Update is_verified to True
+            db_manager.db.client.table("users").update({"is_verified": True}).eq("telegram_id", telegram_id).execute()
+            # 2. Lazmi Blocklist se nikalein (Unrevoke)
+            db_manager.db.client.table("blocked_users").delete().eq("block_value", str(telegram_id)).execute()
+
+        await db_manager.db.run(_approve)
+        return {"message": "User authorized and unblocked successfully"}
     except Exception as e:
         print(f"Approve error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Backend Database Error: " + str(e))
 
 @router.post("/users/{telegram_id}/block")
 async def block_user(telegram_id: int, reason: str = Query("Blocked by Admin"), admin: Dict = Depends(get_current_admin)):
     """Block a user from using the bot."""
     try:
-        from db.models import supabase
-        # 1. Update user is_verified to False
-        supabase.table("users").update({"is_verified": False}).eq("telegram_id", telegram_id).execute()
-        
-        # 2. Add to blocked_users table (Check first to avoid duplicates)
-        existing = supabase.table("blocked_users").select("*").eq("block_value", str(telegram_id)).execute()
-        if not existing.data:
-            supabase.table("blocked_users").insert({
-                "block_type": "telegram_id",
-                "block_value": str(telegram_id),
-                "reason": reason
-            }).execute()
-            
-        return {"message": "User blocked successfully"}
+        def _block():
+            # 1. Update user is_verified to False
+            db_manager.db.client.table("users").update({"is_verified": False}).eq("telegram_id", telegram_id).execute()
+            # 2. Blocklist mein daalein
+            existing = db_manager.db.client.table("blocked_users").select("*").eq("block_value", str(telegram_id)).execute()
+            if not existing.data:
+                db_manager.db.client.table("blocked_users").insert({
+                    "block_type": "telegram_id",
+                    "block_value": str(telegram_id),
+                    "reason": reason
+                }).execute()
+
+        await db_manager.db.run(_block)
+        return {"message": "User access revoked successfully"}
     except Exception as e:
         print(f"Block error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Backend Database Error: " + str(e))
     
 
 @router.get("/admins")

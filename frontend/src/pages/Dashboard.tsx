@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle } from 'lucide-react';
+import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
@@ -11,13 +11,14 @@ interface Stats { total_users: number; verified_users: number; blocked_users: nu
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
 const Dashboard = () => {
-  const [activeTab, setActiveTab] = useState('stats');
+  const [activeTab, setActiveTab] = useState('users');
   const [users, setUsers] = useState<User[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
+  const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
   
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
   const navigate = useNavigate();
@@ -39,10 +40,10 @@ const Dashboard = () => {
       }, 600000);
     };
 
-    const events = ['mousemove', 'keydown', 'scroll', 'click'];
+    const events = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
     events.forEach(event => window.addEventListener(event, resetTimer));
 
-    resetTimer(); // Initialize timer
+    resetTimer();
 
     return () => {
       clearTimeout(timeoutId);
@@ -220,6 +221,7 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
+        {/* STATS VIEW */}
         {activeTab === 'stats' && stats && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
@@ -243,18 +245,76 @@ const Dashboard = () => {
           </div>
         )}
 
+        {/* USERS VIEW */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50">
+            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Users className="w-5 h-5 text-blue-500" /> User Directory
               </h2>
               <div className="relative w-full sm:w-80 group">
                 <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-                <input type="text" placeholder="Search users by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white transition-all shadow-sm" />
+                <input type="text" placeholder="Search by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white transition-all shadow-sm" />
               </div>
             </div>
-            <div className="overflow-x-auto w-full">
+
+            {/* MOBILE VIEW */}
+            <div className="block sm:hidden p-4 space-y-4">
+              {filteredUsers.length === 0 ? (
+                <div className="text-center py-8 text-slate-500">No users found.</div>
+              ) : (
+                filteredUsers.map((user) => {
+                  const displayName = user.first_name || user.username || 'Unknown User';
+                  const isBlocked = blocks.some(b => b.block_value === String(user.telegram_id));
+                  const isActuallyVerified = user.is_verified && !isBlocked;
+
+                  return (
+                    <div key={user.telegram_id} className="bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden transition-all">
+                      <div 
+                        onClick={() => setExpandedUserId(expandedUserId === user.telegram_id ? null : user.telegram_id)}
+                        className="p-4 flex items-center justify-between cursor-pointer active:bg-slate-100 dark:active:bg-slate-800"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold uppercase shadow-inner shrink-0">
+                            {displayName.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 dark:text-white text-sm line-clamp-1">{displayName}</div>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-md text-[10px] font-bold border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400'}`}>
+                              {isActuallyVerified ? <><CheckCircle className="w-3 h-3"/> Verified</> : <><Ban className="w-3 h-3"/> Revoked</>}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-slate-400">
+                          {expandedUserId === user.telegram_id ? <ChevronUp className="w-5 h-5"/> : <ChevronDown className="w-5 h-5"/>}
+                        </div>
+                      </div>
+
+                      {expandedUserId === user.telegram_id && (
+                        <div className="p-4 pt-0 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2">
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mb-3 space-y-1.5 mt-3">
+                            <p><strong>Telegram ID:</strong> {user.telegram_id}</p>
+                            <p><strong>Email:</strong> <span className="text-blue-600 dark:text-blue-400">{user.email || 'None'}</span></p>
+                            <p><strong>Joined:</strong> {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</p>
+                          </div>
+                          
+                          <div className="flex justify-end pt-2">
+                            {!isActuallyVerified ? (
+                              <button onClick={() => approveUser(user.telegram_id)} className="w-full bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-4 py-3 rounded-xl font-bold active:bg-blue-600 active:text-white transition-all text-sm border border-blue-200 dark:border-blue-500/30 flex items-center justify-center gap-2"><CheckCircle className="w-4 h-4"/> Authorize User</button>
+                            ) : (
+                              <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="w-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl font-bold active:bg-red-600 active:text-white transition-all text-sm border border-red-200 dark:border-red-500/30 flex items-center justify-center gap-2"><Ban className="w-4 h-4"/> Revoke Access</button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* DESKTOP VIEW */}
+            <div className="hidden sm:block overflow-x-auto w-full">
               <table className="w-full text-left min-w-[800px]">
                 <thead className="bg-slate-50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
                   <tr><th className="p-5 pl-8">User Profile</th><th className="p-5">Security Status</th><th className="p-5">Joined Date</th><th className="p-5 pr-8 text-right">Actions</th></tr>
@@ -264,35 +324,35 @@ const Dashboard = () => {
                     <tr><td colSpan={4} className="p-10 text-center text-slate-500 dark:text-slate-400 font-medium">No users found.</td></tr>
                   ) : (
                     filteredUsers.map((user) => {
-                      // Logic for Username Display
                       const displayName = user.first_name || user.username || 'Unknown User';
-                      const displayChar = displayName.charAt(0).toUpperCase();
+                      const isBlocked = blocks.some(b => b.block_value === String(user.telegram_id));
+                      const isActuallyVerified = user.is_verified && !isBlocked;
 
                       return (
                       <tr key={user.telegram_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                         <td className="p-5 pl-8 flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/50 dark:to-indigo-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold uppercase shadow-inner">
-                            {displayChar}
+                          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold uppercase shadow-inner">
+                            {displayName.charAt(0).toUpperCase()}
                           </div>
                           <div>
                             <div className="font-bold text-slate-900 dark:text-white">{displayName}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</div>
-                            <div className="text-sm font-medium text-blue-600 dark:text-blue-400 mt-1">{user.email || 'No connected email'}</div>
+                            <div className="text-sm font-medium text-blue-600 dark:text-blue-400 mt-1">{user.email || 'No email'}</div>
                           </div>
                         </td>
                         <td className="p-5">
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${user.is_verified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20'}`}>
-                            {user.is_verified ? <><CheckCircle className="w-3 h-3"/> Verified</> : <><Clock className="w-3 h-3"/> Pending</>}
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20'}`}>
+                            {isActuallyVerified ? <><CheckCircle className="w-3 h-3"/> Verified</> : <><Ban className="w-3 h-3"/> Revoked</>}
                           </span>
                         </td>
                         <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">
                           {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-5 pr-8 text-right">
-                          {!user.is_verified ? (
-                            <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-xl font-bold hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 transition-all text-sm shadow-sm border border-blue-200 dark:border-blue-500/30">Authorize</button>
+                          {!isActuallyVerified ? (
+                            <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-xl font-bold hover:bg-blue-600 hover:text-white transition-all text-sm shadow-sm border border-blue-200 dark:border-blue-500/30">Authorize</button>
                           ) : (
-                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 px-4 py-2 rounded-xl font-bold hover:bg-red-600 hover:text-white dark:hover:bg-red-600 transition-all text-sm shadow-sm border border-red-200 dark:border-red-500/30">Revoke Access</button>
+                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 px-4 py-2 rounded-xl font-bold hover:bg-red-600 hover:text-white transition-all text-sm shadow-sm border border-red-200 dark:border-red-500/30">Revoke Access</button>
                           )}
                         </td>
                       </tr>
