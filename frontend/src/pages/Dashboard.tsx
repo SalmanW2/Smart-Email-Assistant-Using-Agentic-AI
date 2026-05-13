@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle } from 'lucide-react';
+import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle, Settings2, MicOff, BotOff, CalendarClock } from 'lucide-react';
 
-interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; created_at: string; }
+interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; ai_allowed?: boolean; voice_allowed?: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
-interface Block { id: string; block_type: string; block_value: string; reason: string; }
+interface Block { id: string; block_type: string; block_value: string; reason: string; expires_at?: string; }
 interface Stats { total_users: number; verified_users: number; blocked_users: number; total_admins: number; }
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
@@ -19,70 +19,48 @@ const Dashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
   
-  // UI States
-  const [loadingId, setLoadingId] = useState<number | null>(null); 
+  const [manageUserId, setManageUserId] = useState<number | null>(null);
+  
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
-  const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
-
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
 
-  // 10-Minute Auto Logout Feature
+  const adminEmail = localStorage.getItem('admin_email');
+
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_email');
         navigate('/admin/login?error=Session+expired+due+to+inactivity');
-      }, 600000); 
+      }, 600000);
     };
     const events = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
     events.forEach(event => window.addEventListener(event, resetTimer));
     resetTimer();
-
-    return () => {
-      clearTimeout(timeoutId);
-      events.forEach(event => window.removeEventListener(event, resetTimer));
-    };
+    return () => { clearTimeout(timeoutId); events.forEach(event => window.removeEventListener(event, resetTimer)); };
   }, [navigate]);
 
-  // Handle Authentication & JWT
   useEffect(() => {
     const urlEmail = searchParams.get('email');
-    const urlToken = searchParams.get('token');
-    
-    // If coming from Google Login
-    if (urlEmail && urlToken) {
+    if (urlEmail) {
       localStorage.setItem('admin_email', urlEmail);
-      localStorage.setItem('admin_token', urlToken);
       navigate('/admin/dashboard', { replace: true });
       return;
     }
-
-    const currentToken = localStorage.getItem('admin_token');
-    if (!currentToken) { 
-      navigate('/admin/login'); 
-      return; 
-    }
-    
+    if (!adminEmail) { navigate('/admin/login'); return; }
     fetchRole();
     fetchData();
-  }, [searchParams, navigate]);
+  }, [searchParams, adminEmail, navigate]);
 
   const showNotification = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 3500);
   };
 
-  const getHeaders = () => {
-    const token = localStorage.getItem('admin_token');
-    return { 
-      'Content-Type': 'application/json', 
-      'Authorization': token ? `Bearer ${token}` : '' 
-    };
-  };
+  const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-email': adminEmail || '' });
 
   const fetchRole = async () => {
     try {
@@ -91,7 +69,6 @@ const Dashboard = () => {
         const data = await response.json();
         setRole(data.role || 'admin');
       } else if (response.status === 401) {
-        localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_email');
         navigate('/admin/login');
       }
@@ -119,23 +96,19 @@ const Dashboard = () => {
     (u.email || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleUserAction = async (action: 'approve' | 'block', tgId: number) => {
-    setLoadingId(tgId);
+  const updatePermissions = async (tgId: number, is_verified: boolean, ai_allowed: boolean, voice_allowed: boolean, block_days: number) => {
     try {
-      if (action === 'approve') {
-        const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { method: 'POST', headers: getHeaders() }); 
-        if(res.ok) { showNotification('User Authorized!', 'success'); await fetchData(); }
-        else { const data = await res.json(); showNotification(data.detail || 'Failed to authorize', 'error'); }
-      } else {
-        const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=Blocked+by+admin`, { method: 'POST', headers: getHeaders() }); 
-        if(res.ok) { showNotification('Access Revoked!', 'success'); await fetchData(); }
-        else { const data = await res.json(); showNotification(data.detail || 'Failed to revoke', 'error'); }
+      const payload = { is_verified, ai_allowed, voice_allowed, block_days, reason: "Admin enforced restrictions" };
+      const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/permissions`, { 
+        method: 'POST', headers: getHeaders(), body: JSON.stringify(payload)
+      }); 
+      if(res.ok) { 
+        showNotification('Permissions updated successfully!', 'success'); 
+        setManageUserId(null);
+        fetchData(); 
       }
-    } catch (e) { 
-      showNotification('Network Error', 'error'); 
-    } finally {
-      setLoadingId(null);
-    }
+      else { const data = await res.json(); showNotification(data.detail || 'Failed to update', 'error'); }
+    } catch (e) { showNotification('Network Error', 'error'); }
   };
 
   const removeBlock = async (id: string) => { 
@@ -162,6 +135,11 @@ const Dashboard = () => {
     } catch (e) { showNotification('Network Error', 'error'); }
   };
 
+  const dismissBanner = () => {
+    localStorage.setItem('password_setup_dismissed', 'true');
+    setShowBanner(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
       <Navbar />
@@ -180,14 +158,14 @@ const Dashboard = () => {
               <Zap className="w-5 h-5 text-amber-300 shrink-0 hidden sm:block" />
               <p className="text-sm font-medium">
                 <strong className="font-bold mr-1">Want to login faster next time?</strong>
-                Set up a manual password in settings so you can bypass Google login.
+                Set up a manual password in settings.
               </p>
             </div>
             <div className="flex items-center gap-4 shrink-0 mt-2 sm:mt-0">
               <Link to="/admin/settings" className="bg-white text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider hover:bg-blue-50 transition-colors shadow-sm">
                 Setup Password
               </Link>
-              <button onClick={() => { localStorage.setItem('password_setup_dismissed', 'true'); setShowBanner(false); }} className="p-1 hover:bg-white/20 rounded-full transition-colors">
+              <button onClick={dismissBanner} className="p-1 hover:bg-white/20 rounded-full transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -243,7 +221,7 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* USERS VIEW (MOBILE RESPONSIVE CARDS) */}
+        {/* USERS VIEW (MOBILE RESPONSIVE CARDS WITH RESTRICTION UI) */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
@@ -263,43 +241,69 @@ const Dashboard = () => {
                 filteredUsers.map((user) => {
                   const displayName = user.first_name || user.username || 'Unknown User';
                   const displayChar = displayName.charAt(0).toUpperCase();
-                  const isBlocked = blocks.some(b => b.block_value === String(user.telegram_id));
+                  const userBlock = blocks.find(b => b.block_value === String(user.telegram_id));
+                  const isBlocked = !!userBlock;
                   const isActuallyVerified = user.is_verified && !isBlocked;
 
+                  // Dynamic States for Management UI
+                  const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
+                  const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
+                  const [tmpBlockDays, setTmpBlockDays] = useState(0);
+
                   return (
-                    <div key={user.telegram_id} className="bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between hover:shadow-md transition-all">
-                      <div>
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold text-lg uppercase shadow-inner shrink-0">
-                              {displayChar}
-                            </div>
-                            <div>
-                              <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{displayName}</h3>
-                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</p>
-                            </div>
+                    <div key={user.telegram_id} className={`bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col hover:shadow-md transition-all ${manageUserId === user.telegram_id ? 'ring-2 ring-blue-500' : ''}`}>
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold text-lg uppercase shadow-inner shrink-0">
+                            {displayChar}
                           </div>
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400'}`}>
-                            {isActuallyVerified ? 'Verified' : 'Revoked'}
-                          </span>
+                          <div>
+                            <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{displayName}</h3>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</p>
+                          </div>
                         </div>
-                        <div className="space-y-1 text-sm mb-4">
-                          <p className="flex justify-between"><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[150px]">{user.email || 'N/A'}</span></p>
-                          <p className="flex justify-between"><span className="text-slate-500">Joined:</span> <span className="font-medium text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
-                        </div>
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+                          {isActuallyVerified ? 'Verified' : 'Pending/Revoked'}
+                        </span>
+                      </div>
+                      <div className="space-y-1 text-sm mb-4">
+                        <p className="flex justify-between"><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[150px]">{user.email || 'N/A'}</span></p>
+                        <p className="flex justify-between"><span className="text-slate-500">Joined:</span> <span className="font-medium text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
                       </div>
                       
-                      <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto">
-                        {!isActuallyVerified ? (
-                          <button onClick={() => handleUserAction('approve', user.telegram_id)} disabled={loadingId === user.telegram_id} className="w-full bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm disabled:opacity-50 disabled:cursor-wait flex justify-center items-center gap-2">
-                            {loadingId === user.telegram_id ? 'Processing...' : 'Authorize Access'}
-                          </button>
-                        ) : (
-                          <button onClick={() => handleUserAction('block', user.telegram_id)} disabled={loadingId === user.telegram_id} className="w-full bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/30 py-2.5 rounded-xl font-bold hover:bg-red-600 hover:text-white dark:hover:bg-red-600 transition-all text-sm disabled:opacity-50 disabled:cursor-wait flex justify-center items-center gap-2">
-                            {loadingId === user.telegram_id ? 'Processing...' : 'Revoke Access'}
-                          </button>
-                        )}
-                      </div>
+                      {manageUserId === user.telegram_id ? (
+                        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2">
+                          <h4 className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Granular Permissions</h4>
+                          <div className="space-y-3 mb-4">
+                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span className="flex items-center gap-2"><BotOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
+                              <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+                            </label>
+                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span className="flex items-center gap-2"><MicOff className="w-4 h-4 text-slate-400"/> Allow Voice Notes</span>
+                              <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+                            </label>
+                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temporary Ban (Days)</span>
+                              <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md" />
+                            </label>
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <button onClick={() => updatePermissions(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save & Approve</button>
+                            <button onClick={() => updatePermissions(user.telegram_id, false, tmpAi, tmpVoice, tmpBlockDays)} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend' : 'Block entirely'}</button>
+                            <button onClick={() => setManageUserId(null)} className="px-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600"><X className="w-4 h-4"/></button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto flex gap-2">
+                          {!isActuallyVerified ? (
+                            <button onClick={() => updatePermissions(user.telegram_id, true, true, true, 0)} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve Fully</button>
+                          ) : (
+                            <button onClick={() => setManageUserId(user.telegram_id)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm flex items-center justify-center gap-2"><Settings2 className="w-4 h-4" /> Manage Access</button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -317,7 +321,7 @@ const Dashboard = () => {
             <div className="overflow-x-auto w-full">
               <table className="w-full text-left min-w-[700px]">
                 <thead className="bg-slate-50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                  <tr><th className="p-5 pl-8">Target Identity</th><th className="p-5">Block Reason</th><th className="p-5 pr-8 text-right">Actions</th></tr>
+                  <tr><th className="p-5 pl-8">Target Identity</th><th className="p-5">Block Reason & Expiry</th><th className="p-5 pr-8 text-right">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                   {blocks.length === 0 ? (
@@ -329,7 +333,10 @@ const Dashboard = () => {
                           <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-3 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{block.block_type || 'ID'}</span>
                           {block.block_value}
                         </td>
-                        <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">{block.reason || 'Security Policy Violation'}</td>
+                        <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">
+                          <div>{block.reason || 'Security Policy Violation'}</div>
+                          {block.expires_at && <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 font-bold">Unblocks on: {new Date(block.expires_at).toLocaleString()}</div>}
+                        </td>
                         <td className="p-5 pr-8 text-right">
                           <button onClick={() => removeBlock(block.id)} className="text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl hover:bg-slate-900 hover:text-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700">Lift Restriction</button>
                         </td>

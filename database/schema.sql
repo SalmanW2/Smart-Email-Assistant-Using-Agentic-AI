@@ -144,3 +144,12 @@ CREATE INDEX idx_conversation_summaries_date ON conversation_summaries(conversat
 CREATE INDEX idx_email_cache_telegram_id ON email_cache(telegram_id);
 CREATE INDEX idx_conversation_history_telegram_id ON conversation_history(telegram_id);
 CREATE INDEX idx_blocked_users_value ON blocked_users(block_value);
+
+-- 1. Users table mein admin restrictions ke naye columns add karna
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS ai_allowed BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE;
+
+-- 2. Blocked users table mein temporary suspension (Time-bound block) ke liye column add karna
+ALTER TABLE blocked_users
+ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
