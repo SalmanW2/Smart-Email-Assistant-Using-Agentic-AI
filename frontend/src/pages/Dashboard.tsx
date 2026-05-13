@@ -26,6 +26,30 @@ const Dashboard = () => {
 
   const adminEmail = localStorage.getItem('admin_email');
 
+  // 10-Minute Auto Logout Feature
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      // 10 minutes = 10 * 60 * 1000 = 600000 ms
+      timeoutId = setTimeout(() => {
+        localStorage.removeItem('admin_email');
+        navigate('/admin/login?error=Session+expired+due+to+inactivity');
+      }, 600000);
+    };
+
+    const events = ['mousemove', 'keydown', 'scroll', 'click'];
+    events.forEach(event => window.addEventListener(event, resetTimer));
+
+    resetTimer(); // Initialize timer
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, [navigate]);
+
   useEffect(() => {
     const urlEmail = searchParams.get('email');
     if (urlEmail) {
@@ -57,11 +81,8 @@ const Dashboard = () => {
         const data = await response.json();
         setRole(data.role || 'admin');
       } else if (response.status === 401) {
-        // FIX: Ab sirf 401 error par logout hoga. Agar server sleep hai toh logout nahi hoga.
         localStorage.removeItem('admin_email');
         navigate('/admin/login');
-      } else {
-        console.warn("Server might be sleeping. Retrying data fetch later.");
       }
     } catch (err) {
       console.error("Role check delayed or failed", err);
@@ -87,15 +108,18 @@ const Dashboard = () => {
 
   const filteredUsers = users.filter((u) => 
     (u.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (u.username || '').toLowerCase().includes(searchQuery.toLowerCase())
+    (u.username || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const approveUser = async (tgId: number) => { 
     try {
       const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/approve`, { method: 'POST', headers: getHeaders() }); 
       if(res.ok) { showNotification('User successfully authorized!'); fetchData(); }
-      else showNotification('Failed to authorize user', 'error');
+      else {
+        const data = await res.json();
+        showNotification(data.detail || 'Failed to authorize user', 'error');
+      }
     } catch (e) { showNotification('Network Error', 'error'); }
   };
 
@@ -103,7 +127,10 @@ const Dashboard = () => {
     try {
       const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { method: 'POST', headers: getHeaders() }); 
       if(res.ok) { showNotification('Access Revoked!', 'success'); fetchData(); }
-      else showNotification('Failed to revoke access', 'error');
+      else {
+        const data = await res.json();
+        showNotification(data.detail || 'Failed to revoke access', 'error');
+      }
     } catch (e) { showNotification('Network Error', 'error'); }
   };
 
@@ -236,14 +263,19 @@ const Dashboard = () => {
                   {filteredUsers.length === 0 ? (
                     <tr><td colSpan={4} className="p-10 text-center text-slate-500 dark:text-slate-400 font-medium">No users found.</td></tr>
                   ) : (
-                    filteredUsers.map((user) => (
+                    filteredUsers.map((user) => {
+                      // Logic for Username Display
+                      const displayName = user.first_name || user.username || 'Unknown User';
+                      const displayChar = displayName.charAt(0).toUpperCase();
+
+                      return (
                       <tr key={user.telegram_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                         <td className="p-5 pl-8 flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 dark:from-blue-900/50 dark:to-indigo-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold uppercase shadow-inner">
-                            {user.first_name ? user.first_name.charAt(0).toUpperCase() : 'U'}
+                            {displayChar}
                           </div>
                           <div>
-                            <div className="font-bold text-slate-900 dark:text-white">{user.first_name || 'Unknown'}</div>
+                            <div className="font-bold text-slate-900 dark:text-white">{displayName}</div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</div>
                             <div className="text-sm font-medium text-blue-600 dark:text-blue-400 mt-1">{user.email || 'No connected email'}</div>
                           </div>
@@ -257,7 +289,6 @@ const Dashboard = () => {
                           {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-5 pr-8 text-right">
-                          {/* FIX: Removed opacity-0 so buttons are always visible on mobile */}
                           {!user.is_verified ? (
                             <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-xl font-bold hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 transition-all text-sm shadow-sm border border-blue-200 dark:border-blue-500/30">Authorize</button>
                           ) : (
@@ -265,7 +296,7 @@ const Dashboard = () => {
                           )}
                         </td>
                       </tr>
-                    ))
+                    )})
                   )}
                 </tbody>
               </table>
