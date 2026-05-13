@@ -29,8 +29,8 @@ const AdminLogin = () => {
   const [loginError, setLoginError] = useState('');
 
   useEffect(() => {
-    const savedEmail = localStorage.getItem('admin_email');
-    if (savedEmail) navigate('/admin/dashboard');
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken) navigate('/admin/dashboard');
   }, [navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -45,7 +45,9 @@ const AdminLogin = () => {
         body: JSON.stringify({ email, password }),
       });
       if (response.ok) {
-        localStorage.setItem('admin_email', email);
+        const data = await response.json();
+        localStorage.setItem('admin_token', data.token); // Save JWT Token
+        localStorage.setItem('admin_email', data.email);
         navigate('/admin/dashboard');
       } else {
         const data = await response.json();
@@ -78,7 +80,7 @@ const AdminLogin = () => {
               <ShieldCheck className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Admin Portal</h1>
-            <p className="text-slate-500 dark:text-slate-400 font-medium mt-2">Secure access for authorized personnel.</p>
+            <p className="text-slate-500 dark:text-slate-400 font-medium mt-2">Secure JWT Authorized Access.</p>
           </div>
 
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-200 dark:border-slate-800 transition-colors">
@@ -117,7 +119,7 @@ const AdminLogin = () => {
                 disabled={loading} 
                 className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all disabled:opacity-50 shadow-lg hover:shadow-blue-500/30"
               >
-                {loading ? 'Verifying...' : 'Login Securely'}
+                {loading ? 'Authenticating...' : 'Login Securely'}
               </button>
             </form>
 
@@ -127,7 +129,6 @@ const AdminLogin = () => {
                 <div className="relative flex justify-center text-sm"><span className="px-4 bg-white dark:bg-slate-900 text-slate-400 font-bold uppercase tracking-widest">Or</span></div>
               </div>
 
-              {/* Informative Google Login Guidance */}
               <div className="mt-6 mb-4 p-4 bg-blue-50 dark:bg-blue-500/10 rounded-xl border border-blue-100 dark:border-blue-500/20 flex items-start gap-3">
                 <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs sm:text-sm font-medium text-blue-800 dark:text-blue-300">

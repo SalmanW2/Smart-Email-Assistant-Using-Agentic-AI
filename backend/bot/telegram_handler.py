@@ -124,14 +124,15 @@ class TelegramBotManager:
         elif update.message:
             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
-    # --- 100% SECURE OAUTH LINK (No TG ID in URL) ---
     async def request_secure_login(self, update: Update, user_id: int):
         state_uuid = await self.db.create_auth_session(user_id)
-        login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}"
+        # FASTAPI EXPECTS TELEGRAM ID, SO WE MUST INCLUDE IT
+        login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={user_id}"
         kb = [[InlineKeyboardButton("🔗 Securely Connect Google Workspace", url=login_url)]]
         text = "⚠️ *Authentication Required*\n\nYour profile is approved! Link your Gmail securely below."
         await self._send_or_edit(update, text, InlineKeyboardMarkup(kb))
 
+        
     # --- PAGINATION & RICH EMAIL READER ---
     async def show_paginated_emails(self, message_obj, query='is:unread', offset=0, user_id=None, is_search=False):
         try:

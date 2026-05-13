@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { KeyRound, ShieldCheck, AlertCircle } from 'lucide-react';
+import { KeyRound, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
 const Settings = () => {
   const navigate = useNavigate();
   const adminEmail = localStorage.getItem('admin_email');
+  const adminToken = localStorage.getItem('admin_token'); // JWT Token
   
   // States
   const [password, setPassword] = useState('');
@@ -18,8 +19,8 @@ const Settings = () => {
   const [msg, setMsg] = useState({ text: '', type: '' });
 
   useEffect(() => {
-    if (!adminEmail) navigate('/admin/login');
-  }, [adminEmail, navigate]);
+    if (!adminToken) navigate('/admin/login');
+  }, [adminToken, navigate]);
 
   // Live Password Validation
   const validatePassword = (pass: string) => {
@@ -36,7 +37,6 @@ const Settings = () => {
     setPassError(validatePassword(val));
   };
 
-  // Check mismatches and form validity
   const isMismatch = confirmPassword.length > 0 && password !== confirmPassword;
   const isInvalid = !!passError || isMismatch || !password || !confirmPassword;
 
@@ -52,7 +52,7 @@ const Settings = () => {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-admin-email': adminEmail || ''
+          'Authorization': adminToken ? `Bearer ${adminToken}` : '' // FIXED: JWT Auth
         },
         body: JSON.stringify({ email: adminEmail, password }),
       });
@@ -97,7 +97,7 @@ const Settings = () => {
 
           {msg.text && (
             <div className={`p-4 rounded-2xl mb-8 flex items-center gap-3 text-sm font-bold border animate-in fade-in duration-300 ${msg.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20'}`}>
-              {msg.type === 'success' ? <ShieldCheck className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+              {msg.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
               {msg.text}
             </div>
           )}

@@ -10,7 +10,7 @@ supabase>=2.3.0
 # Telegram Bot
 python-telegram-bot[job-queue]>=22.7.0
 
-# AI and Google APIs (Updated to new SDK)
+# AI and Google APIs
 google-genai>=0.5.0
 google-auth>=2.20.0
 google-auth-oauthlib>=1.0.0
@@ -30,12 +30,7 @@ cachetools>=5.3.0
 python-multipart>=0.0.18
 aiofiles>=24.1.0
 python-dotenv>=1.0.1
-
-# Security & Auth Handling
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-bcrypt>=4.0.0
-cryptography>=44.0.0
-
-# Critical Fixes
 email-validator
+
+# Security & Auth Handling (Clean & Native)
+PyJWT
