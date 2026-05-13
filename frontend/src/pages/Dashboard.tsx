@@ -27,7 +27,6 @@ const Dashboard = () => {
   const adminEmail = localStorage.getItem('admin_email');
 
   useEffect(() => {
-    // URL Check
     const urlEmail = searchParams.get('email');
     if (urlEmail) {
       localStorage.setItem('admin_email', urlEmail);
@@ -57,10 +56,12 @@ const Dashboard = () => {
       if (response.ok) {
         const data = await response.json();
         setRole(data.role || 'admin');
-      } else if (response.status === 401 || response.status === 403) {
-        // FIX: Ab sirf 401/403 par logout hoga. Network error par crash nahi hoga.
+      } else if (response.status === 401) {
+        // FIX: Ab sirf 401 error par logout hoga. Agar server sleep hai toh logout nahi hoga.
         localStorage.removeItem('admin_email');
         navigate('/admin/login');
+      } else {
+        console.warn("Server might be sleeping. Retrying data fetch later.");
       }
     } catch (err) {
       console.error("Role check delayed or failed", err);
@@ -84,7 +85,6 @@ const Dashboard = () => {
     }
   };
 
-  // FIX: Bulletproof filter taake null string par crash na ho
   const filteredUsers = users.filter((u) => 
     (u.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
     (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -102,8 +102,8 @@ const Dashboard = () => {
   const blockUser = async (tgId: number, reason: string) => { 
     try {
       const res = await fetch(`${backendUrl}/api/admin/users/${tgId}/block?reason=${encodeURIComponent(reason)}`, { method: 'POST', headers: getHeaders() }); 
-      if(res.ok) { showNotification('User blocked and moved to Blocklist!', 'success'); fetchData(); }
-      else showNotification('Failed to block user', 'error');
+      if(res.ok) { showNotification('Access Revoked!', 'success'); fetchData(); }
+      else showNotification('Failed to revoke access', 'error');
     } catch (e) { showNotification('Network Error', 'error'); }
   };
 
@@ -157,7 +157,7 @@ const Dashboard = () => {
                 Set up a manual password in settings so you can bypass Google login.
               </p>
             </div>
-            <div className="flex items-center gap-4 shrink-0">
+            <div className="flex items-center gap-4 shrink-0 mt-2 sm:mt-0">
               <Link to="/admin/settings" className="bg-white text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider hover:bg-blue-50 transition-colors shadow-sm">
                 Setup Password
               </Link>
@@ -257,10 +257,11 @@ const Dashboard = () => {
                           {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-5 pr-8 text-right">
+                          {/* FIX: Removed opacity-0 so buttons are always visible on mobile */}
                           {!user.is_verified ? (
-                            <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-5 py-2.5 rounded-xl font-bold hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 transition-all text-sm">Authorize</button>
+                            <button onClick={() => approveUser(user.telegram_id)} className="bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-xl font-bold hover:bg-blue-600 hover:text-white dark:hover:bg-blue-600 transition-all text-sm shadow-sm border border-blue-200 dark:border-blue-500/30">Authorize</button>
                           ) : (
-                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 px-5 py-2.5 rounded-xl font-bold hover:bg-red-600 hover:text-white dark:hover:bg-red-600 transition-all text-sm opacity-0 group-hover:opacity-100 focus:opacity-100">Revoke Access</button>
+                            <button onClick={() => blockUser(user.telegram_id, 'Blocked by admin')} className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 px-4 py-2 rounded-xl font-bold hover:bg-red-600 hover:text-white dark:hover:bg-red-600 transition-all text-sm shadow-sm border border-red-200 dark:border-red-500/30">Revoke Access</button>
                           )}
                         </td>
                       </tr>
@@ -295,7 +296,7 @@ const Dashboard = () => {
                         </td>
                         <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">{block.reason || 'Security Policy Violation'}</td>
                         <td className="p-5 pr-8 text-right">
-                          <button onClick={() => removeBlock(block.id)} className="text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl hover:bg-slate-900 hover:text-white dark:hover:bg-slate-700 transition-colors">Lift Restriction</button>
+                          <button onClick={() => removeBlock(block.id)} className="text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl hover:bg-slate-900 hover:text-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700">Lift Restriction</button>
                         </td>
                       </tr>
                     ))
@@ -345,7 +346,7 @@ const Dashboard = () => {
                         </td>
                         <td className="p-5 pr-8 text-right">
                           {admin.role !== 'super_admin' ? (
-                            <button onClick={() => removeAdmin(admin.id)} className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-2 text-sm font-bold">
+                            <button onClick={() => removeAdmin(admin.id)} className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors inline-flex items-center gap-2 text-sm font-bold border border-transparent dark:hover:border-red-500/30">
                               <Trash2 className="w-5 h-5" />
                             </button>
                           ) : (

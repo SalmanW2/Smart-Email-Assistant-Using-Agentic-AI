@@ -18,17 +18,20 @@ class AddAdminPayload(BaseModel):
     email: EmailStr
     role: str = "admin"
 
-# --- Auth Dependency ---
+# --- Auth Dependency (No Auto-Logout on Timeout) ---
 async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
     if not x_admin_email:
         raise HTTPException(status_code=401, detail="Missing admin header")
     try:
         admins = await db_manager.get_admin_users()
-    except Exception:
-        admins = []
+    except Exception as e:
+        # Agar DB sleep ho, toh 500 error do taake frontend logout na kare
+        raise HTTPException(status_code=500, detail="Database timeout/error")
+        
     admin = next((entry for entry in admins if entry.get("email") == x_admin_email), None)
     if not admin:
-        raise HTTPException(status_code=403, detail="Not authorized")
+        # Sirf 401 par frontend logout karega
+        raise HTTPException(status_code=401, detail="Not authorized") 
     return admin
 
 @router.delete("/blocks/{id_or_telegram_id}")
