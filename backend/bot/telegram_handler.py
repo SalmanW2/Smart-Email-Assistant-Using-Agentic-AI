@@ -611,9 +611,20 @@ class TelegramBotManager:
                                 self.notified_emails.add(msg_id)
                                 meta = await self.gmail.get_email_metadata(uid, msg_id)
                                 if "error" not in meta:
-                                    # FIX: Remove markdown triggers from sender and subject to prevent crash
                                     safe_sender = meta.get('sender', '').replace('*', '').replace('_', '').replace('`', '').replace('[', '')
                                     safe_subject = meta.get('subject', '').replace('*', '').replace('_', '').replace('`', '').replace('[', '')
+                                    
+                                    # NEW: Write to email_cache table in Supabase
+                                    from config import settings
+                                    await self.memory.cache_email(
+                                        telegram_id=uid,
+                                        gmail_message_id=msg_id,
+                                        sender=safe_sender,
+                                        sender_email=safe_sender, 
+                                        subject=safe_subject,
+                                        preview="Cached via background job",
+                                        received_at=settings.get_utc_now()
+                                    )
                                     
                                     text = f"🔔 *New Email Received*\n\n*From:* {safe_sender}\n*Subject:* {safe_subject}"
                                     kb = [[InlineKeyboardButton("🤖 Summary", callback_data=f"sum_{msg_id}")], [InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_main")]]

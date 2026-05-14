@@ -33,54 +33,48 @@ class AIEngine:
         else:
             return "❌ *System Error:* Unable to process the request at this moment. Please try again later."
 
-    # ==========================================
+# ==========================================
     # 🛠️ AGENTIC TOOLS (Functions Gemini Can Call)
     # ==========================================
     
     def search_gmail(self, query: str, max_results: int = 5) -> str:
         """Searches the user's Gmail inbox. Use standard Gmail search operators like 'is:unread', 'from:name', or keywords."""
-        try:
-            service = self.gmail_client.get_service()
-            if not service: return "Error: Gmail not connected."
-            results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
-            messages = results.get('messages', [])
-            if not messages: return "No emails found for this query."
+        if not self.current_user_id: return "Error: User context missing."
+        
+        import asyncio
+        async def _search():
+            emails = await self.gmail_client.get_emails(self.current_user_id, query=query, max_results=max_results)
+            if not emails: return "No emails found for this query."
             
             output = []
-            for m in messages:
-                meta = self.gmail_client.get_email_metadata(m['id'])
-                output.append(f"ID: {m['id']} | From: {meta['sender']} | Subject: {meta['subject']}")
-            return "\n".join(output)
-        except Exception as e:
-            return f"Search failed: {e}"
+            for m in emails:
+                meta = await self.gmail_client.get_email_metadata(self.current_user_id, m['id'])
+                if "error" not in meta:
+                    output.append(f"ID: {m['id']} | From: {meta.get('sender')} | Subject: {meta.get('subject')}")
+            return "\n".join(output) if output else "Metadata could not be retrieved."
+            
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_search())
 
     def read_gmail_message(self, message_id: str) -> str:
         """Reads the full body content of a specific email using its ID."""
-        try:
-            return self.gmail_client.get_full_body(message_id)
-        except Exception as e:
-            return f"Read failed: {e}"
+        if not self.current_user_id: return "Error: User context missing."
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self.gmail_client.read_full_email(self.current_user_id, message_id))
 
     def draft_and_send_email(self, to_email: str, subject: str, body: str) -> str:
         """Sends an email. Call this when the user asks to send or reply to an email."""
-        try:
-            if not self.current_user_id:
-                return "Error: User context missing."
-            
-            # Safe async execution from sync tool thread
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-            res = loop.run_until_complete(
-                self.gmail_client.send_email(self.current_user_id, to_email, subject, body, [])
-            )
-            return f"Email sent successfully: {res}"
-        except Exception as e:
-            return f"Failed to send email: {e}"
+        if not self.current_user_id: return "Error: User context missing."
+        
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        res = loop.run_until_complete(self.gmail_client.send_email(self.current_user_id, to_email, subject, body, []))
+        return f"Email sent successfully: {res}"
 
     # ==========================================
     # CORE AI LOGIC
