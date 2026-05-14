@@ -22,8 +22,16 @@ class AIEngine:
         self.current_user_id = None # Context for tools
 
     def _parse_error(self, e: Exception) -> str:
-        logger.error(f"AI Engine Runtime Error: {str(e)}")
-        return f"System Error: {str(e)}"
+        err_msg = str(e)
+        logger.error(f"AI Engine Runtime Error: {err_msg}")
+        
+        # Smart Error Handling for Better UX
+        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+            return "⏳ *System Limit Reached:* AI processing quota is temporarily exhausted. Please try again later."
+        elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+            return "🔌 *Server Overload:* AI servers are currently experiencing high traffic. Please retry in 10-20 seconds."
+        else:
+            return "❌ *System Error:* Unable to process the request at this moment. Please try again later."
 
     # ==========================================
     # 🛠️ AGENTIC TOOLS (Functions Gemini Can Call)
@@ -68,7 +76,31 @@ class AIEngine:
     # ==========================================
 
     async def transcribe_audio(self, file_path: str) -> str:
-        """Transcribes voice notes using the LLM's multi-modal capabilities."""
+        """Transcribes voice notes using Groq Whisper (Primary) or Gemini (Fallback)."""
+        # --- Primary: Groq Whisper API (Fast & 0 Gemini Quota) ---
+        if settings.GROQ_API_KEY:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30) as client:
+                    with open(file_path, "rb") as f:
+                        files = {"file": (file_path, f, "audio/ogg")}
+                        data = {"model": "whisper-large-v3"}
+                        headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
+                        response = await client.post(
+                            "https://api.groq.com/openai/v1/audio/transcriptions",
+                            headers=headers,
+                            data=data,
+                            files=files
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        text = result.get("text", "").strip()
+                        if text:
+                            return text
+            except Exception as e:
+                logger.warning(f"Groq STT failed, falling back to Gemini: {e}")
+
+        # --- Fallback: Gemini Multi-modal ---
         try:
             sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
             prompt = (

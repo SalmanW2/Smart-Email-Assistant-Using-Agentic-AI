@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     GOOGLE_TTS_API_KEY: str | None = None
     GOOGLE_OAUTH_CLIENT_ID: str | None = None
     GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
+    GROQ_API_KEY: str | None = None
     
     # --- MISSING VARIABLES ADDED HERE ---
     MAX_CONTEXT_MESSAGES: int = 5
