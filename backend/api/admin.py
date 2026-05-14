@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 from db.models import db_manager
 from typing import Dict, List, Optional
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -18,6 +19,13 @@ class AddAdminPayload(BaseModel):
     email: EmailStr
     role: str = "admin"
 
+class PermissionPayload(BaseModel):
+    is_verified: bool
+    ai_allowed: bool
+    voice_allowed: bool
+    block_days: int = 0  # 0 means permanent if blocked
+    reason: str = "Blocked by Admin"
+
 async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
     if not x_admin_email:
         raise HTTPException(status_code=401, detail="Missing admin header")
@@ -33,29 +41,6 @@ async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
     if not admin:
         raise HTTPException(status_code=401, detail="Not authorized") 
     return admin
-
-@router.delete("/blocks/{id_or_telegram_id}")
-async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
-    """Remove a user from the blocklist correctly."""
-    try:
-        # Check if input is numeric (Telegram ID)
-        if id_or_telegram_id.isdigit():
-            success = await db_manager.unblock_user(int(id_or_telegram_id))
-        else:
-            # It's a record UUID from the table. 
-            # We delete it directly from the blocked_users table using the database client.
-            # Assuming db_manager has access to the client.
-            from db.models import supabase
-            res = supabase.table("blocked_users").delete().eq("id", id_or_telegram_id).execute()
-            success = len(res.data) >= 0 # If no error, it's a success
-            
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to unblock user")
-            
-        return {"message": "User unblocked"}
-    except Exception as e:
-        print(f"Unblock error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Authentication Endpoints ---
 
@@ -114,15 +99,6 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
 async def get_users(admin: Dict = Depends(get_current_admin)):
     """List all registered bot users."""
     return await db_manager.get_all_users() or []
-
-from datetime import datetime, timedelta
-
-class PermissionPayload(BaseModel):
-    is_verified: bool
-    ai_allowed: bool
-    voice_allowed: bool
-    block_days: int = 0  # 0 means permanent if blocked
-    reason: str = "Blocked by Admin"
 
 @router.post("/users/{telegram_id}/permissions")
 async def update_user_permissions(telegram_id: int, payload: PermissionPayload, admin: Dict = Depends(get_current_admin)):
