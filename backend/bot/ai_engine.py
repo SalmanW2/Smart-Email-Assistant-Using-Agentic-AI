@@ -62,14 +62,25 @@ class AIEngine:
             return f"Read failed: {e}"
 
     def draft_and_send_email(self, to_email: str, subject: str, body: str) -> str:
-        """Queues an email to be sent. Call this when the user asks to send or reply to an email."""
+        """Sends an email. Call this when the user asks to send or reply to an email."""
         try:
             if not self.current_user_id:
                 return "Error: User context missing."
-            res = self.gmail_client.queue_ai_email(to_email, subject, body, str(self.current_user_id))
-            return res
+            
+            # Safe async execution from sync tool thread
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            res = loop.run_until_complete(
+                self.gmail_client.send_email(self.current_user_id, to_email, subject, body, [])
+            )
+            return f"Email sent successfully: {res}"
         except Exception as e:
-            return f"Failed to queue email: {e}"
+            return f"Failed to send email: {e}"
 
     # ==========================================
     # CORE AI LOGIC

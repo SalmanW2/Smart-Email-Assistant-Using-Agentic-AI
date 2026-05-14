@@ -383,8 +383,13 @@ class TelegramBotManager:
                 await query.edit_message_text("⏳ Generating AI Summary...")
                 body = await self.gmail.read_full_email(user_id, m_id)
                 summary = await self.ai_engine.agent_chat(f"Strictly summarize this email: {body[:3000]}", user_id)
-                kb = [[InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}_{nav_context}")], self.get_back_button(nav_context, nav_offset)]
+                kb = [
+                    [InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{m_id}_{nav_context}")],
+                    [InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}_{nav_context}")], 
+                    self.get_back_button(nav_context, nav_offset)
+                ]
                 await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+                
 
             elif action == "full":
                 await self.render_full_email(query, m_id, user_id, nav_context, nav_offset)
@@ -417,7 +422,6 @@ class TelegramBotManager:
                 await query.edit_message_text("⏳ Fetching attachments...")
                 file_paths = await self.gmail.get_attachments(user_id, m_id)
                 back_to_email_kb = [[InlineKeyboardButton("🔙 Back to Email", callback_data=f"full_{m_id}_{nav_context}")]]
-                
                 if not file_paths:
                     await query.edit_message_text("📭 *No attachments found.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
                 else:
@@ -427,6 +431,26 @@ class TelegramBotManager:
                             await context.bot.send_document(chat_id=user_id, document=f)
                         os.remove(fp)
                     await query.edit_message_text("✅ Attachments sent successfully!", reply_markup=InlineKeyboardMarkup(back_to_email_kb))
+            elif action == "tts":
+                await query.answer("🔊 Generating Audio...")
+                msg_type = parts[1] # "sum" or "full"
+                actual_m_id = parts[2]
+                
+                body = await self.gmail.read_full_email(user_id, actual_m_id)
+                text_to_speak = body[:1000] # Fallback to first 1000 chars
+                
+                if msg_type == "sum":
+                    # Generate a fresh concise summary specifically for audio
+                    text_to_speak = await self.ai_engine.agent_chat(f"Strictly summarize this email in 3 short sentences for audio playback: {body[:3000]}", user_id)
+                
+                # Use your existing TTS voice handler
+                audio_path = await self.voice.synthesize(text_to_speak)
+                if audio_path and os.path.exists(audio_path):
+                    with open(audio_path, 'rb') as audio:
+                        await context.bot.send_voice(chat_id=user_id, voice=audio)
+                    os.remove(audio_path)
+                else:
+                    await context.bot.send_message(chat_id=user_id, text="❌ Failed to generate audio.")
 
     # --- TEXT & ATTACHMENT HANDLERS ---
     async def send_attachment_dashboard(self, message_obj, user_id):
