@@ -20,14 +20,14 @@ const Dashboard = () => {
   const [role, setRole] = useState<string>('');
   
   const [manageUserId, setManageUserId] = useState<number | null>(null);
-  
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+  
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
+  const [adminEmail, setAdminEmail] = useState(localStorage.getItem('admin_email') || '');
 
-  const adminEmail = localStorage.getItem('admin_email');
-
+  // 10-Minute Auto Logout Feature
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     const resetTimer = () => {
@@ -43,24 +43,35 @@ const Dashboard = () => {
     return () => { clearTimeout(timeoutId); events.forEach(event => window.removeEventListener(event, resetTimer)); };
   }, [navigate]);
 
+  // FIX: Loop Prevention & Smart URL Parsing
   useEffect(() => {
     const urlEmail = searchParams.get('email');
     if (urlEmail) {
-      localStorage.setItem('admin_email', urlEmail);
-      navigate('/admin/dashboard', { replace: true });
-      return;
+      const cleanEmail = urlEmail.toLowerCase().trim();
+      localStorage.setItem('admin_email', cleanEmail);
+      setAdminEmail(cleanEmail);
+      
+      // Remove email from URL without reloading the page to stop loops
+      searchParams.delete('email');
+      setSearchParams(searchParams, { replace: true });
+    } else if (!adminEmail) {
+      navigate('/admin/login');
     }
-    if (!adminEmail) { navigate('/admin/login'); return; }
-    fetchRole();
-    fetchData();
-  }, [searchParams, adminEmail, navigate]);
+  }, [searchParams, navigate, setSearchParams, adminEmail]);
+
+  useEffect(() => {
+    if (adminEmail) {
+      fetchRole();
+      fetchData();
+    }
+  }, [adminEmail]);
 
   const showNotification = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-email': adminEmail || '' });
+  const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-email': adminEmail });
 
   const fetchRole = async () => {
     try {
@@ -70,7 +81,7 @@ const Dashboard = () => {
         setRole(data.role || 'admin');
       } else if (response.status === 401) {
         localStorage.removeItem('admin_email');
-        navigate('/admin/login');
+        navigate('/admin/login?error=Unauthorized+Access');
       }
     } catch (err) { console.error("Role check delayed or failed", err); }
   };
@@ -139,6 +150,8 @@ const Dashboard = () => {
     localStorage.setItem('password_setup_dismissed', 'true');
     setShowBanner(false);
   };
+
+  if (!adminEmail) return null; // Wait for redirect if no email
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
@@ -221,7 +234,7 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* USERS VIEW (MOBILE RESPONSIVE CARDS WITH RESTRICTION UI) */}
+        {/* USERS VIEW (Cards Design for Desktop & Mobile) */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
@@ -245,7 +258,6 @@ const Dashboard = () => {
                   const isBlocked = !!userBlock;
                   const isActuallyVerified = user.is_verified && !isBlocked;
 
-                  // Dynamic States for Management UI
                   const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
                   const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
                   const [tmpBlockDays, setTmpBlockDays] = useState(0);
