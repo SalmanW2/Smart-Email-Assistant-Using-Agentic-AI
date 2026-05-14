@@ -267,7 +267,29 @@ class TelegramBotManager:
             return
             
         elif data == "menu_settings":
-            await self.settings_command(update, context)
+            db_user = await self.db.get_user(int(user_id))
+            voice_pref = db_user.get("voice_preference", "text") if db_user else "text"
+            
+            next_pref = "voice" if voice_pref == "text" else "both" if voice_pref == "voice" else "text"
+            pref_emoji = "📝 Text Only" if voice_pref == "text" else "🗣️ Voice Only" if voice_pref == "voice" else "🔊 Text & Voice"
+            
+            kb = [
+                [InlineKeyboardButton(f"🎙️ Reply Mode: {pref_emoji}", callback_data=f"set_voice_{next_pref}")],
+                [InlineKeyboardButton("🚪 Logout Account", callback_data="action_logout")],
+                self.get_back_button()
+            ]
+            await query.edit_message_text("⚙️ *Settings*\n\nConfigure your assistant's behavior.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            
+        elif data.startswith("set_voice_"):
+            new_pref = data.replace("set_voice_", "")
+            try:
+                await self.db.db.run(lambda: self.db.db.client.table("users").update({"voice_preference": new_pref}).eq("telegram_id", int(user_id)).execute())
+            except Exception as e:
+                logger.error(f"Failed to update voice pref: {e}")
+            
+            # Refresh Settings Menu
+            query.data = "menu_settings"
+            await self.handle_button_actions(update, context)
             return
 
         elif data == "revoke_access":

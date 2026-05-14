@@ -19,10 +19,53 @@ class AIEngine:
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.model_name = "gemini-2.5-flash"
         self.active_chats = {}
+        self.current_user_id = None # Context for tools
 
     def _parse_error(self, e: Exception) -> str:
         logger.error(f"AI Engine Runtime Error: {str(e)}")
         return f"System Error: {str(e)}"
+
+    # ==========================================
+    # 🛠️ AGENTIC TOOLS (Functions Gemini Can Call)
+    # ==========================================
+    
+    def search_gmail(self, query: str, max_results: int = 5) -> str:
+        """Searches the user's Gmail inbox. Use standard Gmail search operators like 'is:unread', 'from:name', or keywords."""
+        try:
+            service = self.gmail_client.get_service()
+            if not service: return "Error: Gmail not connected."
+            results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
+            messages = results.get('messages', [])
+            if not messages: return "No emails found for this query."
+            
+            output = []
+            for m in messages:
+                meta = self.gmail_client.get_email_metadata(m['id'])
+                output.append(f"ID: {m['id']} | From: {meta['sender']} | Subject: {meta['subject']}")
+            return "\n".join(output)
+        except Exception as e:
+            return f"Search failed: {e}"
+
+    def read_gmail_message(self, message_id: str) -> str:
+        """Reads the full body content of a specific email using its ID."""
+        try:
+            return self.gmail_client.get_full_body(message_id)
+        except Exception as e:
+            return f"Read failed: {e}"
+
+    def draft_and_send_email(self, to_email: str, subject: str, body: str) -> str:
+        """Queues an email to be sent. Call this when the user asks to send or reply to an email."""
+        try:
+            if not self.current_user_id:
+                return "Error: User context missing."
+            res = self.gmail_client.queue_ai_email(to_email, subject, body, str(self.current_user_id))
+            return res
+        except Exception as e:
+            return f"Failed to queue email: {e}"
+
+    # ==========================================
+    # CORE AI LOGIC
+    # ==========================================
 
     async def transcribe_audio(self, file_path: str) -> str:
         """Transcribes voice notes using the LLM's multi-modal capabilities."""
@@ -42,82 +85,52 @@ class AIEngine:
         except Exception as e:
             return self._parse_error(e)
 
-    async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
-        """Analyzes uploaded documents (PDFs, Images) using Vision/Multi-modal capabilities."""
-        try:
-            prompt = f"Summarize or accurately answer the following request regarding this document:\n{query}"
-            
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                system_instruction="You are a highly capable document analysis assistant. Provide accurate, professional answers."
-            )
-            
-            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-            
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model_name,
-                contents=[sample_file, prompt],
-                config=config
-            )
-            return response.text
-        except Exception as e:
-            return self._parse_error(e)
-
-    async def _get_agent_config(self, user_id: int) -> types.GenerateContentConfig:
-        """Constructs the strict behavior guidelines and injects Smart Memory & Contacts."""
-        
-        # 1. Get Conversation Memory
-        memory_prompt = await self.memory.build_memory_prompt(user_id)
-        
-        # 2. Get Saved Contacts from Database
-        try:
-            from db.models import db_manager
-            res = await db_manager.db.run(lambda: db_manager.db.client.table("contacts").select("*").eq("telegram_id", user_id).execute())
-            contacts = getattr(res, 'data', [])
-            contact_list = "\n".join([f"- {c['contact_alias']} : {c['email_address']}" for c in contacts])
-        except:
-            contact_list = "No saved contacts."
-
+    def _get_agent_config(self, memory_prompt: str) -> types.GenerateContentConfig:
+        """Constructs the strict behavior guidelines and equips the Agent with Tools."""
         system_instruction = (
-            "You are a highly professional, enterprise-grade AI Email Assistant. "
-            "You manage the user's Gmail. "
+            "You are an Agentic AI Email Assistant. YOU HAVE TOOLS TO INTERACT WITH GMAIL.\n"
             "CRITICAL RULES:\n"
-            "1. COMPOSING: Always confirm the 'To' address, 'Subject', and 'Body' before sending.\n"
-            "2. CONCISENESS: Keep responses extremely concise and use clean Markdown formatting.\n\n"
-            "=== YOUR SMART MEMORY ===\n"
-            f"{memory_prompt}\n\n"
-            "=== SAVED CONTACTS ===\n"
-            "Use these emails if the user mentions these names:\n"
-            f"{contact_list}"
+            "1. INBOX ACCESS: You CAN search and read emails. If the user asks to check, list, read, or search emails, YOU MUST call the `search_gmail` tool first, then optionally `read_gmail_message`.\n"
+            "2. SENDING: To send or reply to an email, YOU MUST call the `draft_and_send_email` tool.\n"
+            "3. NEVER SAY 'I cannot access your inbox'. You are a fully integrated Agent. Use your tools!\n"
+            "4. CONCISENESS: Keep conversational responses extremely brief and use Markdown.\n"
+            "5. CONTACTS: Rely on the provided user memory to resolve names to email addresses.\n\n"
+            f"{memory_prompt}"
         )
 
         return types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=0.2
+            temperature=0.2,
+            tools=[self.search_gmail, self.read_gmail_message, self.draft_and_send_email]
         )
 
     async def agent_chat(self, text: str, user_id: int) -> str:
+        """Main interaction pipeline. Handles memory context, chat execution, and logging."""
         if not self.client: return "Error: AI System configuration missing."
         
+        self.current_user_id = user_id # Set context for tools
+        
         try:
-            # 1. Background Task: Learn new contacts from the message
+            # 1. Proactively scan for and save new contacts
             asyncio.create_task(self.contact_manager.extract_contacts_from_text(user_id, text))
 
-            # 2. Setup or update the chat session with latest memory
+            # 2. Rebuild intelligent memory context to save tokens
+            memory_prompt = await self.memory.build_memory_prompt(user_id)
+
+            # 3. Setup or update the session
             chat_id = str(user_id)
             if chat_id not in self.active_chats:
-                config = await self._get_agent_config(user_id)
+                config = self._get_agent_config(memory_prompt)
                 self.active_chats[chat_id] = self.client.chats.create(
                     model=self.model_name,
                     config=config
                 )
 
-            # 3. Get AI Response
+            # 4. Generate the response (Gemini will automatically call tools if needed!)
             response = await asyncio.to_thread(self.active_chats[chat_id].send_message, text)
             bot_response = response.text
 
-            # 4. Log interaction
+            # 5. Log the interaction to Supabase Memory Table
             await self.memory.log_conversation(
                 telegram_id=user_id, 
                 user_message=text, 
@@ -125,7 +138,7 @@ class AIEngine:
                 interaction_type="chat"
             )
 
-            # 5. Summarize if needed (Background task to save time)
+            # 6. Dynamically summarize memory if threshold is reached
             if await self.memory.should_generate_summary(user_id):
                 asyncio.create_task(self._generate_and_save_summary(user_id, text, bot_response))
 
@@ -133,40 +146,39 @@ class AIEngine:
 
         except Exception as e:
             if str(user_id) in self.active_chats:
-                del self.active_chats[str(user_id)]
+                del self.active_chats[str(user_id)]  # Reset corrupted sessions
             return self._parse_error(e)
 
     async def _generate_and_save_summary(self, user_id: int, last_user_msg: str, last_ai_msg: str) -> None:
+        """Summarizes recent chat activity into JSON and stores it to prevent token bloat."""
         try:
             prompt = (
-                "Analyze this interaction and generate a JSON summary for long-term memory.\n"
+                "Analyze this recent interaction and generate a JSON summary for long-term memory.\n"
                 "Format required:\n"
-                "{\n  \"summary_text\": \"Concise summary\",\n  \"key_facts\": [\"fact 1\"],\n  \"current_topic\": \"topic\"\n}\n\n"
+                "{\n  \"summary_text\": \"Concise summary of what occurred\",\n  \"key_facts\": [\"extracted fact 1\"],\n  \"email_addresses_mentioned\": [\"email@example.com\"],\n  \"current_topic\": \"Main topic\"\n}\n\n"
                 f"User: {last_user_msg}\nAI: {last_ai_msg}"
             )
-            
             response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model="gemini-2.5-flash-lite",
-                contents=prompt
+                self.client.models.generate_content, model="gemini-2.5-flash-lite", contents=prompt
             )
-            
             json_str = response.text.replace('```json', '').replace('```', '').strip()
             data = json.loads(json_str)
             
             await self.memory.save_conversation_summary(
-                telegram_id=user_id,
-                summary_text=data.get("summary_text", "Conversation summary."),
-                key_facts=data.get("key_facts", {}),
-                email_addresses=[],
-                current_topic=data.get("current_topic", "General"),
-                tokens_used=0,
-                message_count=10
+                telegram_id=user_id, summary_text=data.get("summary_text", "Conversation summary."),
+                key_facts=data.get("key_facts", {}), email_addresses=data.get("email_addresses_mentioned", []),
+                current_topic=data.get("current_topic", "General"), tokens_used=0, message_count=10
             )
-            
-            # Reset chat session to force context reload next time
-            if str(user_id) in self.active_chats:
-                del self.active_chats[str(user_id)]
-                
         except Exception as e:
-            logger.error(f"Summary Error: {e}")
+            logger.error(f"Memory Summary Engine Error: {e}")
+
+    async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
+        """Analyzes uploaded documents using Vision/Multi-modal capabilities."""
+        try:
+            prompt = f"Summarize or accurately answer the following request regarding this document:\n{query}"
+            config = types.GenerateContentConfig(temperature=0.2, system_instruction="You are a highly capable document analysis assistant.")
+            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
+            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, prompt], config=config)
+            return response.text
+        except Exception as e:
+            return self._parse_error(e)
