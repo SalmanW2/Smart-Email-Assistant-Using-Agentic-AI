@@ -90,7 +90,7 @@ class TelegramBotManager:
             return [InlineKeyboardButton("🔙 Back to Results", callback_data=f"page_read_{extra_data}")]
         return [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")]
 
-    # --- SECURITY GATE ---
+   # --- SECURITY GATE ---
     async def _check_user_access(self, user_id: int, first_name: str, username: str) -> dict:
         if await self.db.is_blocked("telegram", str(user_id)):
             return {"status": "blocked"}
@@ -100,6 +100,17 @@ class TelegramBotManager:
             email_placeholder = f"{username}@telegram.user" if username else None
             await self.db.create_user(user_id, email=email_placeholder, first_name=first_name, username=username)
             return {"status": "pending"}
+        else:
+            # BUG FIX: Unknown User Handle
+            current_name = db_user.get("first_name")
+            if (not current_name or current_name == "Unknown") and first_name:
+                try:
+                    await self.db.db.run(lambda: self.db.db.client.table("users").update({
+                        "first_name": first_name,
+                        "username": username
+                    }).eq("telegram_id", user_id).execute())
+                except Exception as e:
+                    logger.error(f"Failed to update user name: {e}")
             
         if not db_user.get("is_verified"): return {"status": "pending"}
         if not db_user.get("auth_token"): return {"status": "unauthenticated"}
