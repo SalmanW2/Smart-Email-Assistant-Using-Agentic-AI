@@ -7,13 +7,15 @@ from google.genai import types
 from config import settings
 from db.memory import memory_manager
 from bot.contact_manager import contact_manager
+from bot.gmail_client import GmailClient
 
 logger = logging.getLogger(__name__)
 
 class AIEngine:
     def __init__(self) -> None:
         self.memory = memory_manager
-        self.contacts = contact_manager
+        self.contact_manager = contact_manager
+        self.gmail_client = GmailClient()
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.model_name = "gemini-2.5-flash"
         self.active_chats = {}
@@ -23,7 +25,7 @@ class AIEngine:
         return f"System Error: {str(e)}"
 
     async def transcribe_audio(self, file_path: str) -> str:
-        """Transcribes voice notes using Gemini's multi-modal audio processing (0 RAM cost)."""
+        """Transcribes voice notes using the LLM's multi-modal capabilities."""
         try:
             sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
             prompt = (
@@ -37,6 +39,28 @@ class AIEngine:
                 contents=[sample_file, prompt]
             )
             return response.text.strip()
+        except Exception as e:
+            return self._parse_error(e)
+
+    async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
+        """Analyzes uploaded documents (PDFs, Images) using Vision/Multi-modal capabilities."""
+        try:
+            prompt = f"Summarize or accurately answer the following request regarding this document:\n{query}"
+            
+            config = types.GenerateContentConfig(
+                temperature=0.2,
+                system_instruction="You are a highly capable document analysis assistant. Provide accurate, professional answers."
+            )
+            
+            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
+            
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=[sample_file, prompt],
+                config=config
+            )
+            return response.text
         except Exception as e:
             return self._parse_error(e)
 
@@ -78,7 +102,7 @@ class AIEngine:
         
         try:
             # 1. Background Task: Learn new contacts from the message
-            asyncio.create_task(self.contacts.extract_contacts_from_text(user_id, text))
+            asyncio.create_task(self.contact_manager.extract_contacts_from_text(user_id, text))
 
             # 2. Setup or update the chat session with latest memory
             chat_id = str(user_id)

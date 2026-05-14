@@ -12,6 +12,15 @@ class ContactManager:
         self.db = db_manager
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+    async def get_contacts(self, telegram_id: int):
+        """Fetch all saved contacts for a user."""
+        try:
+            res = await self.db.db.run(lambda: self.db.db.client.table("contacts").select("*").eq("telegram_id", telegram_id).execute())
+            return getattr(res, 'data', [])
+        except Exception as e:
+            logger.error(f"Error fetching contacts: {e}")
+            return []
+
     async def extract_contacts_from_text(self, telegram_id: int, text: str):
         """
         Background task: Uses Gemini Flash Lite to detect if the user mentioned
@@ -48,6 +57,6 @@ class ContactManager:
                     logger.info(f"Learned new contact for {telegram_id}: {name} -> {email}")
                     
         except Exception as e:
-            pass # Fail silently in background
+            pass # Fail silently in background so it doesn't break the main flow
 
 contact_manager = ContactManager()
