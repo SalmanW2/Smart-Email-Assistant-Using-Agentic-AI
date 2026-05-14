@@ -499,7 +499,51 @@ class TelegramBotManager:
 
     # ... (Voice Handler and Check Emails jobs remain mostly unchanged, just ensure they use correct methods) ...
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        pass # Placeholder for your existing voice logic to keep file short here. If needed, I can provide it too!
+        user = update.effective_user
+        access = await self._check_user_access(user.id, user.first_name, user.username)
+        if await self._handle_unauthorized_states(update, access["status"], user.id): return
+
+        # Check Admin Granular Permission
+        if not access["user_data"].get("voice_allowed", True):
+            return await update.message.reply_text("🚫 *Voice Access Restricted* by Administrator.", parse_mode="Markdown")
+
+        msg = await update.message.reply_text("🎙️ *Listening...*", parse_mode="Markdown")
+        
+        try:
+            # 1. Download voice note securely
+            voice_file = await context.bot.get_file(update.message.voice.file_id)
+            file_path = os.path.join(tempfile.gettempdir(), f"voice_{uuid.uuid4().hex}.ogg")
+            await voice_file.download_to_drive(file_path)
+
+            # 2. Transcribe using Gemini (0 RAM cost on Render)
+            await msg.edit_text("⏳ *Transcribing...*", parse_mode="Markdown")
+            transcribed_text = await self.ai_engine.transcribe_audio(file_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            if "[Audio Unclear]" in transcribed_text or not transcribed_text:
+                return await msg.edit_text("❌ *Sorry, I couldn't understand the audio clearly.*", parse_mode="Markdown")
+
+            # 3. Process with AI Engine
+            await msg.edit_text(f"🗣️ *You said:* _{transcribed_text}_\n\n✨ *AI is thinking...*", parse_mode="Markdown")
+            bot_response = await self.ai_engine.agent_chat(transcribed_text, user.id)
+            
+            # 4. Send text response
+            await msg.edit_text(f"🤖 {bot_response}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]]))
+
+            # 5. Text-to-Speech (Fallback to TTS if user preference allows)
+            prefs = access["user_data"].get("voice_preference", "text")
+            if prefs in ["voice", "both"]:
+                tts_method = access["user_data"].get("preferred_tts_method", "google")
+                audio_path = await self.voice.synthesize(bot_response, preferred_method=tts_method)
+                if audio_path and os.path.exists(audio_path):
+                    with open(audio_path, 'rb') as audio:
+                        await update.message.reply_voice(voice=audio)
+                    os.remove(audio_path)
+
+        except Exception as e:
+            logger.error(f"Voice Processing Error: {e}")
+            await msg.edit_text(f"❌ Error processing voice note.", parse_mode="Markdown")
 
     async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
         try:
@@ -521,9 +565,14 @@ class TelegramBotManager:
                                 self.notified_emails.add(msg_id)
                                 meta = await self.gmail.get_email_metadata(uid, msg_id)
                                 if "error" not in meta:
-                                    text = f"🔔 *New Email Received*\n\n*From:* {meta.get('sender')}\n*Subject:* {meta.get('subject')}"
+                                    # FIX: Remove markdown triggers from sender and subject to prevent crash
+                                    safe_sender = meta.get('sender', '').replace('*', '').replace('_', '').replace('`', '').replace('[', '')
+                                    safe_subject = meta.get('subject', '').replace('*', '').replace('_', '').replace('`', '').replace('[', '')
+                                    
+                                    text = f"🔔 *New Email Received*\n\n*From:* {safe_sender}\n*Subject:* {safe_subject}"
                                     kb = [[InlineKeyboardButton("🤖 Summary", callback_data=f"sum_{msg_id}")], [InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_main")]]
                                     await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-            except Exception as e: logger.error(f"Check Email Error: {e}")
+            except Exception as e: 
+                logger.error(f"Check Email Error: {e}")
 
 telegram_handler = TelegramBotManager()
