@@ -42,6 +42,7 @@ class TelegramBotManager:
         self.notified_emails = set()
         self.startup_time = int(time.time() * 1000)
         self.email_lock = asyncio.Lock()
+        self.application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, self.handle_document))
 
     async def setup_bot(self) -> None:
         """Initializes the Telegram bot and registers all handlers."""
@@ -590,6 +591,42 @@ class TelegramBotManager:
         except Exception as e:
             logger.error(f"Voice Processing Error: {e}")
             await msg.edit_text(f"❌ Error processing voice note.", parse_mode="Markdown")
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handles PDFs and Images sent directly to the bot by the user."""
+        user = update.effective_user
+        access = await self._check_user_access(user.id, user.first_name, user.username)
+        if await self._handle_unauthorized_states(update, access["status"], user.id): return
+
+        msg = await update.message.reply_text("📥 *Downloading file...*", parse_mode="Markdown")
+        
+        try:
+            # Check if it's a document (PDF) or a photo
+            if update.message.document:
+                file_obj = await context.bot.get_file(update.message.document.file_id)
+                ext = update.message.document.file_name.split('.')[-1]
+            elif update.message.photo:
+                file_obj = await context.bot.get_file(update.message.photo[-1].file_id)
+                ext = "jpg"
+            else:
+                return await msg.edit_text("❌ Unsupported file format.")
+
+            file_path = os.path.join(tempfile.gettempdir(), f"doc_{uuid.uuid4().hex}.{ext}")
+            await file_obj.download_to_drive(file_path)
+
+            caption = update.message.caption or "Summarize the key details of this document."
+            await msg.edit_text("🔍 *Analyzing document with AI...*", parse_mode="Markdown")
+            
+            # Send to AI Engine
+            bot_response = await self.ai_engine.process_attachment(user.id, file_path, caption)
+            
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            await msg.edit_text(f"📄 *Document Analysis:*\n\n{bot_response}", parse_mode="Markdown")
+
+        except Exception as e:
+            logger.error(f"Document Processing Error: {e}")
+            await msg.edit_text("❌ *Failed to analyze the document.*", parse_mode="Markdown")
 
     async def auto_ping(self, context: ContextTypes.DEFAULT_TYPE):
         try:
