@@ -46,7 +46,7 @@ const AdminLogin = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        localStorage.setItem('admin_token', data.token); // Save JWT Token
+        localStorage.setItem('admin_token', data.token || 'manual_session');
         localStorage.setItem('admin_email', data.email);
         navigate('/admin/dashboard');
       } else {
@@ -152,4 +152,4 @@ const AdminLogin = () => {
   );
 };
 
-export default AdminLogin;  w
+export default AdminLogin;

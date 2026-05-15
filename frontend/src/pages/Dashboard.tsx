@@ -1,24 +1,32 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, UserPlus, Trash2, ArrowUpRight, Clock, Zap, X, AlertCircle, Settings2, MicOff, BotOff, CalendarClock } from 'lucide-react';
+import { 
+  Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, 
+  UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle, Settings2, 
+  MicOff, CalendarClock, LineChart, Mail, Mic, ShieldOff
+} from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; ai_allowed?: boolean; voice_allowed?: boolean; created_at: string; }
 interface Admin { id: string; email: string; role: string; }
 interface Block { id: string; block_type: string; block_value: string; reason: string; expires_at?: string; }
-interface Stats { total_users: number; verified_users: number; blocked_users: number; total_admins: number; }
+interface Stats { total_users: number; verified_users: number; blocked_users: number; total_admins: number; total_stt_seconds_used: number; total_scheduled_emails: number; total_conversations: number; }
+interface STTUsage { id: string; duration_seconds: number; method: string; created_at: string; }
+interface ScheduledEmail { id: string; to_email: string; status: string; scheduled_time: string; }
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
 const Dashboard = () => {
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeTab, setActiveTab] = useState('stats');
   const [users, setUsers] = useState<User[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [sttUsage, setSttUsage] = useState<STTUsage[]>([]);
+  const [scheduledEmails, setScheduledEmails] = useState<ScheduledEmail[]>([]);
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
-  
   const [manageUserId, setManageUserId] = useState<number | null>(null);
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
   
@@ -27,7 +35,7 @@ const Dashboard = () => {
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
   const [adminEmail, setAdminEmail] = useState(localStorage.getItem('admin_email') || '');
 
-  // 10-Minute Auto Logout Feature
+  // Auto Logout & URL Cleanup
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     const resetTimer = () => {
@@ -35,7 +43,7 @@ const Dashboard = () => {
       timeoutId = setTimeout(() => {
         localStorage.removeItem('admin_email');
         navigate('/admin/login?error=Session+expired+due+to+inactivity');
-      }, 600000);
+      }, 600000); // 10 mins
     };
     const events = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
     events.forEach(event => window.addEventListener(event, resetTimer));
@@ -43,15 +51,12 @@ const Dashboard = () => {
     return () => { clearTimeout(timeoutId); events.forEach(event => window.removeEventListener(event, resetTimer)); };
   }, [navigate]);
 
-  // FIX: Loop Prevention & Smart URL Parsing
   useEffect(() => {
     const urlEmail = searchParams.get('email');
     if (urlEmail) {
       const cleanEmail = urlEmail.toLowerCase().trim();
       localStorage.setItem('admin_email', cleanEmail);
       setAdminEmail(cleanEmail);
-      
-      // Remove email from URL without reloading the page to stop loops
       searchParams.delete('email');
       setSearchParams(searchParams, { replace: true });
     } else if (!adminEmail) {
@@ -83,21 +88,27 @@ const Dashboard = () => {
         localStorage.removeItem('admin_email');
         navigate('/admin/login?error=Unauthorized+Access');
       }
-    } catch (err) { console.error("Role check delayed or failed", err); }
+    } catch (err) { console.error("Role fetch failed", err); }
   };
 
   const fetchData = async () => {
     try {
-      const [usersRes, adminsRes, blocksRes, statsRes] = await Promise.all([
+      const [usersRes, adminsRes, blocksRes, statsRes, sttRes, schedRes] = await Promise.all([
         fetch(`${backendUrl}/api/admin/users`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/admins`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/blocks`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/stats`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/stt_usage`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/scheduled_emails`, { headers: getHeaders() }),
       ]);
+      
       if (usersRes.ok) setUsers(await usersRes.json() || []);
       if (adminsRes.ok) setAdmins(await adminsRes.json() || []);
       if (blocksRes.ok) setBlocks(await blocksRes.json() || []);
       if (statsRes.ok) setStats(await statsRes.json() || null);
+      if (sttRes.ok) { const d = await sttRes.json(); setSttUsage(d.stt_usage || []); }
+      if (schedRes.ok) { const d = await schedRes.json(); setScheduledEmails(d.scheduled_emails || []); }
+      
     } catch (err) { console.error('Data fetch failed', err); }
   };
 
@@ -107,6 +118,11 @@ const Dashboard = () => {
     (u.email || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Status computation for Graphs
+  const sentEmails = scheduledEmails.filter(e => e.status === 'sent').length;
+  const pendingEmails = scheduledEmails.filter(e => e.status === 'pending').length;
+  const failedEmails = scheduledEmails.filter(e => e.status === 'failed').length;
+
   const updatePermissions = async (tgId: number, is_verified: boolean, ai_allowed: boolean, voice_allowed: boolean, block_days: number) => {
     try {
       const payload = { is_verified, ai_allowed, voice_allowed, block_days, reason: "Admin enforced restrictions" };
@@ -114,7 +130,7 @@ const Dashboard = () => {
         method: 'POST', headers: getHeaders(), body: JSON.stringify(payload)
       }); 
       if(res.ok) { 
-        showNotification('Permissions updated successfully!', 'success'); 
+        showNotification('Permissions updated securely!', 'success'); 
         setManageUserId(null);
         fetchData(); 
       }
@@ -146,17 +162,13 @@ const Dashboard = () => {
     } catch (e) { showNotification('Network Error', 'error'); }
   };
 
-  const dismissBanner = () => {
-    localStorage.setItem('password_setup_dismissed', 'true');
-    setShowBanner(false);
-  };
-
-  if (!adminEmail) return null; // Wait for redirect if no email
+  if (!adminEmail) return null;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30">
       <Navbar />
 
+      {/* Toast Notification */}
       {toast && (
         <div className={`fixed bottom-8 right-8 z-50 flex items-center gap-3 px-6 py-4 rounded-2xl font-bold text-sm shadow-2xl animate-in fade-in slide-in-from-bottom-5 duration-300 text-white ${toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
           {toast.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
@@ -164,28 +176,23 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* Password Setup Banner */}
       {showBanner && (
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md animate-in slide-in-from-top-2 duration-500">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-3 text-center sm:text-left">
               <Zap className="w-5 h-5 text-amber-300 shrink-0 hidden sm:block" />
-              <p className="text-sm font-medium">
-                <strong className="font-bold mr-1">Want to login faster next time?</strong>
-                Set up a manual password in settings.
-              </p>
+              <p className="text-sm font-medium"><strong className="font-bold mr-1">Want to login faster next time?</strong> Set up a manual password.</p>
             </div>
             <div className="flex items-center gap-4 shrink-0 mt-2 sm:mt-0">
-              <Link to="/admin/settings" className="bg-white text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider hover:bg-blue-50 transition-colors shadow-sm">
-                Setup Password
-              </Link>
-              <button onClick={dismissBanner} className="p-1 hover:bg-white/20 rounded-full transition-colors">
-                <X className="w-5 h-5" />
-              </button>
+              <Link to="/admin/settings" className="bg-white text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider hover:bg-blue-50 transition-colors shadow-sm">Setup</Link>
+              <button onClick={() => { localStorage.setItem('password_setup_dismissed', 'true'); setShowBanner(false); }} className="p-1 hover:bg-white/20 rounded-full transition-colors"><X className="w-5 h-5" /></button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Tabs Navigation */}
       <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-16 z-40 transition-colors duration-500 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex space-x-2 sm:space-x-6 overflow-x-auto hide-scrollbar py-2">
@@ -196,7 +203,7 @@ const Dashboard = () => {
                   onClick={() => setActiveTab(tab)}
                   className={`flex items-center gap-2 px-4 py-3 rounded-xl font-bold text-sm whitespace-nowrap transition-all duration-300 capitalize ${activeTab === tab ? 'bg-slate-900 text-white dark:bg-blue-600 dark:text-white shadow-md' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                 >
-                  {tab === 'stats' && <Activity className="w-4 h-4" />}
+                  {tab === 'stats' && <LineChart className="w-4 h-4" />}
                   {tab === 'users' && <Users className="w-4 h-4" />}
                   {tab === 'blocklist' && <Ban className="w-4 h-4" />}
                   {tab === 'admins' && <Shield className="w-4 h-4" />}
@@ -210,37 +217,90 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* STATS VIEW */}
+        {/* ======================= STATS & GRAPHS VIEW ======================= */}
         {activeTab === 'stats' && stats && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[
-              { label: 'Total Users', val: stats.total_users || 0, color: 'from-blue-500 to-indigo-600', icon: Users },
-              { label: 'Verified Accounts', val: stats.verified_users || 0, color: 'from-emerald-500 to-teal-600', icon: CheckCircle },
-              { label: 'Blocked Threats', val: stats.blocked_users || 0, color: 'from-rose-500 to-red-600', icon: ShieldAlert },
-              { label: 'Active Admins', val: stats.total_admins || 0, color: 'from-purple-500 to-fuchsia-600', icon: Shield },
-            ].map((s) => (
-              <div key={s.label} className="group relative bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden cursor-default">
-                <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${s.color} opacity-5 group-hover:opacity-10 rounded-bl-full transition-opacity duration-500`}></div>
-                <div className="flex justify-between items-start mb-4">
-                  <div className={`p-3 rounded-2xl bg-gradient-to-br ${s.color} text-white shadow-md group-hover:scale-110 transition-transform duration-300`}>
-                    <s.icon className="w-6 h-6" />
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[
+                { label: 'Total Users', val: stats.total_users || 0, color: 'from-blue-500 to-indigo-600', icon: Users },
+                { label: 'Verified Accounts', val: stats.verified_users || 0, color: 'from-emerald-500 to-teal-600', icon: CheckCircle },
+                { label: 'Blocked Threats', val: stats.blocked_users || 0, color: 'from-rose-500 to-red-600', icon: ShieldAlert },
+                { label: 'Total Convos', val: stats.total_conversations || 0, color: 'from-purple-500 to-fuchsia-600', icon: Activity },
+              ].map((s) => (
+                <div key={s.label} className="group relative bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden cursor-default">
+                  <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${s.color} opacity-5 group-hover:opacity-10 rounded-bl-full transition-opacity duration-500`}></div>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className={`p-3 rounded-2xl bg-gradient-to-br ${s.color} text-white shadow-md group-hover:scale-110 transition-transform duration-300`}><s.icon className="w-6 h-6" /></div>
+                    <ArrowUpRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-slate-400 transition-colors" />
                   </div>
-                  <ArrowUpRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-slate-400 transition-colors" />
+                  <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm tracking-wide">{s.label}</h3>
+                  <p className="text-4xl font-black text-slate-900 dark:text-white mt-1 tracking-tight">{s.val}</p>
                 </div>
-                <h3 className="font-bold text-slate-500 dark:text-slate-400 text-sm tracking-wide">{s.label}</h3>
-                <p className="text-4xl font-black text-slate-900 dark:text-white mt-1 tracking-tight">{s.val}</p>
+              ))}
+            </div>
+
+            {/* Graphs Section using Tailwind */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              {/* STT Usage Graph */}
+              <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2"><Mic className="w-5 h-5 text-indigo-500" /> STT Audio Processed</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Total audio transcribed by AI (in seconds)</p>
+                  </div>
+                  <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400">{stats.total_stt_seconds_used}s</div>
+                </div>
+                
+                {/* Visual Progress Bar representing Load */}
+                <div className="mt-8 space-y-3">
+                  <div className="flex justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <span>Server Load (Whisper/Gemini)</span>
+                    <span>{sttUsage.length} requests</span>
+                  </div>
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-4 overflow-hidden flex">
+                    <div className="bg-indigo-500 h-full rounded-full animate-[pulse_2s_ease-in-out_infinite]" style={{ width: `${Math.min((stats.total_stt_seconds_used / 1000) * 100, 100)}%` }}></div>
+                  </div>
+                </div>
               </div>
-            ))}
+
+              {/* Scheduled Emails Graph */}
+              <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2"><Mail className="w-5 h-5 text-blue-500" /> Scheduled Emails</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Queue & Dispatch Status</p>
+                  </div>
+                  <div className="text-3xl font-black text-blue-600 dark:text-blue-400">{stats.total_scheduled_emails}</div>
+                </div>
+                
+                <div className="mt-6 flex h-12 rounded-xl overflow-hidden shadow-inner">
+                  {stats.total_scheduled_emails === 0 ? (
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs text-slate-400 font-bold">No Emails Scheduled</div>
+                  ) : (
+                    <>
+                      <div style={{width: `${(sentEmails/stats.total_scheduled_emails)*100}%`}} className="bg-emerald-500 hover:opacity-90 transition-opacity flex items-center justify-center text-white text-xs font-bold">{sentEmails > 0 && sentEmails}</div>
+                      <div style={{width: `${(pendingEmails/stats.total_scheduled_emails)*100}%`}} className="bg-amber-400 hover:opacity-90 transition-opacity flex items-center justify-center text-amber-900 text-xs font-bold">{pendingEmails > 0 && pendingEmails}</div>
+                      <div style={{width: `${(failedEmails/stats.total_scheduled_emails)*100}%`}} className="bg-rose-500 hover:opacity-90 transition-opacity flex items-center justify-center text-white text-xs font-bold">{failedEmails > 0 && failedEmails}</div>
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center justify-between mt-4 text-xs font-bold text-slate-500 dark:text-slate-400">
+                  <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-emerald-500"></div> Sent ({sentEmails})</span>
+                  <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-amber-400"></div> Pending ({pendingEmails})</span>
+                  <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-rose-500"></div> Failed ({failedEmails})</span>
+                </div>
+              </div>
+
+            </div>
           </div>
         )}
 
-        {/* USERS VIEW (Cards Design for Desktop & Mobile) */}
+        {/* ======================= USERS VIEW ======================= */}
         {activeTab === 'users' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Users className="w-5 h-5 text-blue-500" /> User Directory
-              </h2>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Users className="w-5 h-5 text-blue-500" /> User Directory</h2>
               <div className="relative w-full sm:w-80 group">
                 <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400 transition-colors" />
                 <input type="text" placeholder="Search by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white transition-all shadow-sm" />
@@ -258,6 +318,7 @@ const Dashboard = () => {
                   const isBlocked = !!userBlock;
                   const isActuallyVerified = user.is_verified && !isBlocked;
 
+                  // Local states for management panel
                   const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
                   const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
                   const [tmpBlockDays, setTmpBlockDays] = useState(0);
@@ -275,7 +336,7 @@ const Dashboard = () => {
                           </div>
                         </div>
                         <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                          {isActuallyVerified ? 'Verified' : 'Pending/Revoked'}
+                          {isActuallyVerified ? 'Verified' : 'Pending/Blocked'}
                         </span>
                       </div>
                       <div className="space-y-1 text-sm mb-4">
@@ -288,7 +349,7 @@ const Dashboard = () => {
                           <h4 className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Granular Permissions</h4>
                           <div className="space-y-3 mb-4">
                             <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-2"><BotOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
+                              <span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
                               <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
                             </label>
                             <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -296,21 +357,21 @@ const Dashboard = () => {
                               <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
                             </label>
                             <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temporary Ban (Days)</span>
+                              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temp Ban (Days)</span>
                               <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md" />
                             </label>
                           </div>
                           
                           <div className="flex gap-2">
-                            <button onClick={() => updatePermissions(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save & Approve</button>
-                            <button onClick={() => updatePermissions(user.telegram_id, false, tmpAi, tmpVoice, tmpBlockDays)} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend' : 'Block entirely'}</button>
+                            <button onClick={() => updatePermissions(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save/Approve</button>
+                            <button onClick={() => updatePermissions(user.telegram_id, false, tmpAi, tmpVoice, tmpBlockDays)} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend' : 'Block All'}</button>
                             <button onClick={() => setManageUserId(null)} className="px-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600"><X className="w-4 h-4"/></button>
                           </div>
                         </div>
                       ) : (
                         <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto flex gap-2">
                           {!isActuallyVerified ? (
-                            <button onClick={() => updatePermissions(user.telegram_id, true, true, true, 0)} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve Fully</button>
+                            <button onClick={() => updatePermissions(user.telegram_id, true, true, true, 0)} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve User</button>
                           ) : (
                             <button onClick={() => setManageUserId(user.telegram_id)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm flex items-center justify-center gap-2"><Settings2 className="w-4 h-4" /> Manage Access</button>
                           )}
@@ -324,7 +385,7 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* BLOCKLIST VIEW */}
+        {/* ======================= BLOCKLIST VIEW ======================= */}
         {activeTab === 'blocklist' && (
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
             <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50">
@@ -361,7 +422,7 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* ADMINS VIEW */}
+        {/* ======================= ADMINS VIEW ======================= */}
         {activeTab === 'admins' && role === 'super_admin' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors duration-500">
