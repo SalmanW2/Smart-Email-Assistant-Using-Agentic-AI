@@ -38,7 +38,6 @@ class TelegramBotManager:
         self.search_states = {}
         self.current_queries = {}
         self.navigation_history = {} 
-        self.pending_sends = {}
         self.active_voice_tasks = set()
         self.notified_emails = set()
         self.email_lock = asyncio.Lock()
@@ -53,7 +52,7 @@ class TelegramBotManager:
         self.application.add_handler(CallbackQueryHandler(self.handle_button_actions))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
         self.application.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
-        # FIXED: Catch all document and media types for attachment handling
+        # Handle all types of media for attachments and AI vision analysis
         self.application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO | filters.VIDEO | filters.AUDIO, self.handle_attachment))
 
         await self.application.initialize()
@@ -111,7 +110,7 @@ class TelegramBotManager:
             state_uuid = await self.db.create_auth_session(user_id)
             login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={user_id}"
             kb = [[InlineKeyboardButton("🔗 Securely Connect Google Workspace", url=login_url)]]
-            await self._send_or_edit(update, "⚠️ *Authentication Required*\nLink your Gmail securely below.", InlineKeyboardMarkup(kb))
+            await self._send_or_edit(update, "⚠️ *Authentication Required*\nYour session has expired or you haven't logged in yet. Please securely link your Gmail below.", InlineKeyboardMarkup(kb))
             return True
         return False
 
@@ -171,6 +170,7 @@ class TelegramBotManager:
                 self.navigation_history[user_id] = {'type': 'search' if is_search else 'inbox', 'offset': offset}
 
             safe_query = "in:inbox" if query == "label:INBOX" else query
+            # Fetch 6 to check for next page
             messages = await self.gmail.get_emails(user_id, query=safe_query, max_results=6)
             
             if not messages and offset == 0:
@@ -273,17 +273,18 @@ class TelegramBotManager:
                 state['body'] = text
                 state['step'] = 'AWAIT_ATTACHMENT'
                 state['attachments'] = []
+                
+                # FIXED: Immediate Send Option Only. No Queue.
                 kb_send = [
-                    [InlineKeyboardButton("🚀 Send Without Attachment", callback_data="send_manual_draft_direct")],
-                    [InlineKeyboardButton("✅ Add to Queue (7s)", callback_data="send_manual_draft_queued")],
+                    [InlineKeyboardButton("🚀 Send Email Now", callback_data="send_manual_draft_direct")],
                     [InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]
                 ]
-                draft_text = f"📄 *Draft Ready:*\n\n*To:* {state.get('to')}\n*Subject:* {state.get('subj')}\n*Body:* {state.get('body')}\n\n📎 *Want to add an attachment?*\nUpload the file now, OR click a Send button below."
+                draft_text = f"📄 *Draft Ready:*\n\n*To:* {state.get('to')}\n*Subject:* {state.get('subj')}\n*Body:* {state.get('body')}\n\n📎 *Want to add an attachment?*\nUpload the file now, OR click Send Email Now."
                 await update.message.reply_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_send))
                 return
                 
             elif state['step'] == 'AWAIT_ATTACHMENT':
-                await update.message.reply_text("Please upload an attachment file, or click Send Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft_direct"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
+                await update.message.reply_text("Please upload an attachment file, or click Send Email Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Send Email Now", callback_data="send_manual_draft_direct"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
                 return
 
         # Search State Handling
@@ -365,6 +366,7 @@ class TelegramBotManager:
         attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None) or update.message.audio or update.message.video)
         if not attachment: return
 
+        # FIXED: File size check updated to 20MB directly
         if getattr(attachment, 'file_size', 0) > 20 * 1024 * 1024:
             return await update.message.reply_text("❌ *File is too large for Telegram (Max 20MB).* \nPlease upload it to Google Drive and share the link.", parse_mode="Markdown")
 
@@ -390,19 +392,28 @@ class TelegramBotManager:
                 
                 state = self.compose_states[user_id]
                 kb = [
-                    [InlineKeyboardButton("✅ Send Now", callback_data="send_manual_draft_direct")],
+                    [InlineKeyboardButton("🚀 Send Email Now", callback_data="send_manual_draft_direct")],
                     [InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]
                 ]
                 files_list = "\n".join([f"- {os.path.basename(f).replace('_', '-')}" for f in state['attachments']])
-                draft_text = f"📄 *Draft Ready!*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n📎 *Attachments:* \n{files_list}\n\nYou can upload more files or click Send Now."
+                draft_text = f"📄 *Draft Ready!*\n\n*To:* {state['to']}\n*Subject:* {state['subj']}\n*Body:* {state['body']}\n📎 *Attachments:* \n{files_list}\n\nYou can upload more files or click Send Email Now."
                 await msg.edit_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 return
 
-            # Flow 2: Normal Upload -> Ask if AI Analysis or Memory Save
+            # Flow 2: Normal Upload -> AI Analysis or Memory Save
             caption = update.message.caption or ""
-            if "analyze" in caption.lower() or "summarize" in caption.lower() or "what" in caption.lower():
+            if "analyze" in caption.lower() or "summarize" in caption.lower() or "what" in caption.lower() or "read" in caption.lower():
                 await msg.edit_text("🔍 *AI Analyzing Document...*", parse_mode="Markdown")
                 bot_response = await self.ai_engine.process_attachment(user.id, file_path, caption or "Summarize this document.")
+                
+                # FIXED: Saving the document analysis to Database Memory so AI remembers it for future prompts!
+                await self.memory.log_conversation(
+                    telegram_id=user_id,
+                    user_message=f"[Uploaded Document Request]: {caption or 'Analyze document'}",
+                    bot_response=f"Document Analysis Content: {bot_response}",
+                    interaction_type="document"
+                )
+
                 if os.path.exists(file_path): os.remove(file_path)
                 await msg.edit_text(f"📄 *Analysis:*\n\n{bot_response}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
             else:
@@ -433,6 +444,7 @@ class TelegramBotManager:
             return
 
         elif data == "action_logout":
+            # FIXED: Direct DB logout approach, wipes token immediately.
             await self.db.db.run(lambda: self.db.db.client.table("users").update({"auth_token": None}).eq("telegram_id", user_id).execute())
             self.gmail.clear_user_attachments(user_id)
             await query.edit_message_text("✅ *Logged out successfully.*\n\nYour Google access token has been wiped. Send /start to connect a new account.", parse_mode="Markdown")
@@ -485,37 +497,15 @@ class TelegramBotManager:
         elif data == "add_att":
             await query.edit_message_text("📎 *Please upload the next file directly in this chat.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
-        # Queue / Undo Send Logic
-        elif data in ["send_manual_draft_direct", "send_manual_draft_queued"]:
-            state = self.compose_states.get(user_id)
+        # FIXED: Direct Send Logic (Queue completely removed)
+        elif data == "send_manual_draft_direct":
+            state = self.compose_states.pop(user_id, None)
             if not state:
                 return await query.edit_message_text("❌ Draft expired.", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
             
-            if data == "send_manual_draft_direct":
-                self.compose_states.pop(user_id, None)
-                await query.edit_message_text("🚀 *Sending Email...*", parse_mode="Markdown")
-                res = await self.gmail.send_email(user_id, state['to'], state['subj'], state['body'], state.get('attachments', []))
-                await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-            else:
-                self.pending_sends[user_id] = state
-                kb = [[InlineKeyboardButton("↩️ Undo Send", callback_data="undosend_manual")]]
-                msg = await query.edit_message_text("⏳ *Email Queued.*\nSending automatically in 7 seconds. Click below to cancel:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-                
-                async def process_manual_send(uid, current_msg):
-                    await asyncio.sleep(7)
-                    if uid in self.pending_sends: 
-                        draft = self.pending_sends.pop(uid)
-                        self.compose_states.pop(uid, None)
-                        res = await self.gmail.send_email(uid, draft['to'], draft['subj'], draft['body'], draft.get('attachments', []))
-                        try: await current_msg.edit_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-                        except: pass
-                asyncio.create_task(process_manual_send(user_id, msg))
-
-        elif data == "undosend_manual":
-            if user_id in self.pending_sends:
-                self.pending_sends.pop(user_id)
-                self.compose_states.pop(user_id, None)
-            await query.edit_message_text("🚫 *Send Canceled.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            await query.edit_message_text("🚀 *Sending Email...*", parse_mode="Markdown")
+            res = await self.gmail.send_email(user_id, state['to'], state['subj'], state['body'], state.get('attachments', []))
+            await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
         elif data == "menu_settings":
             db_user = await self.db.get_user(user_id)
@@ -536,12 +526,12 @@ class TelegramBotManager:
             query.data = "menu_settings"
             await self.handle_button_actions(update, context)
 
-        # Email Actions (Read / Summary / Delete / Reply / TTS / Attachments)
-        elif any(data.startswith(x) for x in ["full_", "sum_", "tts_sum_", "manual_del_", "manual_reply_", "manual_untrash_", "getatt_"]):
+        # Email Actions (Read / Summary / Delete / Reply / TTS / Attachments / Smart Reply)
+        elif any(data.startswith(x) for x in ["full_", "sum_", "tts_sum_", "manual_del_", "manual_reply_", "manual_untrash_", "getatt_", "sr_"]):
             parts = data.split('_')
             action = parts[0] if not data.startswith("manual_") and not data.startswith("tts_") else f"{parts[0]}_{parts[1]}"
             m_id = parts[1] if len(parts) == 4 else parts[2]
-            nav_context = parts[2] if len(parts) == 4 else parts[3]
+            nav_context = parts[2] if len(parts) == 4 else parts[3] if len(parts) > 3 else "main"
             offset = parts[3] if len(parts) == 4 else parts[4] if len(parts) > 4 else "0"
             
             if action == "full":
@@ -549,42 +539,42 @@ class TelegramBotManager:
                 body = await self.gmail.read_full_email(user_id, m_id)
                 meta = await self.gmail.get_email_metadata(user_id, m_id)
                 
-                # --- PHASE 4: Generate Smart Replies ---
+                safe_sender = meta.get('sender', '').replace('<', '').replace('>', '')
+                safe_subject = meta.get('subject', '').replace('<', '').replace('>', '')
+                att_count = len(meta.get('attachments', []))
+                att_text = f"\n📎 *Attachments:* {att_count} File(s)" if att_count > 0 else ""
+                
+                formatted_email = f"📧 *From:* {safe_sender}\n📝 *Subject:* {safe_subject}{att_text}\n━━━━━━━━━━━━━━━━━━\n\n{body[:3500]}"
+                if len(body) > 3500: formatted_email += "\n\n[Truncated]"
+
+                # Phase 4: Smart Replies
                 smart_replies = await self.ai_engine.generate_smart_replies(body)
-                
                 kb = []
-                # Add AI suggested reply buttons
                 for reply_text in smart_replies:
-                    kb.append([InlineKeyboardButton(f"✅ Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:20]}")])
-                
-                if len(meta.get('attachments', [])) > 0:
+                    kb.append([InlineKeyboardButton(f"✅ Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:25]}")])
+
+                if att_count > 0:
                     kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}_{offset}")])
                 
                 kb.append([InlineKeyboardButton("↩️ Custom Reply", callback_data=f"manual_reply_{m_id}_{nav_context}_{offset}")])
                 kb.append(self.get_back_button(nav_context, int(offset)))
                 
-                formatted_email = f"📧 *From:* {meta.get('sender')}\n📝 *Subject:* {meta.get('subject')}\n━━━━━━━━━━━━━━━━━━\n\n{body[:3500]}"
                 await query.edit_message_text(formatted_email, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
             
-            elif action == "sum":
-                await query.edit_message_text("⏳ Generating AI Summary...")
-                body = await self.gmail.read_full_email(user_id, m_id)
-                summary = await self.ai_engine.agent_chat(f"Strictly summarize this email: {body[:3000]}", user_id)
+            elif action == "sr":
+                # Smart Reply Execution
+                actual_m_id = parts[1]
+                reply_text = data.split(f"sr_{actual_m_id}_")[1]
                 
-                # --- PHASE 4: Generate Smart Replies for Summary View ---
-                smart_replies = await self.ai_engine.generate_smart_replies(body)
+                await query.edit_message_text(f"🚀 *Sending Quick Reply:* _{reply_text}_...", parse_mode="Markdown")
                 
-                kb = []
-                for reply_text in smart_replies:
-                    kb.append([InlineKeyboardButton(f"✅ Quick Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:20]}")])
+                meta = await self.gmail.get_email_metadata(user_id, actual_m_id)
+                sender = meta.get('sender', '')
+                sender_email = re.search(r'<(.+?)>', sender).group(1) if '<' in sender else sender
                 
-                kb.append([InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{m_id}_{nav_context}_{offset}")])
-                kb.append([InlineKeyboardButton("📖 Read Full Email", callback_data=f"full_{m_id}_{nav_context}_{offset}")])
-                kb.append(self.get_back_button(nav_context, int(offset)))
-                
-                await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-                
-            
+                res = await self.gmail.send_email(user_id, sender_email, f"Re: {meta.get('subject')}", reply_text, [])
+                await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+
             elif action == "getatt":
                 await query.edit_message_text("⏳ Fetching attachments...")
                 file_paths = await self.gmail.get_attachments(user_id, m_id)
@@ -605,11 +595,16 @@ class TelegramBotManager:
                 await query.edit_message_text("⏳ Generating AI Summary...")
                 body = await self.gmail.read_full_email(user_id, m_id)
                 summary = await self.ai_engine.agent_chat(f"Strictly summarize this email: {body[:3000]}", user_id)
-                kb = [
-                    [InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{m_id}_{nav_context}_{offset}")],
-                    [InlineKeyboardButton("📖 Read Full", callback_data=f"full_{m_id}_{nav_context}_{offset}")], 
-                    self.get_back_button(nav_context, int(offset))
-                ]
+                
+                smart_replies = await self.ai_engine.generate_smart_replies(body)
+                kb = []
+                for reply_text in smart_replies:
+                    kb.append([InlineKeyboardButton(f"✅ Quick Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:25]}")])
+
+                kb.append([InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{m_id}_{nav_context}_{offset}")])
+                kb.append([InlineKeyboardButton("📖 Read Full", callback_data=f"full_{m_id}_{nav_context}_{offset}")])
+                kb.append(self.get_back_button(nav_context, int(offset)))
+                
                 await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
             elif action == "tts_sum":
@@ -650,22 +645,6 @@ class TelegramBotManager:
                 if not subj.startswith("Re:"): subj = "Re: " + subj
                 self.compose_states[user_id] = {'step': 'AWAIT_BODY', 'to': sender_email, 'subj': subj}
                 await query.edit_message_text(f"✉️ *Replying to:* {sender_email}\n\n✍️ Type your message below. 📎 You can add an attachment in the next step.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
-
-            elif action == "sr":
-                # Data format: sr_{m_id}_{reply_snippet}
-                actual_m_id = parts[1]
-                reply_text = data.split(f"sr_{actual_m_id}_")[1]
-                
-                await query.edit_message_text(f"🚀 *Sending Quick Reply:* _{reply_text}_...", parse_mode="Markdown")
-                
-                meta = await self.gmail.get_email_metadata(user_id, actual_m_id)
-                sender = meta.get('sender', '')
-                sender_email = re.search(r'<(.+?)>', sender).group(1) if '<' in sender else sender
-                
-                res = await self.gmail.send_email(user_id, sender_email, f"Re: {meta.get('subject')}", reply_text, [])
-                await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-
-            
 
     # ==========================================
     # BACKGROUND JOBS

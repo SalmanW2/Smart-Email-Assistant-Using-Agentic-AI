@@ -13,7 +13,13 @@ from db.models import db_manager
 class GmailClient:
     def __init__(self):
         self.user_attachments = {} 
-        self.pending_ai_sends = {} # Queue for AI delayed sending
+
+    def _handle_auth_error(self, e: Exception) -> str:
+        """Centralized error handler for Google API expiration/credential issues."""
+        err_str = str(e).lower()
+        if "refresh_token" in err_str or "credentials" in err_str or "token" in err_str or "unauthorized" in err_str:
+            return "❌ *Authentication Expired:* Aapke Google account ka access invalid ya expire ho gaya hai. Please '⚙️ Settings' menu mein ja kar **Logout** karein aur dobara Google se connect karein."
+        return f"❌ Error: {str(e)}"
 
     async def get_service(self, user_id: int):
         """Database se token nikal kar Gmail service banata hai"""
@@ -22,10 +28,15 @@ class GmailClient:
             return None
         
         token_data = user.get("auth_token")
+        
+        # Security check: Ensure token data is valid before building creds
+        if not isinstance(token_data, dict) or "token" not in token_data:
+            return None
+
         creds = Credentials(
             token=token_data.get("token"),
             refresh_token=token_data.get("refresh_token"),
-            token_uri=token_data.get("token_uri"),
+            token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
             client_id=token_data.get("client_id"),
             client_secret=token_data.get("client_secret"),
             scopes=token_data.get("scopes")
@@ -53,7 +64,8 @@ class GmailClient:
         try:
             results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
             return results.get('messages', [])
-        except: return []
+        except Exception: 
+            return []
 
     async def get_email_metadata(self, user_id: int, msg_id: str):
         service = await self.get_service(user_id)
@@ -68,11 +80,12 @@ class GmailClient:
             attachments = [p['filename'] for p in parts if p.get('filename')]
             
             return {"id": msg_id, "subject": subject, "sender": sender, "attachments": attachments}
-        except: return {"error": "Not found"}
+        except Exception: 
+            return {"error": "Not found"}
 
     async def read_full_email(self, user_id: int, msg_id: str):
         service = await self.get_service(user_id)
-        if not service: return "❌ Authentication Required"
+        if not service: return "❌ Authentication Required. Please login again."
         try:
             msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
             payload = msg.get('payload', {})
@@ -94,13 +107,13 @@ class GmailClient:
                  
             if not body: return "No text content identified."
             
-            # Clean up the body for readability
             body = re.sub(r'-{3,}', '---', body)
             body = re.sub(r'To reply click on this link:.*', '', body, flags=re.IGNORECASE | re.DOTALL)
             body = os.linesep.join([s for s in body.splitlines() if s.strip()]) 
             
             return body
-        except Exception as e: return f"Error reading email: {e}"
+        except Exception as e: 
+            return self._handle_auth_error(e)
 
     async def get_attachments(self, user_id: int, msg_id: str):
         service = await self.get_service(user_id)
@@ -128,11 +141,12 @@ class GmailClient:
 
             if 'parts' in payload: extract_parts(payload['parts'])
             return attachments
-        except: return []
+        except Exception: 
+            return []
 
     async def send_email(self, user_id: int, to: str, subject: str, body: str, manual_attachments: list = None):
         service = await self.get_service(user_id)
-        if not service: return "❌ Error: Authentication Required."
+        if not service: return "❌ Error: Authentication Expired. Please Logout and Login again."
         if manual_attachments is None: manual_attachments = []
         try:
             message = MIMEMultipart()
@@ -167,7 +181,7 @@ class GmailClient:
             
             return "✅ Email transmitted successfully."
         except Exception as e:
-            return f"❌ Transmission Error: ({str(e)})"
+            return self._handle_auth_error(e)
 
     async def delete_email(self, user_id: int, msg_id: str):
         service = await self.get_service(user_id)
@@ -175,7 +189,8 @@ class GmailClient:
         try:
             service.users().messages().trash(userId='me', id=msg_id).execute()
             return True
-        except: return False
+        except Exception: 
+            return False
 
     async def untrash_email(self, user_id: int, msg_id: str):
         service = await self.get_service(user_id)
@@ -183,6 +198,7 @@ class GmailClient:
         try:
             service.users().messages().untrash(userId='me', id=msg_id).execute()
             return True
-        except: return False
+        except Exception: 
+            return False
 
 gmail_client = GmailClient()

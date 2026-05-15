@@ -31,7 +31,7 @@ async def telegram_login(state: str, telegram_id: int):
         client_config,
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
-        autogenerate_code_verifier=False  # ✅ PKCE FIX
+        autogenerate_code_verifier=False  
     )
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
@@ -50,7 +50,7 @@ async def admin_google_login():
         client_config,
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
-        autogenerate_code_verifier=False  # ✅ PKCE FIX
+        autogenerate_code_verifier=False  
     )
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
@@ -75,7 +75,7 @@ async def callback(code: str, state: str):
         scopes=SCOPES,
         redirect_uri=str(settings.REDIRECT_URI),
         state=state,
-        autogenerate_code_verifier=False  # ✅ PKCE FIX
+        autogenerate_code_verifier=False  
     )
     flow.fetch_token(code=code)
     creds = flow.credentials
@@ -85,6 +85,8 @@ async def callback(code: str, state: str):
         "refresh_token": creds.refresh_token,
         "expires_at": creds.expiry.isoformat() if creds.expiry else None,
         "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
         "scopes": list(creds.scopes or []),
     }
 
@@ -102,7 +104,6 @@ async def callback(code: str, state: str):
             email = None
 
     # Handle Admin Login Routing
-    
     if is_admin:
         if email and await db_manager.check_admin(email):
             await db_manager.delete_auth_session(db_state)
@@ -119,13 +120,22 @@ async def callback(code: str, state: str):
         existing_user = await db_manager.get_user(telegram_id)
         user_email = email or (existing_user.get("email") if existing_user else None)
 
+        # FIXED: Preserve old refresh_token if Google skips sending it on re-login
+        if existing_user and existing_user.get("auth_token"):
+            old_token = existing_user.get("auth_token")
+            if not auth_token.get("refresh_token") and old_token.get("refresh_token"):
+                auth_token["refresh_token"] = old_token.get("refresh_token")
+
         if existing_user:
             await db_manager.upsert_user_token(telegram_id, user_email, auth_token)
         else:
             await db_manager.create_user(telegram_id, email=user_email, auth_token=auth_token)
 
-        await db_manager.delete_auth_session(db_state)
-        
+        # FIXED: Delete ALL old useless UUIDs for this user to save Supabase DB space
+        try:
+            await db_manager.db.run(lambda: db_manager.db.client.table("auth_sessions").delete().eq("telegram_id", telegram_id).execute())
+        except: pass
+
         return HTMLResponse("""
         <html><body style="font-family:sans-serif;text-align:center;padding-top:100px;background-color:#f8f9fa;">
             <div style="background:white;max-width:500px;margin:0 auto;padding:30px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
