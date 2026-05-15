@@ -24,7 +24,7 @@ const ThemeToggle = () => {
   );
 };
 
-const Help = () => {
+const About = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors duration-300">
       
@@ -98,4 +98,4 @@ const Help = () => {
   );
 };
 
-export default Help;
+export default About;
