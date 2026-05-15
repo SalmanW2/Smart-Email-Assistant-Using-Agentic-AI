@@ -72,13 +72,14 @@ async def get_role(admin: Dict = Depends(get_current_admin)):
 
 @router.get("/stats")
 async def get_stats(admin: Dict = Depends(get_current_admin)):
-    """Fetch all dashboard counters."""
+    """Fetch all dashboard counters, including new STT and Scheduled Emails stats."""
     try:
         all_users = await db_manager.get_all_users() or []
         total_users = len(all_users)
         verified_users = sum(1 for u in all_users if u.get("is_verified"))
         
         try:
+            # Note: Requires get_all_blocked_users in models.py
             blocked_users_list = await db_manager.get_all_blocked_users()
             blocked_count = len(blocked_users_list) if blocked_users_list else 0
         except Exception:
@@ -86,14 +87,44 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
             
         admins_list = await db_manager.get_admin_users() or []
         
+        # New Stats: Conversations
+        try:
+            history = await db_manager.get_all_conversation_history() or []
+            total_conversations = len(history)
+        except:
+            total_conversations = 0
+
+        # New Stats: STT Usage
+        try:
+            stt_res = await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").select("*").execute())
+            stt_usage = stt_res.data if getattr(stt_res, 'data', None) else []
+            total_stt_seconds_used = sum(item.get("duration_seconds", 0) for item in stt_usage)
+        except:
+            total_stt_seconds_used = 0
+
+        # New Stats: Scheduled Emails
+        try:
+            sched_res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").select("*").execute())
+            scheduled_emails = sched_res.data if getattr(sched_res, 'data', None) else []
+            total_scheduled_emails = len(scheduled_emails)
+        except:
+            total_scheduled_emails = 0
+        
         return {
             "total_users": total_users,
             "verified_users": verified_users,
             "blocked_users": blocked_count,
             "total_admins": len(admins_list),
+            "total_conversations": total_conversations,
+            "total_scheduled_emails": total_scheduled_emails,
+            "total_stt_seconds_used": total_stt_seconds_used,
+            "status": "online"
         }
     except Exception:
-        return {"total_users": 0, "verified_users": 0, "blocked_users": 0, "total_admins": 0}
+        return {
+            "total_users": 0, "verified_users": 0, "blocked_users": 0, "total_admins": 0,
+            "total_conversations": 0, "total_scheduled_emails": 0, "total_stt_seconds_used": 0, "status": "offline"
+        }
 
 @router.get("/users")
 async def get_users(admin: Dict = Depends(get_current_admin)):
@@ -170,6 +201,7 @@ async def remove_admin(id_or_email: str, admin: Dict = Depends(get_current_admin
 async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
     """List all blocked identifiers."""
     try:
+        # Note: Requires get_all_blocked_users in models.py
         return await db_manager.get_all_blocked_users() or []
     except Exception:
         return []
@@ -195,3 +227,36 @@ async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current
 async def logout():
     """Logout handler."""
     return {"message": "Logged out successfully"}
+
+# ==========================================
+# NEW FEATURES DATA EXPOSURE
+# ==========================================
+@router.get("/scheduled_emails")
+async def get_scheduled_emails(admin: Dict = Depends(get_current_admin)):
+    """Fetch all scheduled emails for monitoring."""
+    try:
+        res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").select("*").order("created_at", desc=True).execute())
+        return {"scheduled_emails": res.data if getattr(res, 'data', None) else []}
+    except Exception as e:
+        print(f"Error fetching scheduled emails: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@router.get("/stt_usage")
+async def get_stt_usage(admin: Dict = Depends(get_current_admin)):
+    """Fetch speech-to-text analytics and duration tracking."""
+    try:
+        res = await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").select("*").order("created_at", desc=True).execute())
+        return {"stt_usage": res.data if getattr(res, 'data', None) else []}
+    except Exception as e:
+        print(f"Error fetching STT usage: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+        
+@router.get("/saved_attachments")
+async def get_saved_attachments(admin: Dict = Depends(get_current_admin)):
+    """Fetch logs of files and documents permanently memorized by AI."""
+    try:
+        res = await db_manager.db.run(lambda: db_manager.db.client.table("saved_attachments").select("*").order("created_at", desc=True).execute())
+        return {"saved_attachments": res.data if getattr(res, 'data', None) else []}
+    except Exception as e:
+        print(f"Error fetching saved attachments: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")

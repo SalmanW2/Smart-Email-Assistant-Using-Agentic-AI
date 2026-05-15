@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import httpx
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 from google import genai
 from google.genai import types
@@ -9,6 +10,7 @@ from config import settings
 from db.memory import memory_manager
 from bot.contact_manager import contact_manager
 from bot.gmail_client import GmailClient
+from db.models import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class AIEngine:
         self.memory = memory_manager
         self.contact_manager = contact_manager
         self.gmail_client = GmailClient()
+        self.db = db_manager
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         # UNIFIED MODEL: Prevents 429 Quota Burst Errors
         self.model_name = "gemini-2.5-flash" 
@@ -62,12 +65,31 @@ class AIEngine:
         return asyncio.run(self.gmail_client.read_full_email(self.current_user_id, message_id))
 
     def draft_and_send_email(self, to_email: str, subject: str, body: str) -> str:
-        """Sends an email. Call this when the user asks to send or reply to an email."""
+        """Sends an email immediately. Call this when the user asks to send or reply to an email right now."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
         res = asyncio.run(self.gmail_client.send_email(self.current_user_id, to_email, subject, body, []))
         return f"Email sent successfully: {res}"
+
+    def schedule_email(self, to_email: str, subject: str, body: str, send_time_utc: str) -> str:
+        """
+        Schedules an email to be sent later. Call this if the user says 'send tomorrow', 'send at 9am', etc.
+        'send_time_utc' MUST be formatted as 'YYYY-MM-DD HH:MM:SS' in UTC timezone.
+        """
+        if not self.current_user_id: 
+            return "Error: User context missing."
+        import asyncio
+        async def _schedule():
+            await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").insert({
+                "telegram_id": self.current_user_id,
+                "to_email": to_email,
+                "subject": subject,
+                "body": body,
+                "scheduled_time": send_time_utc
+            }).execute())
+            return f"Email successfully scheduled for {send_time_utc} UTC."
+        return asyncio.run(_schedule())
 
     def save_contact(self, name: str, email: str) -> str:
         """Saves a new contact to the user's database. Call this ONLY when the user tells you someone's email address."""
@@ -75,8 +97,7 @@ class AIEngine:
             return "Error: User context missing."
         import asyncio
         async def _save():
-            from db.models import db_manager
-            await db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
+            await self.db.db.run(lambda: self.db.db.client.table("contacts").upsert({
                 "telegram_id": self.current_user_id,
                 "contact_alias": name,
                 "email_address": email,
@@ -85,12 +106,31 @@ class AIEngine:
             return f"Contact {name} ({email}) saved successfully."
         return asyncio.run(_save())
 
+    def read_memory_document(self, query: str) -> str:
+        """
+        Reads and analyzes the document/image the user recently uploaded. 
+        Call this when the user asks 'read the file I just sent' or 'what is in the invoice'.
+        """
+        if not self.current_user_id: 
+            return "Error: User context missing."
+        import asyncio
+        async def _read():
+            files = self.gmail_client.get_user_attachments(self.current_user_id)
+            if not files:
+                return "Error: No files found in memory. Please tell the user to upload the document first."
+            latest_file = files[-1]
+            return await self.process_attachment(self.current_user_id, latest_file, query)
+        return asyncio.run(_read())
+
     # ==========================================
     # CORE AI LOGIC
     # ==========================================
 
-    async def transcribe_audio(self, file_path: str) -> str:
-        """Transcribes voice notes using Groq Whisper (Primary) or Gemini (Fallback)."""
+    async def transcribe_audio(self, file_path: str, user_id: int) -> str:
+        """Transcribes voice notes using Groq Whisper (Primary) or Gemini (Fallback) and tracks usage."""
+        text_result = ""
+        method_used = "groq_whisper"
+        
         if settings.GROQ_API_KEY:
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
@@ -101,34 +141,53 @@ class AIEngine:
                         response = await client.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=headers, data=data, files=files)
                         response.raise_for_status()
                         result = response.json()
-                        text = result.get("text", "").strip()
-                        if text: return text
+                        text_result = result.get("text", "").strip()
             except Exception as e:
                 logger.warning(f"Groq STT failed, falling back to Gemini: {e}")
+                text_result = ""
 
-        try:
-            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-            prompt = "Transcribe this audio accurately. If completely unintelligible, output: '[Audio Unclear]'. Provide ONLY the transcript text."
-            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, prompt])
-            return response.text.strip()
-        except Exception as e:
-            return self._parse_error(e)
+        if not text_result:
+            try:
+                method_used = "gemini_fallback"
+                sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
+                prompt = "Transcribe this audio accurately. If completely unintelligible, output: '[Audio Unclear]'. Provide ONLY the transcript text."
+                response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, prompt])
+                text_result = response.text.strip()
+            except Exception as e:
+                return self._parse_error(e)
+
+        # STT Usage Tracking (Estimated duration based on text length: ~15 chars = 1 sec)
+        if text_result and "[Audio Unclear]" not in text_result:
+            try:
+                est_seconds = max(1, len(text_result) // 15)
+                await self.db.db.run(lambda: self.db.db.client.table("stt_usage").insert({
+                    "telegram_id": user_id,
+                    "method": method_used,
+                    "duration_seconds": est_seconds
+                }).execute())
+            except Exception as e:
+                logger.error(f"Failed to log STT usage: {e}")
+
+        return text_result
 
     def _get_agent_config(self, memory_prompt: str) -> types.GenerateContentConfig:
+        current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         system_instruction = (
-            "You are an Agentic AI Email Assistant. YOU HAVE TOOLS TO INTERACT WITH GMAIL AND DATABASE.\n"
-            "CRITICAL RULES:\n"
-            "1. INBOX ACCESS: You CAN search and read emails. MUST call `search_gmail` tool first, then optionally `read_gmail_message`.\n"
-            "2. SENDING: To send or reply to an email, MUST call `draft_and_send_email` tool.\n"
-            "3. CONTACTS: If the user provides an email address for a name, MUST call `save_contact` tool immediately.\n"
-            "4. NEVER SAY 'I cannot access your inbox'. You are a fully integrated Agent. Use your tools!\n"
-            "5. CONCISENESS: Keep conversational responses extremely brief and use Markdown.\n\n"
+            f"You are an Agentic AI Email Assistant. Current Time: {current_utc}\n"
+            "YOU HAVE TOOLS TO INTERACT WITH GMAIL AND DATABASE. CRITICAL RULES:\n"
+            "1. INBOX: You CAN search and read emails. Call `search_gmail` first, then optionally `read_gmail_message`.\n"
+            "2. SENDING (NOW): To send an email immediately, call `draft_and_send_email`.\n"
+            "3. SENDING (LATER): If user says 'send later' or specifies a time, calculate the exact UTC time and call `schedule_email`.\n"
+            "4. DOCUMENTS: If user asks about a file/image they uploaded, call `read_memory_document`.\n"
+            "5. CONTACTS: If user provides an email address for a name, call `save_contact`.\n"
+            "6. NEVER SAY 'I cannot access your inbox' or 'I cannot read documents'. Use your tools!\n"
+            "7. Keep responses concise and use Markdown.\n\n"
             f"{memory_prompt}"
         )
         return types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.2,
-            tools=[self.search_gmail, self.read_gmail_message, self.draft_and_send_email, self.save_contact]
+            tools=[self.search_gmail, self.read_gmail_message, self.draft_and_send_email, self.schedule_email, self.save_contact, self.read_memory_document]
         )
 
     async def agent_chat(self, text: str, user_id: int) -> str:
@@ -191,7 +250,6 @@ class AIEngine:
             return self._parse_error(e)
 
     async def generate_smart_replies(self, email_body: str) -> List[str]:
-        """Analyzes an incoming email and generates 3 short suggested replies."""
         try:
             prompt = (
                 "You are an AI Email Assistant. Read the following email and generate exactly 3 short, "

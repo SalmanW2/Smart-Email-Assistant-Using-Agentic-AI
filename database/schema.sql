@@ -153,3 +153,44 @@ ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE;
 -- 2. Blocked users table mein temporary suspension (Time-bound block) ke liye column add karna
 ALTER TABLE blocked_users
 ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
+
+-- Scheduled Emails Table
+CREATE TABLE IF NOT EXISTS scheduled_emails (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_id BIGINT NOT NULL,
+    to_email VARCHAR(255) NOT NULL,
+    subject VARCHAR(500),
+    body TEXT,
+    attachments JSONB DEFAULT '[]'::jsonb,
+    scheduled_time TIMESTAMP NOT NULL, -- The exact UTC time to send
+    status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'sent', 'failed'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+);
+
+-- STT Usage Tracking
+CREATE TABLE IF NOT EXISTS stt_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_id BIGINT NOT NULL,
+    method VARCHAR(50), -- 'groq_whisper', 'gemini_fallback'
+    duration_seconds INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS saved_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_id BIGINT NOT NULL,
+    file_id VARCHAR(255) NOT NULL,
+    file_name VARCHAR(500),
+    context_topic VARCHAR(255), -- (e.g., "Ghous Invoice")
+    sent_to_emails JSONB DEFAULT '[]'::jsonb, -- کن کن logon ko bheji ja chuki hai
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_saved_attachments_telegram_id ON saved_attachments(telegram_id);
+
+-- Agar pehle se unique constraint nahi lagi hui thi toh yeh run karein:
+ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
+ALTER TABLE contacts ADD CONSTRAINT contacts_telegram_id_email_address_key UNIQUE (telegram_id, email_address);

@@ -15,14 +15,14 @@ class GmailClient:
         self.user_attachments = {} 
 
     def _handle_auth_error(self, e: Exception) -> str:
-        """Centralized error handler for Google API expiration/credential issues."""
+        """Centralized error handler for Google API expiration or credential issues."""
         err_str = str(e).lower()
-        if "refresh_token" in err_str or "credentials" in err_str or "token" in err_str or "unauthorized" in err_str:
-            return "❌ *Authentication Expired:* Aapke Google account ka access invalid ya expire ho gaya hai. Please '⚙️ Settings' menu mein ja kar **Logout** karein aur dobara Google se connect karein."
+        if "refresh_token" in err_str or "credentials" in err_str or "token" in err_str or "unauthorized" in err_str or "invalid_grant" in err_str:
+            return "❌ *Authentication Expired:* Your Google account access is invalid or expired. Please go to '⚙️ Settings', click **Logout Account**, and connect your account again."
         return f"❌ Error: {str(e)}"
 
     async def get_service(self, user_id: int):
-        """Database se token nikal kar Gmail service banata hai"""
+        """Retrieves the token from the database and builds the Gmail service."""
         user = await db_manager.get_user(user_id)
         if not user or not user.get("auth_token"):
             return None
@@ -46,16 +46,23 @@ class GmailClient:
         return None
 
     def add_user_attachment(self, user_id: int, file_path: str):
+        """Stores a file path in RAM temporarily for the current session."""
         if user_id not in self.user_attachments:
             self.user_attachments[user_id] = []
         self.user_attachments[user_id].append(file_path)
 
     def get_user_attachments(self, user_id: int):
+        """Retrieves the list of temporary file paths for the user."""
         return self.user_attachments.get(user_id, [])
 
     def clear_user_attachments(self, user_id: int):
+        """Deletes temporary files from the server's RAM/Disk to prevent storage bloat."""
         for fp in self.user_attachments.get(user_id, []):
-            if os.path.exists(fp): os.remove(fp)
+            if os.path.exists(fp): 
+                try:
+                    os.remove(fp)
+                except: 
+                    pass
         self.user_attachments[user_id] = []
 
     async def get_emails(self, user_id: int, query: str = 'is:unread', max_results: int = 5):
@@ -154,6 +161,7 @@ class GmailClient:
             message['subject'] = subject
             message.attach(MIMEText(body, 'plain'))
 
+            # Fetch any files stored in RAM for this session
             global_atts = self.get_user_attachments(user_id)
             all_files = manual_attachments + global_atts
 
@@ -175,8 +183,12 @@ class GmailClient:
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
             service.users().messages().send(userId='me', body={'raw': raw}).execute()
             
+            # Cleanup files after sending
             for file_path in manual_attachments:
-                if os.path.exists(file_path): os.remove(file_path)
+                if os.path.exists(file_path): 
+                    try:
+                        os.remove(file_path)
+                    except: pass
             self.clear_user_attachments(user_id)
             
             return "✅ Email transmitted successfully."

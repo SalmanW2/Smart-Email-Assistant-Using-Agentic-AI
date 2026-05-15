@@ -1,7 +1,6 @@
-import jwt
 import os
-from datetime import datetime, timedelta, timezone
 import asyncio
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,7 +46,6 @@ app = FastAPI(
 )
 
 # --- CORS MIDDLEWARE ---
-# Ensure frontend can talk to backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -57,7 +55,7 @@ app.add_middleware(
 )
 
 # --- REGISTER ROUTERS ---
-# All logic is now handled in these modular files
+# All logic is smoothly delegated to modular routers
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(user_router, prefix="/api/user", tags=["User"])
@@ -81,41 +79,19 @@ async def root():
     """
 
 @app.get("/callback")
-async def google_callback(request: Request):
+async def google_callback_forwarder(request: Request):
+    """
+    Legacy Forwarder: Prevents Google OAuth from breaking if the Google Cloud 
+    Console is still pointing to the root /callback instead of /api/auth/callback.
+    """
     code = request.query_params.get("code")
-    state_uuid = request.query_params.get("state")
+    state = request.query_params.get("state")
     
-    if not code or not state_uuid:
-        return RedirectResponse(url=f"/callback_success?msg=Invalid Request&success=false")
+    if code and state:
+        return RedirectResponse(url=f"/api/auth/callback?code={code}&state={state}")
+    
+    return RedirectResponse(url="/api/auth/callback")
 
-    status_type, result_data = process_callback(code, state_uuid)
-    
-    # FIXED: Route Admin Login Success with JWT Token
-    if status_type == "admin":
-        email = result_data
-        
-        # Generate JWT Token for Google Login
-        JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-enterprise-key-321")
-        expire = datetime.now(timezone.utc) + timedelta(hours=24)
-        token_data = {"sub": email, "role": "admin", "exp": expire} 
-        access_token = jwt.encode(token_data, JWT_SECRET, algorithm="HS256")
-        
-        # Send token to React frontend via URL
-        return RedirectResponse(url=f"/admin/dashboard?token={access_token}&email={email}", status_code=302)
-        
-    # Route: Admin Login Failed
-    elif status_type == "error" and "Admin" in result_data:
-        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=false&is_admin_error=true")
-        
-    # Route: User Login Success
-    elif status_type == "user":
-        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=true")
-        
-    # Route: Standard Errors
-    else:
-        return RedirectResponse(url=f"/callback_success?msg={result_data}&success=false")
-    
-    
 @app.get("/health")
 async def health_check():
     """Health check for Render/Deployment monitoring."""
