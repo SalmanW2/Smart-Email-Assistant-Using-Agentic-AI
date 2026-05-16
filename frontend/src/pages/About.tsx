@@ -35,7 +35,7 @@ const About = () => {
             <Link to="/" className="p-2 -ml-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </Link>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Knowledge Base</h1>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-white">About Us</h1>
           </div>
           <ThemeToggle />
         </div>

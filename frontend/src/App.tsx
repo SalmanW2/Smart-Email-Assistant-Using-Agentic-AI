@@ -3,7 +3,21 @@ import Landing from './pages/Landing';
 import AdminLogin from './pages/AdminLogin';
 import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
-import About from './pages/About'; // Help renamed to About
+import About from './pages/About';
+
+// ==========================================
+// CENTRALIZED PROTECTED ROUTE WRAPPER
+// ==========================================
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const adminEmail = localStorage.getItem('admin_email');
+  
+  if (!adminEmail) {
+    // Agar session nahi hai to security warning ke sath login par bhej do
+    return <Navigate to="/admin/login?error=Authentication+Required" replace />;
+  }
+  
+  return <>{children}</>;
+};
 
 const App = () => {
   return (
@@ -13,14 +27,28 @@ const App = () => {
         <Route path="/" element={<Landing />} />
         <Route path="/about" element={<About />} />
         
-        {/* Admin Auth */}
+        {/* Admin Authentication */}
         <Route path="/admin/login" element={<AdminLogin />} />
         
-        {/* Protected Admin Routes */}
-        <Route path="/admin/dashboard" element={<Dashboard />} />
-        <Route path="/admin/settings" element={<Settings />} />
+        {/* Protected Admin Routes (Automatic Security Guard) */}
+        <Route 
+          path="/admin/dashboard" 
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/admin/settings" 
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          } 
+        />
         
-        {/* Strict Fallback: Agar URL ghalat ho toh Landing page par bhej do */}
+        {/* Strict Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

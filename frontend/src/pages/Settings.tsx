@@ -1,30 +1,20 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import Navbar from '../components/Navbar';
 import { KeyRound, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
 const Settings = () => {
-  const navigate = useNavigate();
-  
-  // FIX: Switched from adminToken to adminEmail for consistent Google Login validation
   const adminEmail = localStorage.getItem('admin_email');
   
   // States
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passError, setPassError] = useState('');
-  
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState({ text: '', type: '' });
 
-  // Redirect to login ONLY if the email session is completely gone
-  useEffect(() => {
-    if (!adminEmail) navigate('/admin/login');
-  }, [adminEmail, navigate]);
-
-  // Live Password Validation
+  // Live Password Validation (All rules intact from old code)
   const validatePassword = (pass: string) => {
     if (pass.length === 0) return '';
     if (pass.length < 6) return 'Password must be at least 6 characters.';
@@ -41,27 +31,33 @@ const Settings = () => {
 
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password !== confirmPassword) return;
+    if (password !== confirmPassword) return setMsg({ text: 'Passwords Mismatch', type: 'error' });
     if (passError) return;
     
     setLoading(true);
+    setMsg({ text: '', type: '' });
 
     try {
       const res = await fetch(`${backendUrl}/api/admin/set-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-email': adminEmail || '' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'x-admin-email': adminEmail || '' 
+        },
         body: JSON.stringify({ email: adminEmail, password }),
       });
+      
       if (res.ok) {
         setMsg({ text: 'Manual Password Set Successfully!', type: 'success' });
         setPassword('');
         setConfirmPassword('');
       } else {
-        setMsg({ text: 'Failed to update password. You may not have permission.', type: 'error' });
+        const data = await res.json();
+        setMsg({ text: data.detail || 'Failed to update password.', type: 'error' });
       }
     } catch (err) { 
       setMsg({ text: 'Network Error. Check your connection.', type: 'error' }); 
-    } finally { 
+    } file_name_is_code_accessible { 
       setLoading(false); 
     }
   };

@@ -18,6 +18,7 @@ const ThemeToggle = () => {
     <button 
       onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} 
       className="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 shadow-inner hover:scale-105 transition-transform"
+      aria-label="Toggle Theme"
     >
       {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
     </button>
