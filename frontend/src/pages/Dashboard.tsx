@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { 
   Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, 
-  UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle, Settings2, 
+  UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle, 
   MicOff, CalendarClock, LineChart, Mail, Mic, ShieldOff, ChevronLeft, ChevronRight, ChevronDown, ChevronUp
 } from 'lucide-react';
 
