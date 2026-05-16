@@ -21,7 +21,6 @@ class DBManager:
     def __init__(self) -> None:
         self.db = SupabaseDB()
 
-    # HELPER: Supabase ke NoneType crash ko rokne ke liye
     def _safe_data(self, result):
         return getattr(result, 'data', None) if result else None
 
@@ -283,6 +282,15 @@ class DBManager:
         except Exception as e:
             logger.error(f"DB Error in unblock_user: {e}")
             return False
+
+    async def get_all_blocked_users(self) -> List[Dict[str, Any]]:
+        """FIXED: Fetches all blocked entities to synchronize with the React frontend blocklist."""
+        try:
+            result = await self.db.run(lambda: self.db.client.table("blocked_users").select("*").execute())
+            return self._safe_data(result) or []
+        except Exception as e:
+            logger.error(f"DB Error in get_all_blocked_users: {e}")
+            return []
 
     # ==========================================
     # CONVERSATION HISTORY
