@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Settings, Users, LogOut, Sun, Moon } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, Menu, X, Info, HelpCircle, PhoneCall, LayoutDashboard, LogIn } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const ThemeToggle = () => {
@@ -17,10 +17,10 @@ const ThemeToggle = () => {
   return (
     <button 
       onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} 
-      className="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 shadow-inner hover:scale-105 transition-transform"
+      className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 shadow-inner hover:scale-105 transition-transform"
       aria-label="Toggle Theme"
     >
-      {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
     </button>
   );
 };
@@ -28,61 +28,167 @@ const ThemeToggle = () => {
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // Intelligent Auth Check
+  const adminEmail = localStorage.getItem('admin_email');
+  const isLoggedIn = !!adminEmail;
   
   const isActive = (path: string) => location.pathname === path;
 
   const handleLogout = () => {
-    // FIX: Completely wipe local storage to prevent ghost sessions and redirect loops
     localStorage.clear();
     navigate('/admin/login');
   };
 
-  return (
-    <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 h-16 transition-colors duration-500">
-      <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
-        
-        {/* Brand Logo */}
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md group-hover:shadow-blue-500/30 transition-all">
-            <Bot className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-black text-xl text-slate-900 dark:text-white tracking-tighter">
-            AI Assistant
-          </span>
-        </Link>
+  // Close sidebar automatically when user navigates to a new route
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [location]);
 
-        {/* Navigation Links */}
-        <div className="flex items-center space-x-1 sm:space-x-4">
+  return (
+    <>
+      {/* ======================= TOP NAVIGATION BAR ======================= */}
+      <nav className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 h-20 transition-colors duration-500 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between">
+          
+          {/* Brand Logo & Name */}
+          <Link to="/" className="flex items-center gap-3 sm:gap-4 group">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden shadow-md group-hover:shadow-blue-500/40 transition-all border-2 border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 flex items-center justify-center shrink-0">
+              <img src="/assets/default-avatar.png" alt="Logo" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            </div>
+            <div className="flex flex-col">
+              <span className="font-black text-lg sm:text-2xl text-slate-900 dark:text-white leading-none tracking-tight group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                Smart Email Assistant
+              </span>
+              <span className="text-[10px] sm:text-xs font-bold text-blue-600 dark:text-blue-500 tracking-widest uppercase mt-1">
+                Agentic AI
+              </span>
+            </div>
+          </Link>
+
+          {/* Desktop Navigation Links (Hidden on small screens) */}
+          <div className="hidden xl:flex items-center space-x-2">
+              <ThemeToggle />
+              
+              {isLoggedIn && (
+                <Link 
+                  to="/admin/dashboard" 
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${isActive('/admin/dashboard') ? 'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                >
+                  <LayoutDashboard className="w-4 h-4" /> Dashboard
+                </Link>
+              )}
+
+              <Link 
+                to="/about" 
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${isActive('/about') ? 'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+              >
+                <Info className="w-4 h-4" /> About Us
+              </Link>
+              
+              {isLoggedIn ? (
+                <>
+                  <Link 
+                    to="/admin/settings" 
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${isActive('/admin/settings') ? 'bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                  >
+                    <Settings className="w-4 h-4" /> Settings
+                  </Link>
+                  <button 
+                    onClick={handleLogout} 
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 transition-all"
+                  >
+                    <LogOut className="w-4 h-4" /> Logout
+                  </button>
+                </>
+              ) : (
+                <Link 
+                  to="/admin/login" 
+                  className="ml-2 flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-500/30 hover:-translate-y-0.5"
+                >
+                  Admin Portal <LogIn className="w-4 h-4" />
+                </Link>
+              )}
+          </div>
+
+          {/* Mobile Hamburger Menu Button */}
+          <div className="flex xl:hidden items-center gap-3">
             <ThemeToggle />
-            
-            <Link 
-              to="/admin/dashboard" 
-              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isActive('/admin/dashboard') ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
-            >
-              <Users className="w-4 h-4" />
-              <span className="hidden sm:inline">Dashboard</span>
-            </Link>
-            
-            <Link 
-              to="/admin/settings" 
-              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isActive('/admin/settings') ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
-            >
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">Settings</span>
-            </Link>
-            
-            {/* Logout Button */}
             <button 
-              onClick={handleLogout} 
-              className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 transition-all"
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700"
             >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Logout</span>
+              <Menu className="w-6 h-6" />
             </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* ======================= MOBILE SIDEBAR ======================= */}
+      {/* Background Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[90] xl:hidden animate-in fade-in duration-300"
+          onClick={() => setIsSidebarOpen(false)}
+        ></div>
+      )}
+
+      {/* Sidebar Panel */}
+      <div className={`fixed top-0 right-0 h-full w-[280px] sm:w-[320px] bg-white dark:bg-slate-950 shadow-2xl z-[100] transform transition-transform duration-300 ease-out xl:hidden flex flex-col border-l border-slate-200 dark:border-slate-800 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        
+        {/* Sidebar Header */}
+        <div className="h-20 px-5 flex items-center justify-between border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50">
+          <span className="font-black text-lg text-slate-900 dark:text-white tracking-tight">Menu</span>
+          <button 
+            onClick={() => setIsSidebarOpen(false)}
+            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors border border-slate-200 dark:border-slate-700"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Sidebar Main Links (Top) */}
+        <div className="p-4 flex flex-col gap-2 flex-1 overflow-y-auto">
+          {isLoggedIn && (
+            <Link to="/admin/dashboard" className={`flex items-center gap-3 p-4 rounded-2xl font-bold transition-all ${isActive('/admin/dashboard') ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
+              <LayoutDashboard className="w-5 h-5" /> Dashboard
+            </Link>
+          )}
+          
+          <Link to="/about" className={`flex items-center gap-3 p-4 rounded-2xl font-bold transition-all ${isActive('/about') ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
+            <Info className="w-5 h-5" /> About Us
+          </Link>
+
+          <Link to="/about#help" className="flex items-center gap-3 p-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+            <HelpCircle className="w-5 h-5" /> Help & Guides
+          </Link>
+
+          <Link to="/about#contact" className="flex items-center gap-3 p-4 rounded-2xl font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all">
+            <PhoneCall className="w-5 h-5" /> Contact Support
+          </Link>
+        </div>
+
+        {/* Sidebar Action Links (Bottom) */}
+        <div className="p-4 border-t border-slate-100 dark:border-slate-800/50 flex flex-col gap-2 bg-slate-50/30 dark:bg-slate-900/30">
+          {isLoggedIn ? (
+            <>
+              <Link to="/admin/settings" className={`flex items-center gap-3 p-4 rounded-2xl font-bold transition-all ${isActive('/admin/settings') ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}>
+                <Settings className="w-5 h-5" /> Settings
+              </Link>
+              <button onClick={handleLogout} className="flex items-center gap-3 p-4 rounded-2xl font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all w-full text-left">
+                <LogOut className="w-5 h-5" /> Logout
+              </button>
+            </>
+          ) : (
+            <Link to="/admin/login" className="flex items-center justify-center gap-3 p-4 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-all shadow-md">
+              <LogIn className="w-5 h-5" /> Admin Login
+            </Link>
+          )}
         </div>
 
       </div>
-    </nav>
+    </>
   );
 };
 

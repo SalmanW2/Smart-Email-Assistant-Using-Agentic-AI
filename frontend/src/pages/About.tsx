@@ -1,95 +1,171 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft, Bot, Shield, Mic, Search, Send, Sun, Moon } from 'lucide-react';
-
-const ThemeToggle = () => {
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
-  return (
-    <button
-      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      className="p-2.5 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-blue-600 dark:text-blue-400 hover:border-blue-500 transition-all shadow-inner"
-    >
-      {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-    </button>
-  );
-};
+import { useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import Navbar from '../components/Navbar';
+import { 
+  Bot, Shield, Zap, Mail, MessageSquare, 
+  ChevronRight, Phone, Send, Lock, CheckCircle2 
+} from 'lucide-react';
 
 const About = () => {
-  return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors duration-300">
-      
-      {/* Premium Sticky Header */}
-      <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 transition-colors">
-        <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link to="/" className="p-2 -ml-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors">
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white">About Us</h1>
-          </div>
-          <ThemeToggle />
-        </div>
-      </div>
+  const location = useLocation();
 
-      <div className="max-w-4xl mx-auto px-6 pt-10 space-y-12">
+  // FIX: Smooth Scroll Logic for Sidebar Links (/about#help, /about#contact)
+  useEffect(() => {
+    if (location.hash) {
+      const element = document.getElementById(location.hash.substring(1));
+      if (element) {
+        // Thora delay taake page render hone ke baad smooth scroll ho
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }, [location]);
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-50 via-white to-blue-50 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950/20 font-sans transition-colors duration-500">
+      <Navbar />
+      
+      {/* Main Content Container */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 space-y-24">
         
-        {/* Section 1: Telegram Bot Guide */}
-        <section>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg text-blue-700 dark:text-blue-400"><Bot className="w-6 h-6" /></div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Telegram Agent Guide</h2>
+        {/* ==========================================
+            1. HERO / ABOUT SECTION
+        ========================================== */}
+        <section id="about" className="text-center space-y-6 pt-10 animate-in fade-in slide-in-from-bottom-8 duration-700 scroll-mt-24">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 font-bold text-sm border border-blue-100 dark:border-blue-500/20 mb-4 shadow-sm">
+            <Bot className="w-4 h-4" /> Powered by Agentic AI
           </div>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">1. Connect Your Account</h3>
-              <p className="text-slate-600 dark:text-slate-400">Open <a href="http://t.me/Smart_Emailbot" className="text-blue-600 dark:text-blue-400 hover:underline">@Smart_Emailbot</a> on Telegram and send <code>/start</code>. Click the generated secure link to connect your Gmail account via Google OAuth.</p>
+          <h1 className="text-4xl sm:text-6xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">
+            Your Smart <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">Email Assistant</span>
+          </h1>
+          <p className="max-w-2xl mx-auto text-lg text-slate-600 dark:text-slate-400 font-medium">
+            Seamlessly manage your professional communications. Draft, schedule, and analyze emails using natural language voice notes or text commands directly from Telegram.
+          </p>
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-4 pt-6">
+            <Link to="/admin/login" className="flex items-center justify-center gap-2 w-full sm:w-auto bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-500/30">
+              Go to Admin Portal <ChevronRight className="w-5 h-5" />
+            </Link>
+            <a href="#how-it-works" className="flex items-center justify-center gap-2 w-full sm:w-auto bg-white dark:bg-slate-900 text-slate-700 dark:text-white px-8 py-4 rounded-2xl font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-all shadow-sm border border-slate-200 dark:border-slate-800">
+              Learn More
+            </a>
+          </div>
+        </section>
+
+        {/* ==========================================
+            2. HOW IT WORKS
+        ========================================== */}
+        <section id="how-it-works" className="scroll-mt-24">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-black text-slate-900 dark:text-white">How It Works</h2>
+            <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">Three simple steps to automate your workflow.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              { icon: MessageSquare, title: "1. Connect Bot", desc: "Link your Telegram account to our secure system and authorize Gmail access." },
+              { icon: Zap, title: "2. Send Commands", desc: "Use voice notes or text to instruct the AI to draft an email on your behalf." },
+              { icon: Mail, title: "3. Auto-Dispatch", desc: "The AI structures, schedules, and dispatches the email automatically." }
+            ].map((item, i) => (
+              <div key={i} className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm hover:shadow-xl transition-all text-center group">
+                <div className="w-16 h-16 mx-auto bg-blue-50 dark:bg-blue-500/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300 shadow-inner">
+                  <item.icon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{item.title}</h3>
+                <p className="text-slate-600 dark:text-slate-400 text-sm font-medium">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ==========================================
+            3. SECURITY & PRIVACY
+        ========================================== */}
+        <section id="security" className="bg-slate-900 dark:bg-slate-950 text-white rounded-[3rem] p-8 sm:p-12 shadow-2xl relative overflow-hidden scroll-mt-24">
+          {/* Decorative Background Glows */}
+          <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30 animate-pulse"></div>
+          <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30 animate-pulse delay-1000"></div>
+          
+          <div className="relative z-10 flex flex-col md:flex-row items-center gap-12">
+            <div className="flex-1 space-y-6">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 font-bold text-sm backdrop-blur-md border border-white/20">
+                <Shield className="w-4 h-4 text-emerald-400" /> Enterprise Grade
+              </div>
+              <h2 className="text-3xl sm:text-4xl font-black leading-tight">Your Data is Encrypted & Secure.</h2>
+              <p className="text-slate-300 text-lg font-medium leading-relaxed">
+                We utilize JSON Web Tokens (JWT) for authentication and Supabase Row Level Security (RLS) to ensure your data never falls into the wrong hands. Your credentials and conversations are fully isolated.
+              </p>
+              <ul className="space-y-4 pt-2">
+                <li className="flex items-center gap-3 text-slate-200 font-bold"><CheckCircle2 className="w-6 h-6 text-emerald-400" /> End-to-end credential encryption</li>
+                <li className="flex items-center gap-3 text-slate-200 font-bold"><CheckCircle2 className="w-6 h-6 text-emerald-400" /> Granular Admin access controls</li>
+                <li className="flex items-center gap-3 text-slate-200 font-bold"><CheckCircle2 className="w-6 h-6 text-emerald-400" /> No unauthorized data sharing</li>
+              </ul>
             </div>
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50 dark:bg-slate-800/20">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-2"><Send className="w-5 h-5 text-green-600 dark:text-green-400"/> 2. Send Emails via Chat</h3>
-              <p className="text-slate-600 dark:text-slate-400">Simply type naturally. Example: <i className="text-slate-500 dark:text-slate-300">"Send an email to my manager saying the project is complete."</i> The AI will auto-detect the contact, draft the email, and ask for your final confirmation.</p>
-            </div>
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-2"><Search className="w-5 h-5 text-purple-600 dark:text-purple-400"/> 3. Search & Summarize</h3>
-              <p className="text-slate-600 dark:text-slate-400">Ask the bot to check your inbox: <i className="text-slate-500 dark:text-slate-300">"Read my last 3 unread emails"</i> or <i className="text-slate-500 dark:text-slate-300">"Search for emails from HR."</i> The AI will provide a concise summary to save your time.</p>
-            </div>
-            <div className="p-6">
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-2"><Mic className="w-5 h-5 text-red-500 dark:text-red-400"/> 4. Voice Commands</h3>
-              <p className="text-slate-600 dark:text-slate-400">Don't want to type? Send a voice note to the bot. It will transcribe your voice, understand your intent, and execute the command flawlessly.</p>
+            <div className="w-full md:w-1/3 flex justify-center drop-shadow-2xl">
+              <Lock className="w-40 h-40 text-slate-700 dark:text-slate-800" />
             </div>
           </div>
         </section>
 
-        {/* Section 2: Admin Portal Guide */}
-        <section>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-slate-800 dark:bg-slate-700 p-2 rounded-lg text-white"><Shield className="w-6 h-6" /></div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Admin Portal Guide</h2>
+        {/* ==========================================
+            4. HELP & GUIDES (FAQ)
+        ========================================== */}
+        <section id="help" className="scroll-mt-24">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-black text-slate-900 dark:text-white">Help & Guides</h2>
+            <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">Frequently asked questions and troubleshooting.</p>
           </div>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 space-y-6 transition-colors">
-            <div>
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Login Access</h3>
-              <p className="text-slate-600 dark:text-slate-400 mt-1">Only authorized Admins can access the dashboard. Use Google Login or the Manual Password option set by a Super Admin.</p>
+          <div className="max-w-3xl mx-auto space-y-4">
+            {[
+              { q: "How do I connect my Gmail account?", a: "Start the bot on Telegram and use the /connect command. It will provide a secure Google OAuth link for authorization." },
+              { q: "What is 'Agentic AI'?", a: "Unlike standard chatbots, Agentic AI doesn't just talk; it acts. It can read your command, structure a professional email, identify the recipient, and dispatch it automatically." },
+              { q: "Why are my voice notes failing?", a: "Ensure the administrator has not restricted your voice privileges. Also, make sure your voice note is clear and under the maximum duration limit." },
+              { q: "What happens if I get blocked?", a: "If an admin blocks your account, the bot will stop responding to your commands immediately. You will need to contact support or your system admin to lift the restriction." }
+            ].map((faq, i) => (
+              <div key={i} className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 hover:shadow-md transition-shadow">
+                <h4 className="font-bold text-lg text-slate-900 dark:text-white mb-2 flex items-start gap-2">
+                  <span className="text-blue-500 mt-1">Q.</span> {faq.q}
+                </h4>
+                <p className="text-slate-600 dark:text-slate-400 font-medium leading-relaxed pl-6">{faq.a}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ==========================================
+            5. CONTACT US
+        ========================================== */}
+        <section id="contact" className="max-w-4xl mx-auto text-center scroll-mt-24 pb-12">
+          <div className="bg-blue-50/50 dark:bg-blue-900/10 p-8 sm:p-12 rounded-[3rem] border border-blue-100 dark:border-blue-800/30 shadow-inner">
+            <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-3xl flex items-center justify-center mb-6 shadow-xl shadow-blue-500/30 transform rotate-3 hover:rotate-0 transition-transform">
+              <Phone className="w-8 h-8" />
             </div>
-            <hr className="border-slate-100 dark:border-slate-800/50" />
-            <div>
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Managing Users</h3>
-              <p className="text-slate-600 dark:text-slate-400 mt-1">The dashboard allows you to view all bot users. If a user is misusing the bot, you can click the <b className="text-slate-900 dark:text-white">Block</b> button to revoke their Telegram access immediately.</p>
-            </div>
-            <hr className="border-slate-100 dark:border-slate-800/50" />
-            <div>
-              <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Admin Settings</h3>
-              <p className="text-slate-600 dark:text-slate-400 mt-1">In the Settings tab, you can set a fallback password for manual login. Super Admins also have the authority to add or remove other administrators from the system.</p>
-            </div>
+            <h2 className="text-3xl font-black text-slate-900 dark:text-white mb-4">Need More Help?</h2>
+            <p className="text-slate-600 dark:text-slate-400 mb-10 max-w-xl mx-auto font-medium">
+              Our support team is available to assist you with any technical issues, onboarding process, or custom feature requests.
+            </p>
+            
+            <form className="max-w-md mx-auto space-y-4 text-left" onSubmit={(e) => { e.preventDefault(); alert("Message sent successfully! We will get back to you soon."); }}>
+              <input 
+                type="email" 
+                placeholder="Your Email Address" 
+                required 
+                className="w-full p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all dark:text-white font-medium shadow-sm" 
+              />
+              <textarea 
+                placeholder="How can we help you?" 
+                required 
+                rows={4} 
+                className="w-full p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all dark:text-white font-medium shadow-sm resize-none"
+              ></textarea>
+              <button 
+                type="submit" 
+                className="w-full bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-800 dark:hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-lg mt-2"
+              >
+                <Send className="w-4 h-4" /> Send Message
+              </button>
+            </form>
           </div>
         </section>
 

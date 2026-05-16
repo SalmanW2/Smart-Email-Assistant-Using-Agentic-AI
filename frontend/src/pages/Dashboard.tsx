@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 import { 
   Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search, 
   UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle, Settings2, 
-  MicOff, CalendarClock, LineChart, Mail, Mic, ShieldOff, ChevronLeft, ChevronRight
+  MicOff, CalendarClock, LineChart, Mail, Mic, ShieldOff, ChevronLeft, ChevronRight, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; ai_allowed?: boolean; voice_allowed?: boolean; created_at: string; }
@@ -22,7 +22,7 @@ const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assi
 const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: { isOpen: boolean, title: string, message: string, onConfirm: () => void, onCancel: () => void }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 p-4">
       <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl max-w-sm w-full shadow-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-200">
         <div className="flex items-center gap-3 mb-4 text-red-600 dark:text-red-500">
           <AlertCircle className="w-6 h-6" />
@@ -39,20 +39,20 @@ const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: { isOpen:
 };
 
 // ==========================================
-// 2. LOADING SKELETON COMPONENT
+// 2. LIST SKELETON COMPONENT
 // ==========================================
-const SkeletonLoader = () => (
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 animate-pulse">
-    {[1, 2, 3, 4, 5, 6].map(i => (
-      <div key={i} className="bg-slate-200 dark:bg-slate-800 h-40 rounded-2xl"></div>
+const ListSkeletonLoader = () => (
+  <div className="space-y-3 p-4 animate-pulse">
+    {[1, 2, 3, 4, 5].map(i => (
+      <div key={i} className="bg-slate-200 dark:bg-slate-800/50 h-20 rounded-2xl w-full"></div>
     ))}
   </div>
 );
 
 // ==========================================
-// 3. ISOLATED USER CARD COMPONENT
+// 3. ACCORDION USER LIST ITEM
 // ==========================================
-const UserCard = ({ user, blocks, onUpdate, isManaging, setManageUserId, triggerConfirm }: { user: User, blocks: Block[], onUpdate: any, isManaging: boolean, setManageUserId: any, triggerConfirm: any }) => {
+const AccordionUserItem = ({ user, blocks, onUpdate, isManaging, setManageUserId, triggerConfirm }: { user: User, blocks: Block[], onUpdate: any, isManaging: boolean, setManageUserId: any, triggerConfirm: any }) => {
   const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
   const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
   const [tmpBlockDays, setTmpBlockDays] = useState(0);
@@ -69,59 +69,77 @@ const UserCard = ({ user, blocks, onUpdate, isManaging, setManageUserId, trigger
     );
   };
 
+  const toggleExpand = () => {
+    if (isManaging) setManageUserId(null);
+    else setManageUserId(user.telegram_id);
+  };
+
   return (
-    <div className={`bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col hover:shadow-md transition-all ${isManaging ? 'ring-2 ring-blue-500 shadow-lg' : ''}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          {/* USER INSTRUCTION: Placeholder for actual avatar images from /pages/assets/ */}
-          <div className="w-12 h-12 rounded-full overflow-hidden bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center shrink-0 border border-slate-200 dark:border-slate-700">
-             <img src="./assets/default-avatar.png" alt={displayName} className="w-full h-full object-cover opacity-0 transition-opacity duration-300" onLoad={(e) => (e.currentTarget.style.opacity = '1')} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.innerHTML = `<span class="text-blue-700 dark:text-blue-400 font-bold text-lg uppercase">${displayName.charAt(0).toUpperCase()}</span>`; }} />
-          </div>
-          <div>
-            <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{displayName}</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</p>
-          </div>
-        </div>
-        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-          {isActuallyVerified ? 'Verified' : 'Restricted'}
-        </span>
-      </div>
-      <div className="space-y-1 text-sm mb-4">
-        <p className="flex justify-between"><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[150px]">{user.email || 'N/A'}</span></p>
-        <p className="flex justify-between"><span className="text-slate-500">Joined:</span> <span className="font-medium text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
-      </div>
+    <div className={`bg-white dark:bg-slate-900/40 border transition-all duration-300 overflow-hidden ${isManaging ? 'border-blue-400 dark:border-blue-500/50 shadow-md rounded-3xl my-4' : 'border-slate-200 dark:border-slate-800 rounded-2xl mb-3 hover:border-blue-300 dark:hover:border-slate-700'}`}>
       
-      {isManaging ? (
-        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2">
-          <h4 className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Granular Permissions</h4>
-          <div className="space-y-3 mb-4">
-            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-              <span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
-              <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
-            </label>
-            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-              <span className="flex items-center gap-2"><MicOff className="w-4 h-4 text-slate-400"/> Allow Voice Notes</span>
-              <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
-            </label>
-            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temp Ban (Days)</span>
-              <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md outline-none dark:text-white" />
-            </label>
+      {/* List Header (Always Visible) */}
+      <div onClick={toggleExpand} className="p-4 sm:p-5 flex items-center justify-between cursor-pointer group">
+        <div className="flex items-center gap-3 sm:gap-4 overflow-hidden">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full overflow-hidden bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center shrink-0 border border-slate-200 dark:border-slate-700">
+             <img src="/assets/default-avatar.png" alt={displayName} className="w-full h-full object-cover opacity-0 transition-opacity duration-300" onLoad={(e) => (e.currentTarget.style.opacity = '1')} onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.innerHTML = `<span class="text-blue-700 dark:text-blue-400 font-bold text-sm sm:text-lg uppercase">${displayName.charAt(0).toUpperCase()}</span>`; }} />
           </div>
-          
-          <div className="flex gap-2">
-            <button onClick={() => onUpdate(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save/Approve</button>
-            <button onClick={handleBlockClick} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">Block/Suspend</button>
-            <button onClick={() => setManageUserId(null)} className="px-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600"><X className="w-4 h-4"/></button>
+          <div className="flex flex-col truncate">
+            <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{displayName}</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{user.email || `ID: ${user.telegram_id}`}</p>
           </div>
         </div>
-      ) : (
-        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto flex gap-2">
-          {!isActuallyVerified ? (
-            <button onClick={() => triggerConfirm("Approve User", "Are you sure you want to grant this user access to the AI system?", () => onUpdate(user.telegram_id, true, true, true, 0))} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve User</button>
-          ) : (
-            <button onClick={() => setManageUserId(user.telegram_id)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm flex items-center justify-center gap-2"><Settings2 className="w-4 h-4" /> Manage Access</button>
-          )}
+        
+        <div className="flex items-center gap-3 shrink-0">
+          <span className={`hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+            {isActuallyVerified ? 'Verified' : 'Restricted'}
+          </span>
+          <div className={`p-2 rounded-full transition-colors ${isManaging ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'text-slate-400 group-hover:bg-slate-50 dark:group-hover:bg-slate-800'}`}>
+            {isManaging ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </div>
+        </div>
+      </div>
+
+      {/* Expanded Content (Accordion Body) */}
+      {isManaging && (
+        <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-950/30 animate-in slide-in-from-top-2 duration-300">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* User Info Details */}
+            <div>
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">User Details</h4>
+              <div className="space-y-2 text-sm">
+                <p className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1"><span className="text-slate-500">Telegram ID:</span> <span className="font-bold text-slate-700 dark:text-slate-300">{user.telegram_id}</span></p>
+                <p className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1"><span className="text-slate-500">Email:</span> <span className="font-bold text-slate-700 dark:text-slate-300">{user.email || 'N/A'}</span></p>
+                <p className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1"><span className="text-slate-500">Joined On:</span> <span className="font-bold text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
+                <p className="flex justify-between pb-1 sm:hidden"><span className="text-slate-500">Status:</span> <span className={`font-bold ${isActuallyVerified ? 'text-emerald-600' : 'text-amber-600'}`}>{isActuallyVerified ? 'Verified' : 'Restricted'}</span></p>
+              </div>
+            </div>
+
+            {/* Access Controls */}
+            <div>
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Granular Controls</h4>
+              <div className="space-y-3 mb-5">
+                <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300 p-2 hover:bg-white dark:hover:bg-slate-900 rounded-lg transition-colors cursor-pointer">
+                  <span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
+                  <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+                </label>
+                <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300 p-2 hover:bg-white dark:hover:bg-slate-900 rounded-lg transition-colors cursor-pointer">
+                  <span className="flex items-center gap-2"><MicOff className="w-4 h-4 text-slate-400"/> Allow Voice Notes</span>
+                  <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+                </label>
+                <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300 p-2">
+                  <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temp Ban (Days)</span>
+                  <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md outline-none dark:text-white" />
+                </label>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row gap-2 mt-auto">
+                <button onClick={() => onUpdate(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save / Approve</button>
+                <button onClick={handleBlockClick} className="flex-1 bg-red-500 text-white py-2.5 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend User' : 'Block Fully'}</button>
+              </div>
+            </div>
+
+          </div>
         </div>
       )}
     </div>
@@ -152,7 +170,7 @@ const Dashboard = () => {
   // Pagination States
   const [userPage, setUserPage] = useState(1);
   const [blockPage, setBlockPage] = useState(1);
-  const ITEMS_PER_PAGE = 9;
+  const ITEMS_PER_PAGE = 10;
 
   // Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void}>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
@@ -162,8 +180,7 @@ const Dashboard = () => {
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
   const [adminEmail, setAdminEmail] = useState(localStorage.getItem('admin_email') || '');
 
-  // Reset pagination when searching or changing tabs
-  useEffect(() => { setUserPage(1); setBlockPage(1); }, [searchQuery, activeTab]);
+  useEffect(() => { setUserPage(1); setBlockPage(1); setManageUserId(null); }, [searchQuery, activeTab]);
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -212,7 +229,6 @@ const Dashboard = () => {
 
   const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-email': adminEmail });
 
-  // 100% Correct Logic: Catch silent fails, 401 kicks out.
   const fetchRole = async () => {
     try {
       const response = await fetch(`${backendUrl}/api/admin/role`, { headers: getHeaders() });
@@ -251,7 +267,7 @@ const Dashboard = () => {
     finally { setIsLoading(false); }
   };
 
-  // Pagination Logic
+  // Pagination Variables
   const filteredUsers = users.filter((u) => 
     (u.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
     (u.username || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -267,6 +283,7 @@ const Dashboard = () => {
   const pendingEmails = scheduledEmails.filter(e => e.status === 'pending').length;
   const failedEmails = scheduledEmails.filter(e => e.status === 'failed').length;
 
+  // Actions
   const updatePermissions = async (tgId: number, is_verified: boolean, ai_allowed: boolean, voice_allowed: boolean, block_days: number) => {
     try {
       const payload = { is_verified, ai_allowed, voice_allowed, block_days, reason: "Admin enforced restrictions" };
@@ -307,7 +324,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30 relative">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-slate-50 via-white to-blue-50 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950/20 font-sans pb-20 transition-colors duration-500 selection:bg-blue-500/30 relative">
       <Navbar />
 
       <ConfirmModal 
@@ -340,7 +357,7 @@ const Dashboard = () => {
         </div>
       )}
 
-      <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-16 z-40 transition-colors duration-500 shadow-sm">
+      <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-20 z-40 transition-colors duration-500 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex space-x-2 sm:space-x-6 overflow-x-auto hide-scrollbar py-2">
             {['stats', 'users', 'blocklist', 'admins'].map((tab) => (
@@ -366,7 +383,7 @@ const Dashboard = () => {
         
         {/* ======================= STATS VIEW ======================= */}
         {activeTab === 'stats' && (
-          isLoading ? <SkeletonLoader /> : stats ? (
+          isLoading ? <ListSkeletonLoader /> : stats ? (
             <div className="space-y-8">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
@@ -375,7 +392,7 @@ const Dashboard = () => {
                   { label: 'Blocked Threats', val: stats.blocked_users || 0, color: 'from-rose-500 to-red-600', icon: ShieldAlert },
                   { label: 'Total Convos', val: stats.total_conversations || 0, color: 'from-purple-500 to-fuchsia-600', icon: Activity },
                 ].map((s) => (
-                  <div key={s.label} className="group relative bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden cursor-default">
+                  <div key={s.label} className="group relative bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden cursor-default">
                     <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${s.color} opacity-5 group-hover:opacity-10 rounded-bl-full transition-opacity duration-500`}></div>
                     <div className="flex justify-between items-start mb-4">
                       <div className={`p-3 rounded-2xl bg-gradient-to-br ${s.color} text-white shadow-md group-hover:scale-110 transition-transform duration-300`}><s.icon className="w-6 h-6" /></div>
@@ -388,11 +405,11 @@ const Dashboard = () => {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm">
                   <div className="flex items-center justify-between mb-6">
                     <div>
                       <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2"><Mic className="w-5 h-5 text-indigo-500" /> STT Audio Processed</h3>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Total audio transcribed by AI (in seconds)</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Total audio transcribed by AI</p>
                     </div>
                     <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400">{stats.total_stt_seconds_used}s</div>
                   </div>
@@ -407,7 +424,7 @@ const Dashboard = () => {
                   </div>
                 </div>
 
-                <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm">
                   <div className="flex items-center justify-between mb-6">
                     <div>
                       <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2"><Mail className="w-5 h-5 text-blue-500" /> Scheduled Emails</h3>
@@ -437,39 +454,40 @@ const Dashboard = () => {
           ) : null
         )}
 
-        {/* ======================= USERS VIEW (WITH PAGINATION) ======================= */}
+        {/* ======================= USERS LIST VIEW ======================= */}
         {activeTab === 'users' && (
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
-            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center bg-slate-50/50 dark:bg-slate-900/50 rounded-t-3xl">
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-colors duration-500">
+            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800/50 flex flex-col sm:flex-row justify-between gap-4 items-center rounded-t-3xl">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Users className="w-5 h-5 text-blue-500" /> User Directory</h2>
               <div className="relative w-full sm:w-80 group">
                 <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400 transition-colors" />
-                <input type="text" placeholder="Search by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white transition-all shadow-sm" />
+                <input type="text" placeholder="Search by name or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/50 dark:text-white transition-all shadow-inner" />
               </div>
             </div>
 
-            {isLoading ? <SkeletonLoader /> : (
+            {isLoading ? <ListSkeletonLoader /> : (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+                <div className="p-4 sm:p-6">
                   {paginatedUsers.length === 0 ? (
-                    <div className="col-span-full flex flex-col items-center justify-center py-12 text-slate-500">
-                      {/* USER INSTRUCTION: Placeholder for empty state image */}
-                      <img src="./assets/empty-state.png" alt="No data" className="w-32 h-32 mb-4 opacity-50" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                      <p className="font-medium">No users found.</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                      <img src="/assets/empty-state.png" alt="No data" className="w-40 h-40 mb-4 opacity-70" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                      <p className="font-medium text-lg">No users found.</p>
                     </div>
                   ) : (
-                    paginatedUsers.map((user) => (
-                      <UserCard key={user.telegram_id} user={user} blocks={blocks} onUpdate={updatePermissions} isManaging={manageUserId === user.telegram_id} setManageUserId={setManageUserId} triggerConfirm={openConfirm} />
-                    ))
+                    <div className="flex flex-col">
+                      {paginatedUsers.map((user) => (
+                        <AccordionUserItem key={user.telegram_id} user={user} blocks={blocks} onUpdate={updatePermissions} isManaging={manageUserId === user.telegram_id} setManageUserId={setManageUserId} triggerConfirm={openConfirm} />
+                      ))}
+                    </div>
                   )}
                 </div>
                 
-                {/* Pagination Controls */}
+                {/* Pagination */}
                 {totalUserPages > 1 && (
-                  <div className="p-4 border-t border-slate-100 dark:border-slate-800/50 flex justify-between items-center bg-slate-50/50 dark:bg-slate-950/50">
-                    <button disabled={userPage === 1} onClick={() => setUserPage(p => p - 1)} className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1"><ChevronLeft className="w-4 h-4"/> Prev</button>
+                  <div className="p-4 border-t border-slate-100 dark:border-slate-800/50 flex justify-between items-center bg-slate-50/50 dark:bg-slate-950/50 rounded-b-3xl">
+                    <button disabled={userPage === 1} onClick={() => setUserPage(p => p - 1)} className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1 transition-colors font-bold text-sm"><ChevronLeft className="w-4 h-4"/> Prev</button>
                     <span className="text-sm font-bold text-slate-500">Page {userPage} of {totalUserPages}</span>
-                    <button disabled={userPage === totalUserPages} onClick={() => setUserPage(p => p + 1)} className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1">Next <ChevronRight className="w-4 h-4"/></button>
+                    <button disabled={userPage === totalUserPages} onClick={() => setUserPage(p => p + 1)} className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1 transition-colors font-bold text-sm">Next <ChevronRight className="w-4 h-4"/></button>
                   </div>
                 )}
               </>
@@ -477,51 +495,78 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* ======================= BLOCKLIST VIEW (WITH PAGINATION) ======================= */}
+        {/* ======================= BLOCKLIST VIEW ======================= */}
         {activeTab === 'blocklist' && (
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Ban className="w-5 h-5 text-red-500" /> Restricted Entities</h2>
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-200/50 dark:border-slate-800/50 overflow-hidden shadow-sm transition-colors duration-500">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 flex items-center gap-2">
+              <Ban className="w-5 h-5 text-red-500" />
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Restricted Entities</h2>
             </div>
             
-            {isLoading ? <div className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading blocklist data...</div> : (
-              <div className="overflow-x-auto w-full">
-                <table className="w-full text-left min-w-[700px]">
-                  <thead className="bg-slate-50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                    <tr><th className="p-5 pl-8">Target Identity</th><th className="p-5">Block Reason & Expiry</th><th className="p-5 pr-8 text-right">Actions</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
-                    {paginatedBlocks.length === 0 ? (
-                       <tr><td colSpan={3} className="p-10 text-center text-slate-500 dark:text-slate-400 font-medium">No active restrictions.</td></tr>
-                    ) : (
-                      paginatedBlocks.map((block) => (
-                        <tr key={block.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                          <td className="p-5 pl-8 font-bold text-slate-900 dark:text-white">
-                            <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-3 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{block.block_type || 'ID'}</span>
-                            {block.block_value}
-                          </td>
-                          <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">
-                            <div>{block.reason || 'Security Policy Violation'}</div>
-                            {block.expires_at && <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 font-bold">Unblocks on: {new Date(block.expires_at).toLocaleString()}</div>}
-                          </td>
-                          <td className="p-5 pr-8 text-right">
-                            <button onClick={() => openConfirm("Lift Restriction", "Are you sure you want to lift this restriction?", () => removeBlock(block.id))} className="text-slate-500 dark:text-slate-400 font-bold text-sm bg-slate-100 dark:bg-slate-800 px-4 py-2 rounded-xl hover:bg-slate-900 hover:text-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700">Lift</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+            {isLoading ? <ListSkeletonLoader /> : (
+              <>
+                {/* Desktop Table View / Mobile Stacked View */}
+                <div className="hidden sm:block overflow-x-auto w-full">
+                  <table className="w-full text-left min-w-[700px]">
+                    <thead className="bg-slate-50/50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                      <tr><th className="p-5 pl-8">Target Identity</th><th className="p-5">Block Reason & Expiry</th><th className="p-5 pr-8 text-right">Actions</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                      {paginatedBlocks.length === 0 ? (
+                         <tr><td colSpan={3} className="p-10 text-center text-slate-500 dark:text-slate-400 font-medium">No active restrictions.</td></tr>
+                      ) : (
+                        paginatedBlocks.map((block) => (
+                          <tr key={block.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                            <td className="p-5 pl-8 font-bold text-slate-900 dark:text-white">
+                              <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mr-3 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">{block.block_type || 'ID'}</span>
+                              {block.block_value}
+                            </td>
+                            <td className="p-5 text-sm font-medium text-slate-600 dark:text-slate-400">
+                              <div>{block.reason || 'Security Policy Violation'}</div>
+                              {block.expires_at && <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 font-bold">Unblocks on: {new Date(block.expires_at).toLocaleString()}</div>}
+                            </td>
+                            <td className="p-5 pr-8 text-right">
+                              <button onClick={() => openConfirm("Lift Restriction", "Are you sure you want to lift this restriction?", () => removeBlock(block.id))} className="text-slate-500 dark:text-slate-400 font-bold text-sm bg-white dark:bg-slate-800 px-4 py-2 rounded-xl hover:bg-slate-900 hover:text-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 shadow-sm">Lift</button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile Specific Stacked Blocklist */}
+                <div className="sm:hidden flex flex-col p-4 gap-3">
+                  {paginatedBlocks.length === 0 ? (
+                    <div className="py-8 text-center text-slate-500 font-medium">No active restrictions.</div>
+                  ) : (
+                    paginatedBlocks.map((block) => (
+                      <div key={block.id} className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 flex flex-col gap-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest bg-white dark:bg-slate-900 px-2 py-0.5 rounded-md border border-slate-100 dark:border-slate-800">{block.block_type || 'ID'}</span>
+                            <div className="font-bold text-slate-900 dark:text-white mt-1">{block.block_value}</div>
+                          </div>
+                          <button onClick={() => openConfirm("Lift Restriction", "Are you sure you want to lift this restriction?", () => removeBlock(block.id))} className="text-slate-500 dark:text-slate-300 font-bold text-xs bg-white dark:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 shadow-sm">Lift</button>
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-400">
+                          <div>Reason: {block.reason || 'Security Policy Violation'}</div>
+                          {block.expires_at && <div className="text-amber-600 dark:text-amber-400 mt-0.5 font-bold">Unblocks on: {new Date(block.expires_at).toLocaleString()}</div>}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
                 
                 {/* Blocklist Pagination */}
                 {totalBlockPages > 1 && (
                   <div className="p-4 border-t border-slate-100 dark:border-slate-800/50 flex justify-between items-center bg-slate-50/50 dark:bg-slate-950/50">
-                    <button disabled={blockPage === 1} onClick={() => setBlockPage(p => p - 1)} className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 disabled:opacity-30 flex items-center gap-1"><ChevronLeft className="w-4 h-4"/> Prev</button>
+                    <button disabled={blockPage === 1} onClick={() => setBlockPage(p => p - 1)} className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1 transition-colors font-bold text-sm"><ChevronLeft className="w-4 h-4"/> Prev</button>
                     <span className="text-sm font-bold text-slate-500">Page {blockPage} of {totalBlockPages}</span>
-                    <button disabled={blockPage === totalBlockPages} onClick={() => setBlockPage(p => p + 1)} className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 disabled:opacity-30 flex items-center gap-1">Next <ChevronRight className="w-4 h-4"/></button>
+                    <button disabled={blockPage === totalBlockPages} onClick={() => setBlockPage(p => p + 1)} className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-200 dark:hover:bg-slate-800 flex items-center gap-1 transition-colors font-bold text-sm">Next <ChevronRight className="w-4 h-4"/></button>
                   </div>
                 )}
-              </div>
+              </>
             )}
           </div>
         )}
@@ -529,7 +574,7 @@ const Dashboard = () => {
         {/* ======================= ADMINS VIEW ======================= */}
         {activeTab === 'admins' && role === 'super_admin' && (
           <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors duration-500">
+            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm transition-colors duration-500">
               <div className="flex items-center gap-3 mb-6">
                 <div className="bg-indigo-100 dark:bg-indigo-500/20 p-3 rounded-2xl">
                   <UserPlus className="w-6 h-6 text-indigo-700 dark:text-indigo-400" />
@@ -540,17 +585,18 @@ const Dashboard = () => {
                 </div>
               </div>
               <form onSubmit={(e) => { e.preventDefault(); openConfirm("Add Admin", `Are you sure you want to grant admin access to ${(e.target as HTMLFormElement).email.value}?`, () => { addAdmin((e.target as HTMLFormElement).email.value); (e.target as HTMLFormElement).reset(); }); }} className="flex flex-col sm:flex-row gap-4 max-w-2xl">
-                <input type="email" name="email" required placeholder="admin@company.com" className="flex-1 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-900 dark:text-white font-medium" />
-                <button type="submit" className="bg-indigo-600 text-white px-8 py-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg">Grant Access</button>
+                <input type="email" name="email" required placeholder="admin@company.com" className="flex-1 p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-900 dark:text-white font-medium shadow-inner" />
+                <button type="submit" className="bg-indigo-600 text-white px-8 py-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg hover:shadow-indigo-500/30">Grant Access</button>
               </form>
             </div>
             
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm transition-colors duration-500">
-              <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2"><Shield className="w-5 h-5 text-purple-500" /> Active Administrators</h2>
+            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-200/50 dark:border-slate-800/50 overflow-hidden shadow-sm transition-colors duration-500">
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-2">
+                <Shield className="w-5 h-5 text-purple-500" />
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Active Administrators</h2>
               </div>
               
-              {isLoading ? <div className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading admins...</div> : (
+              {isLoading ? <ListSkeletonLoader /> : (
                 <div className="overflow-x-auto w-full">
                   <table className="w-full text-left min-w-[700px]">
                     <thead className="bg-slate-50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
@@ -558,7 +604,7 @@ const Dashboard = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                       {admins.map((admin) => (
-                        <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <tr key={admin.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="p-5 pl-8 font-bold text-slate-900 dark:text-white">{admin.email}</td>
                           <td className="p-5">
                             <span className={`px-3 py-1.5 rounded-full text-[10px] font-black tracking-widest uppercase border ${(admin.role || '').includes('super') ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400' : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-400'}`}>
