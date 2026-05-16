@@ -82,7 +82,7 @@ class DBManager:
             return data
         except Exception as e:
             logger.error(f"DB Error in get_all_users: {e}")
-            return self.cache.get("all_users", []) # Fallback to expired cache if DB is down
+            return self.cache.get("all_users", [])
 
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         try:
@@ -113,21 +113,18 @@ class DBManager:
             return False
 
     async def get_active_auto_check_users(self) -> List[Dict[str, Any]]:
-        """NEW: Smart cached fetching for Cron Job to significantly reduce database load."""
+        """Smart cached fetching for Cron Job to significantly reduce database load."""
         if "active_auto_check_users" in self.cache:
             return self.cache["active_auto_check_users"]
         try:
-            # Fetch verified users
             users_res = await self.db.run(lambda: self.db.client.table("users").select("*").eq("is_verified", True).execute())
             verified_users = self._safe_data(users_res) or []
             
-            # Fetch preferences to check auto_check status
             prefs_res = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, auto_check_enabled").execute())
             prefs = {p["telegram_id"]: p.get("auto_check_enabled", True) for p in (self._safe_data(prefs_res) or [])}
             
             active_users = []
             for u in verified_users:
-                # Default is True if not explicitly set to False in preferences
                 if prefs.get(u["telegram_id"], True) and u.get("auth_token"):
                     active_users.append(u)
                     

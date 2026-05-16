@@ -133,7 +133,7 @@ class MemoryManager:
 
     async def cache_email(self, telegram_id: int, gmail_message_id: str, sender: str, sender_email: str,
                          subject: str, preview: str, received_at: str) -> bool:
-        """Cache recent email for context."""
+        """Cache recent email for context. UPSERT added to prevent Duplicate Key Errors (23505)."""
         try:
             await self.db.db.run(lambda: self.db.db.client.table("email_cache").upsert({
                 "telegram_id": telegram_id,
@@ -143,7 +143,7 @@ class MemoryManager:
                 "subject": subject,
                 "preview": preview,
                 "received_at": received_at
-            }).execute())
+            }, on_conflict="telegram_id,gmail_message_id").execute())
             
             # Invalidate cache for this user
             for key in list(self.cache.keys()):
@@ -151,7 +151,9 @@ class MemoryManager:
                     del self.cache[key]
             return True
         except Exception as e:
-            print(f"DB Error in cache_email: {e}")
+            # Silently ignore harmless 23505 errors if Supabase unique constraints trigger it
+            if '23505' not in str(e):
+                print(f"DB Error in cache_email: {e}")
             return False
 
     async def get_cached_emails(self, telegram_id: int, limit: int = 10) -> List[Dict[str, Any]]:
