@@ -55,22 +55,31 @@ class AIEngine:
                 if "error" not in meta:
                     output.append(f"ID: {m['id']} | From: {meta.get('sender')} | Subject: {meta.get('subject')}")
             return "\n".join(output) if output else "Metadata could not be retrieved."
-        return asyncio.run(_search())
+        try:
+            return asyncio.run(_search())
+        except Exception as e:
+            return f"Error during search: {e}"
 
     def read_gmail_message(self, message_id: str) -> str:
         """Reads the full body content of a specific email using its ID."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
-        return asyncio.run(self.gmail_client.read_full_email(self.current_user_id, message_id))
+        try:
+            return asyncio.run(self.gmail_client.read_full_email(self.current_user_id, message_id))
+        except Exception as e:
+            return f"Error reading email: {e}"
 
     def draft_and_send_email(self, to_email: str, subject: str, body: str) -> str:
         """Sends an email immediately. Call this when the user asks to send or reply to an email right now."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
-        res = asyncio.run(self.gmail_client.send_email(self.current_user_id, to_email, subject, body, []))
-        return f"Email sent successfully: {res}"
+        try:
+            res = asyncio.run(self.gmail_client.send_email(self.current_user_id, to_email, subject, body, []))
+            return f"Email sent successfully: {res}"
+        except Exception as e:
+            return f"Error sending email: {e}"
 
     def schedule_email(self, to_email: str, subject: str, body: str, send_time_utc: str) -> str:
         """
@@ -89,7 +98,10 @@ class AIEngine:
                 "scheduled_time": send_time_utc
             }).execute())
             return f"Email successfully scheduled for {send_time_utc} UTC."
-        return asyncio.run(_schedule())
+        try:
+            return asyncio.run(_schedule())
+        except Exception as e:
+            return f"Error scheduling email: {e}"
 
     def save_contact(self, name: str, email: str) -> str:
         """Saves a new contact to the user's database. Call this ONLY when the user tells you someone's email address."""
@@ -104,7 +116,10 @@ class AIEngine:
                 "contact_name": name
             }, on_conflict="telegram_id,email_address").execute())
             return f"Contact {name} ({email}) saved successfully."
-        return asyncio.run(_save())
+        try:
+            return asyncio.run(_save())
+        except Exception as e:
+            return f"Error saving contact: {e}"
 
     def read_memory_document(self, query: str) -> str:
         """
@@ -120,7 +135,10 @@ class AIEngine:
                 return "Error: No files found in memory. Please tell the user to upload the document first."
             latest_file = files[-1]
             return await self.process_attachment(self.current_user_id, latest_file, query)
-        return asyncio.run(_read())
+        try:
+            return asyncio.run(_read())
+        except Exception as e:
+            return f"Error reading document: {e}"
 
     # ==========================================
     # CORE AI LOGIC
@@ -180,8 +198,8 @@ class AIEngine:
             "3. SENDING (LATER): If user says 'send later' or specifies a time, calculate the exact UTC time and call `schedule_email`.\n"
             "4. DOCUMENTS: If user asks about a file/image they uploaded, call `read_memory_document`.\n"
             "5. CONTACTS: If user provides an email address for a name, call `save_contact`.\n"
-            "6. NEVER SAY 'I cannot access your inbox' or 'I cannot read documents'. Use your tools!\n"
-            "7. Keep responses concise and use Markdown.\n\n"
+            "6. Keep responses concise, professional, and use Markdown formatting.\n"
+            "7. Do NOT generate long unnecessary paragraphs. Be helpful and direct.\n\n"
             f"{memory_prompt}"
         )
         return types.GenerateContentConfig(

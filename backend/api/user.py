@@ -5,9 +5,11 @@ from typing import Optional
 
 router = APIRouter()
 
+# --- Pydantic Models for Validation ---
 class UserPreferences(BaseModel):
     ai_mode: Optional[bool] = None
     voice_preference: Optional[str] = None
+    auto_check_enabled: Optional[bool] = None  # NEW: For Cron Job Optimization
 
 @router.get("/preferences/{telegram_id}")
 async def get_preferences(telegram_id: int):
@@ -25,7 +27,8 @@ async def get_preferences(telegram_id: int):
     
     return {
         "ai_mode": prefs.get("ai_mode_enabled", user.get("ai_mode_enabled", True)),
-        "voice_preference": prefs.get("voice_preference", "text")
+        "voice_preference": prefs.get("voice_preference", "text"),
+        "auto_check_enabled": prefs.get("auto_check_enabled", True)  # NEW: Defaults to True
     }
 
 @router.put("/preferences/{telegram_id}")
@@ -35,6 +38,8 @@ async def update_preferences(telegram_id: int, prefs: UserPreferences):
         updates["ai_mode_enabled"] = prefs.ai_mode
     if prefs.voice_preference is not None:
         updates["voice_preference"] = prefs.voice_preference
+    if prefs.auto_check_enabled is not None:  # NEW: Save toggle state
+        updates["auto_check_enabled"] = prefs.auto_check_enabled
     
     try:
         success = await db_manager.update_user_preferences(telegram_id, updates)
@@ -43,7 +48,7 @@ async def update_preferences(telegram_id: int, prefs: UserPreferences):
     except Exception:
         raise HTTPException(status_code=500, detail="Database error")
     
-    return {"message": "Preferences updated"}
+    return {"message": "Preferences updated successfully"}
 
 @router.get("/contacts/{telegram_id}")
 async def get_contacts(telegram_id: int):

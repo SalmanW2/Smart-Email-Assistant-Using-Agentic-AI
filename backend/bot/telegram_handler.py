@@ -19,6 +19,7 @@ from db.memory import memory_manager
 from bot.ai_engine import AIEngine
 from bot.gmail_client import GmailClient
 from bot.voice_handler import voice_handler
+from bot.contact_manager import contact_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class TelegramBotManager:
         self.memory = memory_manager
         self.gmail = GmailClient()
         self.voice = voice_handler
+        self.contact_manager = contact_manager
 
         # --- Comprehensive State Management ---
         self.compose_states = {} 
@@ -196,12 +198,14 @@ class TelegramBotManager:
         else: await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     async def show_paginated_emails(self, message_obj, query='is:unread', offset=0, user_id=None, is_search=False):
+        """Clean UI: Shows strictly 2 emails per page."""
         try:
             if user_id:
                 self.current_queries[user_id] = query
                 self.navigation_history[user_id] = {'type': 'search' if is_search else 'inbox', 'offset': offset}
 
             safe_query = "in:inbox" if query == "label:INBOX" else query
+            # We fetch a slightly larger chunk just to know if "Next" button is needed
             messages = await self.gmail.get_emails(user_id, query=safe_query, max_results=6)
             
             if not messages and offset == 0:
@@ -211,8 +215,9 @@ class TelegramBotManager:
                 else: await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 return
 
-            has_next = len(messages) > 5
-            display_messages = messages[offset:offset+5]
+            has_next = len(messages) > 2
+            # Strictly 2 emails per page
+            display_messages = messages[offset:offset+2]
             
             output_lines = [f"🔍 *Search Results:* `{safe_query}`\n" if is_search else "📥 *Your Inbox:*\n"]
             kb = []
@@ -224,20 +229,17 @@ class TelegramBotManager:
                 sender = meta.get('sender', 'Unknown').replace('*', '').replace('_', '')
                 subj = meta.get('subject', 'No Subject').replace('*', '').replace('_', '')
                 
-                output_lines.append(f"*{i+1+offset}.* {sender}\n_{subj}_\n")
-                row = [
-                    InlineKeyboardButton(f"📖 Read {i+1+offset}", callback_data=f"full_{msg['id']}_{nav_context}_{offset}"),
-                    InlineKeyboardButton(f"🤖 Sum {i+1+offset}", callback_data=f"sum_{msg['id']}_{nav_context}_{offset}"),
-                    InlineKeyboardButton(f"🗑️ Del {i+1+offset}", callback_data=f"manual_del_{msg['id']}_{nav_context}_{offset}")
-                ]
-                kb.append(row)
+                output_lines.append(f"*{i+1+offset}.* {sender[:40]}\n_{subj[:50]}_\n")
+                
+                # Single Read Button per email
+                kb.append([InlineKeyboardButton(f"📖 Read {i+1+offset}", callback_data=f"full_{msg['id']}_{nav_context}_{offset}")])
 
             nav_row = []
             if offset > 0:
-                prev_cb = f"search_page_{offset-5}" if is_search else f"manual_read_{offset-5}"
+                prev_cb = f"search_page_{offset-2}" if is_search else f"manual_read_{offset-2}"
                 nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=prev_cb))
             if has_next:
-                next_cb = f"search_page_{offset+5}" if is_search else f"manual_read_{offset+5}"
+                next_cb = f"search_page_{offset+2}" if is_search else f"manual_read_{offset+2}"
                 nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=next_cb))
             
             if nav_row: kb.append(nav_row)
@@ -283,7 +285,7 @@ class TelegramBotManager:
         user_id = user.id
         text = update.message.text
 
-        # Manual Compose / Reply State Handling
+        # 1. Manual Compose State Handling
         if user_id in self.compose_states:
             state = self.compose_states[user_id]
             kb_cancel = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
@@ -303,7 +305,7 @@ class TelegramBotManager:
             elif state['step'] == 'AWAIT_BODY':
                 state['body'] = text
                 state['step'] = 'AWAIT_ATTACHMENT'
-                state['attachments'] = []
+                if 'attachments' not in state: state['attachments'] = []
                 
                 kb_send = [
                     [InlineKeyboardButton("🚀 Send Email Now", callback_data="send_manual_draft_direct")],
@@ -317,14 +319,24 @@ class TelegramBotManager:
                 await update.message.reply_text("Please upload an attachment file, or click Send Email Now if you are ready.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Send Email Now", callback_data="send_manual_draft_direct"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]))
                 return
 
-        # Search State Handling
+        # 2. Search State Handling with SMART NAME MATCHING
         if user_id in self.search_states and self.search_states[user_id] == 'AWAIT_QUERY':
+            query_text = text
             self.search_states.pop(user_id, None)
-            msg = await update.message.reply_text(f"🔍 Searching for: `{text}`...")
-            await self.show_paginated_emails(msg, query=text, offset=0, user_id=user_id, is_search=True)
+            
+            waiting_msg = await update.message.reply_text(f"🔍 Searching...", parse_mode="Markdown")
+            
+            # Contact matching logic
+            found_contacts = await self.contact_manager.find_contacts_by_name(user_id, query_text)
+            if found_contacts:
+                emails = [c['email_address'] for c in found_contacts]
+                email_query = " OR ".join([f"from:{e}" for e in emails])
+                query_text = f"({email_query}) OR {query_text}"
+                
+            await self.show_paginated_emails(waiting_msg, query=query_text, offset=0, user_id=user_id, is_search=True)
             return
 
-        # Agentic AI Processing
+        # 3. Agentic AI Processing
         if not access["user_data"].get("ai_allowed", True):
             return await update.message.reply_text("🚫 *AI Access Restricted* by Administrator.", parse_mode="Markdown")
 
@@ -354,7 +366,7 @@ class TelegramBotManager:
             if os.path.exists(file_path): os.remove(file_path)
 
             if transcribed_text.startswith("System Error:") or "[Audio Unclear]" in transcribed_text:
-                return await msg.edit_text("❌ *Audio Unclear.* Could you please repeat that?", parse_mode="Markdown")
+                return await msg.edit_text("❌ *Audio Unclear.* Could you please repeat that professionally?", parse_mode="Markdown")
 
             task_id = str(int(time.time() * 1000))
             self.active_voice_tasks.add(task_id)
@@ -376,8 +388,7 @@ class TelegramBotManager:
             prefs = access["user_data"].get("voice_preference", "text")
             if prefs in ["voice", "both"]:
                 await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.RECORD_VOICE)
-                tts_method = access["user_data"].get("preferred_tts_method", "google")
-                audio_path = await self.voice.synthesize(bot_response, preferred_method=tts_method)
+                audio_path = await self.voice.synthesize(bot_response, preferred_method="google")
                 if audio_path and os.path.exists(audio_path):
                     with open(audio_path, 'rb') as audio:
                         await update.message.reply_voice(voice=audio)
@@ -531,25 +542,14 @@ class TelegramBotManager:
             await query.edit_message_text(f"✅ {res}", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
         elif data == "menu_settings":
-            db_user = await self.db.get_user(user_id)
-            voice_pref = db_user.get("voice_preference", "text") if db_user else "text"
-            next_pref = "voice" if voice_pref == "text" else "both" if voice_pref == "voice" else "text"
-            pref_emoji = "📝 Text Only" if voice_pref == "text" else "🗣️ Voice Only" if voice_pref == "voice" else "🔊 Text & Voice"
-            
+            # Just basic settings placeholder since real ones are in UI/DB
             kb = [
-                [InlineKeyboardButton(f"🎙️ Reply Mode: {pref_emoji}", callback_data=f"set_voice_{next_pref}")],
                 [InlineKeyboardButton("🚪 Logout Account", callback_data="action_logout")],
                 self.get_back_button()
             ]
             await query.edit_message_text("⚙️ *Settings*\nConfigure assistant behavior or logout.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-            
-        elif data.startswith("set_voice_"):
-            new_pref = data.replace("set_voice_", "")
-            await self.db.db.run(lambda: self.db.db.client.table("users").update({"voice_preference": new_pref}).eq("telegram_id", user_id).execute())
-            query.data = "menu_settings"
-            await self.handle_button_actions(update, context)
 
-        # Email Actions
+        # Email Actions (Read Full, Summary, Listen, Delete, Untrash, Reply, Get Attachments)
         elif any(data.startswith(x) for x in ["full_", "sum_", "tts_sum_", "manual_del_", "manual_reply_", "manual_untrash_", "getatt_", "sr_"]):
             parts = data.split('_')
             action = parts[0] if not data.startswith("manual_") and not data.startswith("tts_") else f"{parts[0]}_{parts[1]}"
@@ -572,15 +572,17 @@ class TelegramBotManager:
                 formatted_email = f"📧 *From:* {safe_sender}\n📝 *Subject:* {safe_subject}{att_text}\n━━━━━━━━━━━━━━━━━━\n\n{body[:3500]}"
                 if len(body) > 3500: formatted_email += "\n\n[Truncated]"
 
-                smart_replies = await self.ai_engine.generate_smart_replies(body)
-                kb = []
-                for reply_text in smart_replies:
-                    kb.append([InlineKeyboardButton(f"✅ Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:25]}")])
-
+                # Strict Detail View Buttons Layout
+                kb = [
+                    [InlineKeyboardButton("↩️ Custom Reply", callback_data=f"manual_reply_{m_id}_{nav_context}_{offset}"),
+                     InlineKeyboardButton("🗑️ Delete", callback_data=f"manual_del_{m_id}_{nav_context}_{offset}")],
+                    [InlineKeyboardButton("🤖 AI Summary", callback_data=f"sum_{m_id}_{nav_context}_{offset}"),
+                     InlineKeyboardButton("🔊 Listen", callback_data=f"tts_sum_{m_id}_{nav_context}_{offset}")],
+                ]
+                
                 if att_count > 0:
                     kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}_{offset}")])
-                
-                kb.append([InlineKeyboardButton("↩️ Custom Reply", callback_data=f"manual_reply_{m_id}_{nav_context}_{offset}")])
+                    
                 kb.append(self.get_back_button(nav_context, int(offset)))
                 
                 await query.edit_message_text(formatted_email, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -624,26 +626,29 @@ class TelegramBotManager:
                 for reply_text in smart_replies:
                     kb.append([InlineKeyboardButton(f"✅ Quick Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:25]}")])
 
-                kb.append([InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{m_id}_{nav_context}_{offset}")])
                 kb.append([InlineKeyboardButton("📖 Read Full", callback_data=f"full_{m_id}_{nav_context}_{offset}")])
                 kb.append(self.get_back_button(nav_context, int(offset)))
                 
                 await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 
             elif action == "tts_sum":
-                await query.edit_message_text("🔊 Generating Audio...")
+                await query.edit_message_text("🔊 Analyzing & Generating Audio Summary...")
                 await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
                 body = await self.gmail.read_full_email(user_id, m_id)
-                text_to_speak = await self.ai_engine.agent_chat(f"Strictly summarize this email in 3 short sentences for audio playback: {body[:3000]}", user_id)
+                
+                # Strict 3-line TTS summary generation
+                text_to_speak = await self.ai_engine.agent_chat(f"Create a concise 3-sentence spoken summary for this email. Do not include introductory text, just the core facts: {body[:3000]}", user_id)
                 
                 audio_path = await self.voice.synthesize(text_to_speak)
+                kb = [[InlineKeyboardButton("📖 Back to Email", callback_data=f"full_{m_id}_{nav_context}_{offset}")]]
+                
                 if audio_path and os.path.exists(audio_path):
                     with open(audio_path, 'rb') as audio:
-                        await context.bot.send_voice(chat_id=user_id, voice=audio)
+                        await context.bot.send_voice(chat_id=user_id, voice=audio, caption="🔊 Concise Audio Summary")
                     os.remove(audio_path)
-                    await query.edit_message_text("✅ Audio sent.", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, int(offset))]))
+                    await query.edit_message_text("✅ Audio sent successfully.", reply_markup=InlineKeyboardMarkup(kb))
                 else:
-                    await query.edit_message_text("❌ Failed to generate audio.", reply_markup=InlineKeyboardMarkup([self.get_back_button(nav_context, int(offset))]))
+                    await query.edit_message_text("❌ Failed to generate audio.", reply_markup=InlineKeyboardMarkup(kb))
 
             elif action == "manual_del":
                 success = await self.gmail.delete_email(user_id, m_id)
@@ -681,11 +686,12 @@ class TelegramBotManager:
         except: pass
 
     async def check_new_emails(self, context: ContextTypes.DEFAULT_TYPE):
+        """Optimized Cron Job: Only fetches for verified users who have auto_check_enabled = True."""
         async with self.email_lock:
             try:
-                users = await self.db.get_all_users()
+                users = await self.db.get_active_auto_check_users()
                 for user in users:
-                    if user.get("auth_token") and user.get("is_verified"):
+                    if user.get("auth_token"):
                         uid = user["telegram_id"]
                         emails = await self.gmail.get_emails(uid, query='is:unread', max_results=3)
                         for email in emails:
@@ -706,8 +712,7 @@ class TelegramBotManager:
                                     self.run_in_background(self._bg_save_contact(uid, safe_sender))
                                     
                                     text = f"🔔 *New Email Received*\n\n*From:* {safe_sender}\n*Subject:* {safe_subject}"
-                                    kb = [[InlineKeyboardButton("🤖 Summary", callback_data=f"sum_{msg_id}_inbox_0")], 
-                                          [InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_inbox_0")]]
+                                    kb = [[InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_inbox_0")]]
                                     await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
             except Exception as e: 
                 logger.error(f"Check Email Error: {e}")
@@ -743,9 +748,9 @@ class TelegramBotManager:
                 
                 # Notify User of background task outcome
                 if status == "sent":
-                    await context.bot.send_message(chat_id=uid, text=f"✅ *Scheduled Email Sent!*\\n\\n*To:* {to_email}\\n*Subject:* {subject}", parse_mode="Markdown")
+                    await context.bot.send_message(chat_id=uid, text=f"✅ *Scheduled Email Sent!*\n\n*To:* {to_email}\n*Subject:* {subject}", parse_mode="Markdown")
                 else:
-                    await context.bot.send_message(chat_id=uid, text=f"❌ *Scheduled Email Failed!*\\n\\n*To:* {to_email}\\n*Error:* {res}", parse_mode="Markdown")
+                    await context.bot.send_message(chat_id=uid, text=f"❌ *Scheduled Email Failed!*\n\n*To:* {to_email}\n*Error:* {res}", parse_mode="Markdown")
                     
         except Exception as e:
             logger.error(f"Scheduled Email Cron Error: {e}")

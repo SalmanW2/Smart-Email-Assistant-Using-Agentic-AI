@@ -194,3 +194,7 @@ CREATE INDEX idx_saved_attachments_telegram_id ON saved_attachments(telegram_id)
 -- Agar pehle se unique constraint nahi lagi hui thi toh yeh run karein:
 ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
 ALTER TABLE contacts ADD CONSTRAINT contacts_telegram_id_email_address_key UNIQUE (telegram_id, email_address);
+
+-- Add auto_check_enabled to user_preferences table
+ALTER TABLE user_preferences 
+ADD COLUMN IF NOT EXISTS auto_check_enabled BOOLEAN DEFAULT TRUE;

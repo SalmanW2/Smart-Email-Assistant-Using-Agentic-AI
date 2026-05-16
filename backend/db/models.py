@@ -1,11 +1,11 @@
 import asyncio
-import json
 import uuid
 import os
 import hashlib
 import logging
 from typing import Any, Dict, Optional, List
 from supabase import create_client, Client
+from cachetools import TTLCache
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,12 +20,19 @@ class SupabaseDB:
 class DBManager:
     def __init__(self) -> None:
         self.db = SupabaseDB()
+        # RAM Cache (TTL 120 seconds) to prevent "Errno 11: Resource temporarily unavailable"
+        self.cache = TTLCache(maxsize=50, ttl=120)
 
     def _safe_data(self, result):
         return getattr(result, 'data', None) if result else None
 
+    def _invalidate_cache(self, keys: List[str]):
+        """Helper to clear specific caches when data is updated."""
+        for key in keys:
+            self.cache.pop(key, None)
+
     # ==========================================
-    # USER MANAGEMENT
+    # USER MANAGEMENT & CACHING
     # ==========================================
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
@@ -46,6 +53,7 @@ class DBManager:
                 "is_verified": False
             }
             await self.db.run(lambda: self.db.client.table("users").insert(data).execute())
+            self._invalidate_cache(["all_users", "active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in create_user: {e}")
@@ -57,18 +65,24 @@ class DBManager:
                 "email": email,
                 "auth_token": auth_token
             }).eq("telegram_id", telegram_id).execute())
+            self._invalidate_cache(["all_users", "active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in upsert_user_token: {e}")
             return False
 
-    async def get_all_users(self) -> List[Dict[str, Any]]:
+    async def get_all_users(self, use_cache: bool = True) -> List[Dict[str, Any]]:
+        """Cached: Prevents database overload from frequent admin dashboard / cron checks."""
+        if use_cache and "all_users" in self.cache:
+            return self.cache["all_users"]
         try:
             result = await self.db.run(lambda: self.db.client.table("users").select("*").order("created_at", desc=True).execute())
-            return self._safe_data(result) or []
+            data = self._safe_data(result) or []
+            self.cache["all_users"] = data
+            return data
         except Exception as e:
             logger.error(f"DB Error in get_all_users: {e}")
-            return []
+            return self.cache.get("all_users", []) # Fallback to expired cache if DB is down
 
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         try:
@@ -90,11 +104,38 @@ class DBManager:
                     "block_value": str(telegram_id),
                     "reason": reason
                 }).execute())
+                
             await self.db.run(lambda: self.db.client.table("users").update(data).eq("telegram_id", telegram_id).execute())
+            self._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in update_user_status: {e}")
             return False
+
+    async def get_active_auto_check_users(self) -> List[Dict[str, Any]]:
+        """NEW: Smart cached fetching for Cron Job to significantly reduce database load."""
+        if "active_auto_check_users" in self.cache:
+            return self.cache["active_auto_check_users"]
+        try:
+            # Fetch verified users
+            users_res = await self.db.run(lambda: self.db.client.table("users").select("*").eq("is_verified", True).execute())
+            verified_users = self._safe_data(users_res) or []
+            
+            # Fetch preferences to check auto_check status
+            prefs_res = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, auto_check_enabled").execute())
+            prefs = {p["telegram_id"]: p.get("auto_check_enabled", True) for p in (self._safe_data(prefs_res) or [])}
+            
+            active_users = []
+            for u in verified_users:
+                # Default is True if not explicitly set to False in preferences
+                if prefs.get(u["telegram_id"], True) and u.get("auth_token"):
+                    active_users.append(u)
+                    
+            self.cache["active_auto_check_users"] = active_users
+            return active_users
+        except Exception as e:
+            logger.error(f"DB Error in get_active_auto_check_users: {e}")
+            return self.cache.get("active_auto_check_users", [])
 
     # ==========================================
     # AUTHENTICATION SESSIONS
@@ -164,6 +205,7 @@ class DBManager:
                 "telegram_id": telegram_id,
                 **prefs
             }).execute())
+            self._invalidate_cache(["active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in update_user_preferences: {e}")
@@ -172,13 +214,17 @@ class DBManager:
     # ==========================================
     # ADMIN MANAGEMENT & SECURITY
     # ==========================================
-    async def get_admin_users(self) -> List[Dict[str, Any]]:
+    async def get_admin_users(self, use_cache: bool = True) -> List[Dict[str, Any]]:
+        if use_cache and "all_admins" in self.cache:
+            return self.cache["all_admins"]
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").order("created_at", desc=True).execute())
-            return self._safe_data(result) or []
+            data = self._safe_data(result) or []
+            self.cache["all_admins"] = data
+            return data
         except Exception as e:
             logger.error(f"DB Error in get_admin_users: {e}")
-            return []
+            return self.cache.get("all_admins", [])
 
     async def check_admin(self, email: str) -> bool:
         try:
@@ -207,6 +253,7 @@ class DBManager:
                 "role": role,
                 "added_by": added_by
             }).execute())
+            self._invalidate_cache(["all_admins"])
             return True
         except Exception as e:
             logger.error(f"DB Error in add_admin_user: {e}")
@@ -218,6 +265,7 @@ class DBManager:
                 await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("email", email_or_id).execute())
             else:
                 await self.db.run(lambda: self.db.client.table("admin_users").delete().eq("id", email_or_id).execute())
+            self._invalidate_cache(["all_admins"])
             return True
         except Exception as e:
             logger.error(f"DB Error in remove_admin_user: {e}")
@@ -270,6 +318,7 @@ class DBManager:
                 "block_type": "telegram",
                 "block_value": str(telegram_id)
             }).execute())
+            self._invalidate_cache(["all_blocked_users", "active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in block_user: {e}")
@@ -278,19 +327,23 @@ class DBManager:
     async def unblock_user(self, telegram_id: int) -> bool:
         try:
             await self.db.run(lambda: self.db.client.table("blocked_users").delete().eq("block_type", "telegram").eq("block_value", str(telegram_id)).execute())
+            self._invalidate_cache(["all_blocked_users", "active_auto_check_users"])
             return True
         except Exception as e:
             logger.error(f"DB Error in unblock_user: {e}")
             return False
 
-    async def get_all_blocked_users(self) -> List[Dict[str, Any]]:
-        """FIXED: Fetches all blocked entities to synchronize with the React frontend blocklist."""
+    async def get_all_blocked_users(self, use_cache: bool = True) -> List[Dict[str, Any]]:
+        if use_cache and "all_blocked_users" in self.cache:
+            return self.cache["all_blocked_users"]
         try:
             result = await self.db.run(lambda: self.db.client.table("blocked_users").select("*").execute())
-            return self._safe_data(result) or []
+            data = self._safe_data(result) or []
+            self.cache["all_blocked_users"] = data
+            return data
         except Exception as e:
             logger.error(f"DB Error in get_all_blocked_users: {e}")
-            return []
+            return self.cache.get("all_blocked_users", [])
 
     # ==========================================
     # CONVERSATION HISTORY

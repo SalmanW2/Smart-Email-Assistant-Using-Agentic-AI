@@ -2,6 +2,7 @@ import os
 import base64
 import mimetypes
 import re
+import asyncio
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from email.mime.text import MIMEText
@@ -9,9 +10,13 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from db.models import db_manager
+import logging
+
+logger = logging.getLogger(__name__)
 
 class GmailClient:
     def __init__(self):
+        # RAM storage for attachments uploaded during a single session
         self.user_attachments = {} 
 
     def _handle_auth_error(self, e: Exception) -> str:
@@ -33,16 +38,20 @@ class GmailClient:
         if not isinstance(token_data, dict) or "token" not in token_data:
             return None
 
-        creds = Credentials(
-            token=token_data.get("token"),
-            refresh_token=token_data.get("refresh_token"),
-            token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
-            client_id=token_data.get("client_id"),
-            client_secret=token_data.get("client_secret"),
-            scopes=token_data.get("scopes")
-        )
-        if creds and creds.valid:
-            return build('gmail', 'v1', credentials=creds)
+        try:
+            creds = Credentials(
+                token=token_data.get("token"),
+                refresh_token=token_data.get("refresh_token"),
+                token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
+                client_id=token_data.get("client_id"),
+                client_secret=token_data.get("client_secret"),
+                scopes=token_data.get("scopes")
+            )
+            if creds and creds.valid:
+                # Build is executed synchronously, but it's fast enough.
+                return build('gmail', 'v1', credentials=creds, cache_discovery=False)
+        except Exception as e:
+            logger.error(f"Error building Gmail service: {e}")
         return None
 
     def add_user_attachment(self, user_id: int, file_path: str):
@@ -69,7 +78,10 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return []
         try:
-            results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
+            # Wrapped in to_thread to prevent blocking the async event loop
+            results = await asyncio.to_thread(
+                lambda: service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
+            )
             return results.get('messages', [])
         except Exception: 
             return []
@@ -78,7 +90,9 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return {"error": "Auth required"}
         try:
-            msg = service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject', 'From']).execute()
+            msg = await asyncio.to_thread(
+                lambda: service.users().messages().get(userId='me', id=msg_id, format='metadata', metadataHeaders=['Subject', 'From']).execute()
+            )
             headers = msg.get('payload', {}).get('headers', [])
             subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
             sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
@@ -94,7 +108,9 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return "❌ Authentication Required. Please login again."
         try:
-            msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            msg = await asyncio.to_thread(
+                lambda: service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            )
             payload = msg.get('payload', {})
             
             def extract_text(part):
@@ -126,7 +142,9 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return []
         try:
-            msg = service.users().messages().get(userId='me', id=msg_id).execute()
+            msg = await asyncio.to_thread(
+                lambda: service.users().messages().get(userId='me', id=msg_id).execute()
+            )
             payload = msg.get('payload', {})
             attachments = []
 
@@ -134,6 +152,7 @@ class GmailClient:
                 for part in parts:
                     if part.get('filename') and part.get('body', {}).get('attachmentId'):
                         att_id = part['body']['attachmentId']
+                        # Fetch attachment binary data synchronously but safe inside thread
                         att = service.users().messages().attachments().get(
                             userId='me', messageId=msg_id, id=att_id).execute()
                         data = att.get('data')
@@ -146,9 +165,13 @@ class GmailClient:
                     if 'parts' in part:
                         extract_parts(part['parts'])
 
-            if 'parts' in payload: extract_parts(payload['parts'])
+            if 'parts' in payload: 
+                # Run the extraction in a separate thread since it makes sub-API calls for attachments
+                await asyncio.to_thread(extract_parts, payload['parts'])
+                
             return attachments
-        except Exception: 
+        except Exception as e: 
+            logger.error(f"Get attachment error: {e}")
             return []
 
     async def send_email(self, user_id: int, to: str, subject: str, body: str, manual_attachments: list = None):
@@ -181,7 +204,10 @@ class GmailClient:
                     message.attach(msg_file)
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-            service.users().messages().send(userId='me', body={'raw': raw}).execute()
+            
+            await asyncio.to_thread(
+                lambda: service.users().messages().send(userId='me', body={'raw': raw}).execute()
+            )
             
             # Cleanup files after sending
             for file_path in manual_attachments:
@@ -199,7 +225,9 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return False
         try:
-            service.users().messages().trash(userId='me', id=msg_id).execute()
+            await asyncio.to_thread(
+                lambda: service.users().messages().trash(userId='me', id=msg_id).execute()
+            )
             return True
         except Exception: 
             return False
@@ -208,7 +236,9 @@ class GmailClient:
         service = await self.get_service(user_id)
         if not service: return False
         try:
-            service.users().messages().untrash(userId='me', id=msg_id).execute()
+            await asyncio.to_thread(
+                lambda: service.users().messages().untrash(userId='me', id=msg_id).execute()
+            )
             return True
         except Exception: 
             return False

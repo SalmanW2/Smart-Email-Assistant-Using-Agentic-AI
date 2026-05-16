@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 class ContactManager:
     def __init__(self):
         self.db = db_manager
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        # Safe initialization
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
 
     async def get_contacts(self, telegram_id: int):
         """Fetch all saved contacts for a user."""
@@ -21,11 +22,28 @@ class ContactManager:
             logger.error(f"Error fetching contacts: {e}")
             return []
 
+    async def find_contacts_by_name(self, telegram_id: int, name: str):
+        """
+        Smart Search Helper: Finds an email address using a contact's name.
+        This enables the bot to search Gmail by simply typing a person's name.
+        """
+        try:
+            res = await self.db.db.run(lambda: self.db.db.client.table("contacts")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .ilike("contact_name", f"%{name}%")
+                                         .execute())
+            return getattr(res, 'data', [])
+        except Exception as e:
+            logger.error(f"DB Error in find_contacts_by_name: {e}")
+            return []
+
     async def extract_contacts_from_text(self, telegram_id: int, text: str):
         """
         Background task: Uses Gemini Flash Lite to detect if the user mentioned
         a new contact name and email, and saves it to the database silently.
         """
+        if not self.client: return
         try:
             prompt = (
                 "Extract any explicit name-to-email relationships mentioned in the text.\n"
@@ -41,6 +59,8 @@ class ContactManager:
             )
             
             json_str = response.text.replace('```json', '').replace('```', '').strip()
+            if not json_str: return
+            
             contacts = json.loads(json_str)
             
             for c in contacts:
@@ -57,6 +77,6 @@ class ContactManager:
                     logger.info(f"Learned new contact for {telegram_id}: {name} -> {email}")
                     
         except Exception as e:
-            pass # Fail silently in background so it doesn't break the main flow
+            pass # Fail silently in background so it doesn't break the main Telegram flow
 
 contact_manager = ContactManager()

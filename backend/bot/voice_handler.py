@@ -42,7 +42,10 @@ class VoiceHandler:
         """Primary Engine: Google Cloud Text-to-Speech"""
         from google.cloud import texttospeech
 
-        client = texttospeech.TextToSpeechClient()
+        # FIXED: Pass API key directly if a JSON credential file isn't being used
+        client_opts = {"api_key": settings.GOOGLE_TTS_API_KEY} if settings.GOOGLE_TTS_API_KEY else None
+        client = texttospeech.TextToSpeechClient(client_options=client_opts)
+        
         synthesis_input = texttospeech.SynthesisInput(text=text)
         voice_params = texttospeech.VoiceSelectionParams(
             language_code="en-US",
