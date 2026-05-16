@@ -57,7 +57,7 @@ const Settings = () => {
       }
     } catch (err) { 
       setMsg({ text: 'Network Error. Check your connection.', type: 'error' }); 
-    } file_name_is_code_accessible { 
+    } finally { 
       setLoading(false); 
     }
   };
