@@ -16,6 +16,80 @@ interface ScheduledEmail { id: string; to_email: string; status: string; schedul
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
+// ==========================================
+// SEPARATED USER CARD TO PREVENT HOOK ERRORS
+// ==========================================
+const UserCard = ({ user, blocks, onUpdate, isManaging, setManageUserId }: { user: User, blocks: Block[], onUpdate: any, isManaging: boolean, setManageUserId: any }) => {
+  const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
+  const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
+  const [tmpBlockDays, setTmpBlockDays] = useState(0);
+  
+  const userBlock = blocks.find(b => b.block_value === String(user.telegram_id));
+  const isActuallyVerified = user.is_verified && !userBlock;
+  const displayName = user.first_name || user.username || 'Unknown User';
+  const displayChar = displayName.charAt(0).toUpperCase();
+
+  return (
+    <div className={`bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col hover:shadow-md transition-all ${isManaging ? 'ring-2 ring-blue-500' : ''}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold text-lg uppercase shadow-inner shrink-0">
+            {displayChar}
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{displayName}</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</p>
+          </div>
+        </div>
+        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
+          {isActuallyVerified ? 'Verified' : 'Pending/Blocked'}
+        </span>
+      </div>
+      <div className="space-y-1 text-sm mb-4">
+        <p className="flex justify-between"><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[150px]">{user.email || 'N/A'}</span></p>
+        <p className="flex justify-between"><span className="text-slate-500">Joined:</span> <span className="font-medium text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
+      </div>
+      
+      {isManaging ? (
+        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2">
+          <h4 className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Granular Permissions</h4>
+          <div className="space-y-3 mb-4">
+            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+              <span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
+              <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+            </label>
+            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+              <span className="flex items-center gap-2"><MicOff className="w-4 h-4 text-slate-400"/> Allow Voice Notes</span>
+              <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
+            </label>
+            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
+              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temp Ban (Days)</span>
+              <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md outline-none dark:text-white" />
+            </label>
+          </div>
+          
+          <div className="flex gap-2">
+            <button onClick={() => onUpdate(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save/Approve</button>
+            <button onClick={() => onUpdate(user.telegram_id, false, tmpAi, tmpVoice, tmpBlockDays)} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend' : 'Block All'}</button>
+            <button onClick={() => setManageUserId(null)} className="px-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600"><X className="w-4 h-4"/></button>
+          </div>
+        </div>
+      ) : (
+        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto flex gap-2">
+          {!isActuallyVerified ? (
+            <button onClick={() => onUpdate(user.telegram_id, true, true, true, 0)} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve User</button>
+          ) : (
+            <button onClick={() => setManageUserId(user.telegram_id)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm flex items-center justify-center gap-2"><Settings2 className="w-4 h-4" /> Manage Access</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// MAIN DASHBOARD COMPONENT
+// ==========================================
 const Dashboard = () => {
   const [activeTab, setActiveTab] = useState('stats');
   const [users, setUsers] = useState<User[]>([]);
@@ -35,7 +109,7 @@ const Dashboard = () => {
   const [showBanner, setShowBanner] = useState(localStorage.getItem('password_setup_dismissed') !== 'true');
   const [adminEmail, setAdminEmail] = useState(localStorage.getItem('admin_email') || '');
 
-  // Auto Logout & URL Cleanup
+  // Auto Logout & URL Cleanup (Fixes Login Loop)
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     const resetTimer = () => {
@@ -57,6 +131,7 @@ const Dashboard = () => {
       const cleanEmail = urlEmail.toLowerCase().trim();
       localStorage.setItem('admin_email', cleanEmail);
       setAdminEmail(cleanEmail);
+      // Immediately clean URL without reloading page
       searchParams.delete('email');
       setSearchParams(searchParams, { replace: true });
     } else if (!adminEmail) {
@@ -201,7 +276,7 @@ const Dashboard = () => {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`flex items-center gap-2 px-4 py-3 rounded-xl font-bold text-sm whitespace-nowrap transition-all duration-300 capitalize ${activeTab === tab ? 'bg-slate-900 text-white dark:bg-blue-600 dark:text-white shadow-md' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
+                  className={`flex items-center gap-2 px-4 py-3 rounded-xl font-bold text-sm whitespace-nowrap transition-all duration-300 capitalize ${activeTab === tab ? 'bg-slate-900 text-white dark:bg-blue-600 shadow-md' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                 >
                   {tab === 'stats' && <LineChart className="w-4 h-4" />}
                   {tab === 'users' && <Users className="w-4 h-4" />}
@@ -239,10 +314,7 @@ const Dashboard = () => {
               ))}
             </div>
 
-            {/* Graphs Section using Tailwind */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              
-              {/* STT Usage Graph */}
               <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 <div className="flex items-center justify-between mb-6">
                   <div>
@@ -252,7 +324,6 @@ const Dashboard = () => {
                   <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400">{stats.total_stt_seconds_used}s</div>
                 </div>
                 
-                {/* Visual Progress Bar representing Load */}
                 <div className="mt-8 space-y-3">
                   <div className="flex justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
                     <span>Server Load (Whisper/Gemini)</span>
@@ -264,7 +335,6 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* Scheduled Emails Graph */}
               <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 <div className="flex items-center justify-between mb-6">
                   <div>
@@ -311,75 +381,9 @@ const Dashboard = () => {
               {filteredUsers.length === 0 ? (
                 <div className="col-span-full text-center py-8 text-slate-500 font-medium">No users found.</div>
               ) : (
-                filteredUsers.map((user) => {
-                  const displayName = user.first_name || user.username || 'Unknown User';
-                  const displayChar = displayName.charAt(0).toUpperCase();
-                  const userBlock = blocks.find(b => b.block_value === String(user.telegram_id));
-                  const isBlocked = !!userBlock;
-                  const isActuallyVerified = user.is_verified && !isBlocked;
-
-                  // Local states for management panel
-                  const [tmpAi, setTmpAi] = useState(user.ai_allowed !== false);
-                  const [tmpVoice, setTmpVoice] = useState(user.voice_allowed !== false);
-                  const [tmpBlockDays, setTmpBlockDays] = useState(0);
-
-                  return (
-                    <div key={user.telegram_id} className={`bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex flex-col hover:shadow-md transition-all ${manageUserId === user.telegram_id ? 'ring-2 ring-blue-500' : ''}`}>
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-400 font-bold text-lg uppercase shadow-inner shrink-0">
-                            {displayChar}
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-slate-900 dark:text-white line-clamp-1">{displayName}</h3>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {user.telegram_id}</p>
-                          </div>
-                        </div>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${isActuallyVerified ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400'}`}>
-                          {isActuallyVerified ? 'Verified' : 'Pending/Blocked'}
-                        </span>
-                      </div>
-                      <div className="space-y-1 text-sm mb-4">
-                        <p className="flex justify-between"><span className="text-slate-500">Email:</span> <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[150px]">{user.email || 'N/A'}</span></p>
-                        <p className="flex justify-between"><span className="text-slate-500">Joined:</span> <span className="font-medium text-slate-700 dark:text-slate-300">{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</span></p>
-                      </div>
-                      
-                      {manageUserId === user.telegram_id ? (
-                        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 animate-in slide-in-from-top-2">
-                          <h4 className="text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider">Granular Permissions</h4>
-                          <div className="space-y-3 mb-4">
-                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-slate-400"/> Allow AI Engine</span>
-                              <input type="checkbox" checked={tmpAi} onChange={(e) => setTmpAi(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
-                            </label>
-                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-2"><MicOff className="w-4 h-4 text-slate-400"/> Allow Voice Notes</span>
-                              <input type="checkbox" checked={tmpVoice} onChange={(e) => setTmpVoice(e.target.checked)} className="w-4 h-4 rounded text-blue-600 border-slate-300" />
-                            </label>
-                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-slate-400"/> Temp Ban (Days)</span>
-                              <input type="number" min="0" max="365" value={tmpBlockDays} onChange={(e) => setTmpBlockDays(Number(e.target.value))} className="w-16 p-1 text-center bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-md" />
-                            </label>
-                          </div>
-                          
-                          <div className="flex gap-2">
-                            <button onClick={() => updatePermissions(user.telegram_id, true, tmpAi, tmpVoice, 0)} className="flex-1 bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-sm">Save/Approve</button>
-                            <button onClick={() => updatePermissions(user.telegram_id, false, tmpAi, tmpVoice, tmpBlockDays)} className="flex-1 bg-red-500 text-white py-2 rounded-xl text-sm font-bold hover:bg-red-600 transition-all shadow-sm">{tmpBlockDays > 0 ? 'Suspend' : 'Block All'}</button>
-                            <button onClick={() => setManageUserId(null)} className="px-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600"><X className="w-4 h-4"/></button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 mt-auto flex gap-2">
-                          {!isActuallyVerified ? (
-                            <button onClick={() => updatePermissions(user.telegram_id, true, true, true, 0)} className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-all text-sm shadow-sm">Approve User</button>
-                          ) : (
-                            <button onClick={() => setManageUserId(user.telegram_id)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-sm flex items-center justify-center gap-2"><Settings2 className="w-4 h-4" /> Manage Access</button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
+                filteredUsers.map((user) => (
+                  <UserCard key={user.telegram_id} user={user} blocks={blocks} onUpdate={updatePermissions} isManaging={manageUserId === user.telegram_id} setManageUserId={setManageUserId} />
+                ))
               )}
             </div>
           </div>
