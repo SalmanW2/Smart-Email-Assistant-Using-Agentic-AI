@@ -79,7 +79,6 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
         verified_users = sum(1 for u in all_users if u.get("is_verified"))
         
         try:
-            # Note: Requires get_all_blocked_users in models.py
             blocked_users_list = await db_manager.get_all_blocked_users()
             blocked_count = len(blocked_users_list) if blocked_users_list else 0
         except Exception:
@@ -87,14 +86,14 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
             
         admins_list = await db_manager.get_admin_users() or []
         
-        # New Stats: Conversations
+        # Stats: Conversations
         try:
             history = await db_manager.get_all_conversation_history() or []
             total_conversations = len(history)
         except:
             total_conversations = 0
 
-        # New Stats: STT Usage
+        # Stats: STT Usage
         try:
             stt_res = await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").select("*").execute())
             stt_usage = stt_res.data if getattr(stt_res, 'data', None) else []
@@ -102,7 +101,7 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
         except:
             total_stt_seconds_used = 0
 
-        # New Stats: Scheduled Emails
+        # Stats: Scheduled Emails
         try:
             sched_res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").select("*").execute())
             scheduled_emails = sched_res.data if getattr(sched_res, 'data', None) else []
@@ -152,7 +151,7 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
                 existing = db_manager.db.client.table("blocked_users").select("*").eq("block_value", str(telegram_id)).execute()
                 if not existing.data:
                     db_manager.db.client.table("blocked_users").insert({
-                        "block_type": "telegram_id",
+                        "block_type": "telegram",
                         "block_value": str(telegram_id),
                         "reason": payload.reason,
                         "expires_at": expires_at
@@ -167,6 +166,10 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
                 db_manager.db.client.table("blocked_users").delete().eq("block_value", str(telegram_id)).execute()
 
         await db_manager.db.run(_update)
+        
+        # FIXED: Immediately invalidate cache so frontend updates instantly!
+        db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
+        
         return {"message": "User permissions updated successfully"}
     except Exception as e:
         print(f"Permission update error: {e}")
@@ -201,7 +204,6 @@ async def remove_admin(id_or_email: str, admin: Dict = Depends(get_current_admin
 async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
     """List all blocked identifiers."""
     try:
-        # Note: Requires get_all_blocked_users in models.py
         return await db_manager.get_all_blocked_users() or []
     except Exception:
         return []
@@ -210,11 +212,12 @@ async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
 async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
     """Remove a user from the blocklist."""
     try:
-        # Check if it's a telegram_id (numeric) or UUID string
         if id_or_telegram_id.isdigit():
             success = await db_manager.unblock_user(int(id_or_telegram_id))
         else:
             await db_manager.db.run(lambda: db_manager.db.client.table("blocked_users").delete().eq("id", id_or_telegram_id).execute())
+            # Ensure cache is invalidated
+            db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
             success = True
             
         if not success:
