@@ -176,4 +176,19 @@ class MemoryManager:
             print(f"DB Error in get_cached_emails: {e}")
             return []
 
+    async def search_cached_emails(self, telegram_id: int, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """NEW: Flexible search for AI to find cached emails by topic, sender, or date without fetching all."""
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.table("email_cache")
+                                         .select("*")
+                                         .eq("telegram_id", telegram_id)
+                                         .or_(f"sender.ilike.%{query}%,sender_email.ilike.%{query}%,subject.ilike.%{query}%,preview.ilike.%{query}%")
+                                         .order("received_at", desc=True)
+                                         .limit(limit)
+                                         .execute())
+            return self._safe_data(result) or []
+        except Exception as e:
+            print(f"DB Error in search_cached_emails: {e}")
+            return []
+
 memory_manager = MemoryManager()

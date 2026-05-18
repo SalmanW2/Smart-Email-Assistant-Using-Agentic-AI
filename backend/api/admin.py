@@ -3,6 +3,9 @@ from pydantic import BaseModel, EmailStr
 from db.models import db_manager
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+import httpx
+import asyncio
+from config import settings
 
 router = APIRouter()
 
@@ -25,6 +28,17 @@ class PermissionPayload(BaseModel):
     voice_allowed: bool
     block_days: int = 0  # 0 means permanent if blocked
     reason: str = "Blocked by Admin"
+
+# --- Helper: Telegram Notification ---
+async def send_telegram_notification(telegram_id: int, message: str):
+    """Sends a background notification directly to the user via Telegram API."""
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": telegram_id, "text": message, "parse_mode": "Markdown"}
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json=payload)
+    except Exception as e:
+        print(f"Failed to send telegram notification: {e}")
 
 async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
     if not x_admin_email:
@@ -132,7 +146,7 @@ async def get_users(admin: Dict = Depends(get_current_admin)):
 
 @router.post("/users/{telegram_id}/permissions")
 async def update_user_permissions(telegram_id: int, payload: PermissionPayload, admin: Dict = Depends(get_current_admin)):
-    """Unified endpoint to handle Approve, Block, and Restrictions (AI/Voice)."""
+    """Unified endpoint to handle Approve, Block, and Restrictions (AI/Voice) and notify the user."""
     try:
         def _update():
             # 1. Update core user flags
@@ -166,9 +180,22 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
                 db_manager.db.client.table("blocked_users").delete().eq("block_value", str(telegram_id)).execute()
 
         await db_manager.db.run(_update)
-        
-        # FIXED: Immediately invalidate cache so frontend updates instantly!
         db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
+        
+        # --- SEND TELEGRAM NOTIFICATION (with Admin Info) ---
+        admin_email = admin.get("email", "System Administrator") # Admin ki details nikaal li
+
+        if payload.is_verified:
+            msg = f"🎉 *Account Approved!*\nYour access has been granted.\n\n👤 *Action by Admin:* {admin_email}\n\nPlease type /start or select an option from the menu."
+            if not payload.ai_allowed or not payload.voice_allowed:
+                msg += "\n\n⚠️ *Note:* Some advanced features (AI generation or Voice) might be restricted."
+        else:
+            if payload.block_days > 0:
+                msg = f"🚫 *Account Suspended*\nYour access has been temporarily suspended for {payload.block_days} days.\n\n👤 *Action by Admin:* {admin_email}\n*Reason:* {payload.reason}"
+            else:
+                msg = f"🚫 *Account Blocked*\nYour access has been permanently revoked.\n\n👤 *Action by Admin:* {admin_email}\n*Reason:* {payload.reason}"
+        
+        asyncio.create_task(send_telegram_notification(telegram_id, msg))
         
         return {"message": "User permissions updated successfully"}
     except Exception as e:
@@ -210,20 +237,33 @@ async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
 
 @router.delete("/blocks/{id_or_telegram_id}")
 async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
-    """Remove a user from the blocklist."""
+    """Remove a user from the blocklist and notify them."""
     try:
+        telegram_id = None
         if id_or_telegram_id.isdigit():
-            success = await db_manager.unblock_user(int(id_or_telegram_id))
+            telegram_id = int(id_or_telegram_id)
+            success = await db_manager.unblock_user(telegram_id)
         else:
+            # Safely fetch telegram_id before deleting the block record
+            block_record = await db_manager.db.run(lambda: db_manager.db.client.table("blocked_users").select("block_value").eq("id", id_or_telegram_id).execute())
+            if block_record.data:
+                telegram_id = int(block_record.data[0]["block_value"])
+                
             await db_manager.db.run(lambda: db_manager.db.client.table("blocked_users").delete().eq("id", id_or_telegram_id).execute())
-            # Ensure cache is invalidated
             db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
             success = True
             
         if not success:
             raise HTTPException(status_code=500, detail="Failed to unblock user")
+            
+        # --- SEND TELEGRAM NOTIFICATION ---
+        if telegram_id:
+            msg = "✅ *Account Restored!*\nYour restriction has been lifted by the Admin. You can now use the bot again."
+            asyncio.create_task(send_telegram_notification(telegram_id, msg))
+
         return {"message": "User unblocked"}
-    except Exception:
+    except Exception as e:
+        print(f"Unblock error: {e}")
         raise HTTPException(status_code=500, detail="Failed to process unblock request")
 
 @router.post("/logout")

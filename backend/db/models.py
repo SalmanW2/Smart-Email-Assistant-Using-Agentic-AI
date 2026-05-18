@@ -52,7 +52,21 @@ class DBManager:
                 "username": username,
                 "is_verified": False
             }
+            # Insert User
             await self.db.run(lambda: self.db.client.table("users").insert(data).execute())
+            
+            # FIXED: Automatically create default user preferences
+            try:
+                prefs_data = {
+                    "telegram_id": telegram_id,
+                    "ai_mode_enabled": True,
+                    "voice_preference": "text",
+                    "auto_check_enabled": True
+                }
+                await self.db.run(lambda: self.db.client.table("user_preferences").insert(prefs_data).execute())
+            except Exception as pref_e:
+                logger.error(f"Could not create default preferences: {pref_e}")
+
             self._invalidate_cache(["all_users", "active_auto_check_users"])
             return True
         except Exception as e:
@@ -343,7 +357,7 @@ class DBManager:
             return self.cache.get("all_blocked_users", [])
 
     # ==========================================
-    # CONVERSATION HISTORY
+    # LOGGING & HISTORY (TTS)
     # ==========================================
     async def get_all_conversation_history(self) -> List[Dict[str, Any]]:
         try:
@@ -352,5 +366,18 @@ class DBManager:
         except Exception as e:
             logger.error(f"DB Error in get_all_conversation_history: {e}")
             return []
+
+    async def log_tts_usage(self, telegram_id: int, method: str, characters_generated: int) -> bool:
+        """NEW: Helper to populate the tts_usage table correctly."""
+        try:
+            await self.db.run(lambda: self.db.client.table("tts_usage").insert({
+                "telegram_id": telegram_id,
+                "method": method,
+                "characters_generated": characters_generated
+            }).execute())
+            return True
+        except Exception as e:
+            logger.error(f"DB Error in log_tts_usage: {e}")
+            return False
 
 db_manager = DBManager()

@@ -4,8 +4,9 @@ import tempfile
 import uuid
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from config import settings
+from db.models import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -21,34 +22,47 @@ class VoiceHandler:
             "edge_tts_available": True,
         }
 
-    async def synthesize(self, text: str, preferred_method: str = "google") -> str:
+    async def synthesize(self, text: str, telegram_id: Optional[int] = None, preferred_method: str = "google") -> str:
         """
         Generates speech audio and returns the local file path.
         Implements strict fallback: Google Cloud TTS -> Edge TTS.
+        Logs usage to the database automatically.
         """
+        output_path = ""
+        method_used = "edge_tts" # Default fallback
+
         if preferred_method == "google" and self.google_available:
             try:
                 # Attempt primary high-quality generation
-                return await self._google_synthesize(text)
+                output_path = await self._google_synthesize(text)
+                method_used = "google_tts"
             except Exception as e:
                 logger.warning(f"Google TTS quota/error encountered. Falling back to Edge TTS: {e}")
-                # Fallback to Edge TTS automatically on failure
-                return await self._edge_synthesize(text)
-        
-        # If Google is not preferred or not configured, use Edge TTS
-        return await self._edge_synthesize(text)
+                output_path = await self._edge_synthesize(text)
+        else:
+            # If Google is not preferred or not configured, use Edge TTS
+            output_path = await self._edge_synthesize(text)
+
+        # --- DB LOGGING: Track TTS Usage ---
+        if telegram_id and output_path and os.path.exists(output_path):
+            char_count = len(text)
+            # Run in background to prevent delaying the voice message
+            asyncio.create_task(db_manager.log_tts_usage(telegram_id, method_used, char_count))
+
+        return output_path
 
     async def _google_synthesize(self, text: str) -> str:
         """Primary Engine: Google Cloud Text-to-Speech"""
         from google.cloud import texttospeech
 
-        # FIXED: Pass API key directly if a JSON credential file isn't being used
         client_opts = {"api_key": settings.GOOGLE_TTS_API_KEY} if settings.GOOGLE_TTS_API_KEY else None
         client = texttospeech.TextToSpeechClient(client_options=client_opts)
         
         synthesis_input = texttospeech.SynthesisInput(text=text)
+        
+        # Changed to en-IN for much better Roman Urdu/Hindi pronunciation
         voice_params = texttospeech.VoiceSelectionParams(
-            language_code="en-US",
+            language_code="en-IN", 
             ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL,
         )
         audio_config = texttospeech.AudioConfig(
@@ -72,7 +86,8 @@ class VoiceHandler:
         import edge_tts
 
         output_file = Path(tempfile.gettempdir()) / f"smart_email_voice_{uuid.uuid4().hex}.mp3"
-        communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
+        # Changed to NeerjaNeural (Indian English) for clear Roman Urdu pronunciation
+        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural") 
         await communicate.save(str(output_file))
         
         return str(output_file)

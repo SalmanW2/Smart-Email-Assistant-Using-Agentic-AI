@@ -31,11 +31,11 @@ class AIEngine:
         logger.error(f"AI Engine Runtime Error: {err_msg}")
         
         if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            return "⏳ *System Limit Reached:* AI processing quota is temporarily exhausted. Please try again later."
+            return json.dumps({"text": "⏳ *System Limit Reached:* AI processing quota is temporarily exhausted. Please try again later.", "response_type": "text"})
         elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-            return "🔌 *Server Overload:* AI servers are currently experiencing high traffic. Please retry in 10-20 seconds."
+            return json.dumps({"text": "🔌 *Server Overload:* AI servers are currently experiencing high traffic. Please retry in 10-20 seconds.", "response_type": "text"})
         else:
-            return "❌ *System Error:* Unable to process the request at this moment. Please try again later."
+            return json.dumps({"text": "❌ *System Error:* Unable to process the request at this moment. Please try again later.", "response_type": "text"})
 
     # ==========================================
     # 🛠️ AGENTIC TOOLS (Functions Gemini Can Call)
@@ -82,10 +82,7 @@ class AIEngine:
             return f"Error sending email: {e}"
 
     def schedule_email(self, to_email: str, subject: str, body: str, send_time_utc: str) -> str:
-        """
-        Schedules an email to be sent later. Call this if the user says 'send tomorrow', 'send at 9am', etc.
-        'send_time_utc' MUST be formatted as 'YYYY-MM-DD HH:MM:SS' in UTC timezone.
-        """
+        """Schedules an email to be sent later in UTC 'YYYY-MM-DD HH:MM:SS' format."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
@@ -103,8 +100,8 @@ class AIEngine:
         except Exception as e:
             return f"Error scheduling email: {e}"
 
-    def save_contact(self, name: str, email: str) -> str:
-        """Saves a new contact to the user's database. Call this ONLY when the user tells you someone's email address."""
+    def save_contact(self, name: str, email: str, relationship: str = "") -> str:
+        """Saves a new contact. Use this when the user tells you someone's email or relationship."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
@@ -113,7 +110,8 @@ class AIEngine:
                 "telegram_id": self.current_user_id,
                 "contact_alias": name,
                 "email_address": email,
-                "contact_name": name
+                "contact_name": name,
+                "relationship_type": relationship
             }, on_conflict="telegram_id,email_address").execute())
             return f"Contact {name} ({email}) saved successfully."
         try:
@@ -121,11 +119,36 @@ class AIEngine:
         except Exception as e:
             return f"Error saving contact: {e}"
 
+    def search_contact(self, query: str) -> str:
+        """Searches the user's database for a contact's email by their name or relationship."""
+        if not self.current_user_id: return "Error: User context missing."
+        import asyncio
+        async def _search():
+            res = await self.db.db.run(lambda: self.db.db.client.table("contacts").select("*").eq("telegram_id", self.current_user_id).or_(f"contact_name.ilike.%{query}%,contact_alias.ilike.%{query}%,relationship_type.ilike.%{query}%").execute())
+            data = getattr(res, 'data', [])
+            if not data: return f"No contacts found matching '{query}'."
+            return "\n".join([f"Name: {c['contact_name']}, Email: {c['email_address']}, Relation: {c.get('relationship_type', 'None')}" for c in data])
+        try:
+            return asyncio.run(_search())
+        except Exception as e:
+            return f"Error searching contacts: {e}"
+
+    def search_saved_attachments(self, query: str) -> str:
+        """Searches the database for previously uploaded files, documents, or images using keywords."""
+        if not self.current_user_id: return "Error: User context missing."
+        import asyncio
+        async def _search():
+            res = await self.db.db.run(lambda: self.db.db.client.table("saved_attachments").select("*").eq("telegram_id", self.current_user_id).or_(f"file_name.ilike.%{query}%,context_topic.ilike.%{query}%").execute())
+            data = getattr(res, 'data', [])
+            if not data: return f"No attachments found matching '{query}'."
+            return "\n".join([f"File: {f['file_name']}, ID: {f['file_id']}, Context: {f.get('context_topic', 'N/A')}" for f in data[:5]])
+        try:
+            return asyncio.run(_search())
+        except Exception as e:
+            return f"Error searching attachments: {e}"
+
     def read_memory_document(self, query: str) -> str:
-        """
-        Reads and analyzes the document/image the user recently uploaded. 
-        Call this when the user asks 'read the file I just sent' or 'what is in the invoice'.
-        """
+        """Reads the document/image the user JUST uploaded into RAM."""
         if not self.current_user_id: 
             return "Error: User context missing."
         import asyncio
@@ -145,16 +168,22 @@ class AIEngine:
     # ==========================================
 
     async def transcribe_audio(self, file_path: str, user_id: int) -> str:
-        """Transcribes voice notes using Groq Whisper (Primary) or Gemini (Fallback) and tracks usage."""
+        """Transcribes voice notes using Groq Whisper (Primary) or Gemini (Fallback). Enforces Roman Urdu."""
         text_result = ""
         method_used = "groq_whisper"
         
+        # STRICT ROMAN URDU PROMPT FOR WHISPER
+        stt_prompt = "The user speaks Urdu or English, but writes in English alphabets (Roman Urdu). Transcribe the audio exactly in Roman Urdu. Do not use Hindi or Devanagari script under any circumstances."
+
         if settings.GROQ_API_KEY:
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
                     with open(file_path, "rb") as f:
                         files = {"file": (file_path, f, "audio/ogg")}
-                        data = {"model": "whisper-large-v3"}
+                        data = {
+                            "model": "whisper-large-v3", 
+                            "prompt": stt_prompt
+                        }
                         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
                         response = await client.post("https://api.groq.com/openai/v1/audio/transcriptions", headers=headers, data=data, files=files)
                         response.raise_for_status()
@@ -168,13 +197,12 @@ class AIEngine:
             try:
                 method_used = "gemini_fallback"
                 sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-                prompt = "Transcribe this audio accurately. If completely unintelligible, output: '[Audio Unclear]'. Provide ONLY the transcript text."
-                response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, prompt])
+                fallback_prompt = f"Transcribe this audio accurately. {stt_prompt}. If completely unintelligible, output: '[Audio Unclear]'. Provide ONLY the transcript text."
+                response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, fallback_prompt])
                 text_result = response.text.strip()
             except Exception as e:
                 return self._parse_error(e)
 
-        # STT Usage Tracking (Estimated duration based on text length: ~15 chars = 1 sec)
         if text_result and "[Audio Unclear]" not in text_result:
             try:
                 est_seconds = max(1, len(text_result) // 15)
@@ -192,30 +220,28 @@ class AIEngine:
         current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         system_instruction = (
             f"You are an Agentic AI Email Assistant. Current Time: {current_utc}\n"
-            "YOU HAVE TOOLS TO INTERACT WITH GMAIL AND DATABASE. CRITICAL RULES:\n"
-            "1. INBOX: You CAN search and read emails. Call `search_gmail` first, then optionally `read_gmail_message`.\n"
-            "2. SENDING (NOW): To send an email immediately, call `draft_and_send_email`.\n"
-            "3. SENDING (LATER): If user says 'send later' or specifies a time, calculate the exact UTC time and call `schedule_email`.\n"
-            "4. DOCUMENTS: If user asks about a file/image they uploaded, call `read_memory_document`.\n"
-            "5. CONTACTS: If user provides an email address for a name, call `save_contact`.\n"
-            "6. Keep responses concise, professional, and use Markdown formatting.\n"
-            "7. Do NOT generate long unnecessary paragraphs. Be helpful and direct.\n\n"
+            "TOOLS AVAILABLE: search_gmail, read_gmail_message, draft_and_send_email, schedule_email, save_contact, search_contact, search_saved_attachments, read_memory_document.\n"
+            "CRITICAL RULES:\n"
+            "1. Match the user's language and alphabet script exactly. If they use Roman Urdu, respond in Roman Urdu.\n"
+            "2. Keep responses concise and helpful. Do not generate unnecessarily long paragraphs.\n"
+            "3. YOU MUST ALWAYS RESPOND IN EXACT JSON FORMAT. Do not wrap it in markdown code blocks. Just valid JSON:\n"
+            "{\"text\": \"Your actual response message here\", \"response_type\": \"voice\" OR \"text\"}\n"
+            "Use 'voice' for standard conversational replies. Use 'text' ONLY if the response contains code, lists, tabular data, or search results that must be read on screen.\n\n"
             f"{memory_prompt}"
         )
         return types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.2,
-            tools=[self.search_gmail, self.read_gmail_message, self.draft_and_send_email, self.schedule_email, self.save_contact, self.read_memory_document]
+            tools=[self.search_gmail, self.read_gmail_message, self.draft_and_send_email, self.schedule_email, 
+                   self.save_contact, self.search_contact, self.search_saved_attachments, self.read_memory_document]
         )
 
     async def agent_chat(self, text: str, user_id: int) -> str:
-        if not self.client: return "Error: AI System configuration missing."
+        if not self.client: return json.dumps({"text": "Error: AI System configuration missing.", "response_type": "text"})
         self.current_user_id = user_id 
         
         try:
-            # Passive background task for parsing explicit contacts
             asyncio.create_task(self.contact_manager.extract_contacts_from_text(user_id, text))
-            
             memory_prompt = await self.memory.build_memory_prompt(user_id)
             chat_id = str(user_id)
 
@@ -225,14 +251,27 @@ class AIEngine:
                     self.active_chats[chat_id] = self.client.chats.create(model=self.model_name, config=config)
                 return self.active_chats[chat_id].send_message(text).text
 
-            bot_response = await asyncio.to_thread(_execute_chat)
+            raw_bot_response = await asyncio.to_thread(_execute_chat)
+            
+            # Clean up JSON if AI accidentally added markdown formatting
+            clean_json = raw_bot_response.replace('```json', '').replace('```', '').strip()
+            
+            try:
+                parsed_response = json.loads(clean_json)
+                text_content = parsed_response.get("text", "Error parsing text")
+            except json.JSONDecodeError:
+                # Fallback if Gemini fails to output JSON
+                parsed_response = {"text": raw_bot_response, "response_type": "text"}
+                text_content = raw_bot_response
+                clean_json = json.dumps(parsed_response)
 
-            await self.memory.log_conversation(telegram_id=user_id, user_message=text, bot_response=bot_response, interaction_type="chat")
+            await self.memory.log_conversation(telegram_id=user_id, user_message=text, bot_response=text_content, interaction_type="chat")
 
             if await self.memory.should_generate_summary(user_id):
-                asyncio.create_task(self._generate_and_save_summary(user_id, text, bot_response))
+                asyncio.create_task(self._generate_and_save_summary(user_id, text, text_content))
 
-            return bot_response
+            # Returning strictly the JSON string so Telegram Handler can parse it
+            return clean_json
             
         except Exception as e:
             if str(user_id) in self.active_chats: del self.active_chats[str(user_id)] 
@@ -265,7 +304,7 @@ class AIEngine:
             response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=[sample_file, prompt], config=config)
             return response.text
         except Exception as e:
-            return self._parse_error(e)
+            return f"Error processing attachment: {e}"
 
     async def generate_smart_replies(self, email_body: str) -> List[str]:
         try:
