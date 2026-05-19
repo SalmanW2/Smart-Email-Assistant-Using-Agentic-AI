@@ -1,7 +1,9 @@
 import json
 import os
-from typing import Any
+import jwt
 import httpx
+from datetime import datetime, timedelta
+from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from google_auth_oauthlib.flow import Flow
@@ -12,6 +14,10 @@ from db.models import db_manager
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 router = APIRouter()
+
+# --- JWT Configuration (Fix 1 & 8) ---
+SECRET_KEY = getattr(settings, "JWT_SECRET", settings.BOT_TOKEN)
+ALGORITHM = "HS256"
 
 with open("credentials.json", "r", encoding="utf-8") as credential_file:
     client_config = json.load(credential_file)
@@ -106,8 +112,16 @@ async def callback(code: str, state: str):
     # Handle Admin Login Routing
     if is_admin:
         if email and await db_manager.check_admin(email):
+            role = await db_manager.get_admin_role(email)
+            
+            # Generate JWT Token (Expires in 24 hours)
+            expire = datetime.utcnow() + timedelta(hours=24)
+            to_encode = {"sub": email, "role": role, "exp": expire}
+            token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+            
             await db_manager.delete_auth_session(db_state)
-            return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/dashboard?msg=Google+Login+Successful&email={email}")
+            # FIXED: Pass the JWT token securely to the frontend URL
+            return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/dashboard?token={token}&email={email}")
         else:
             return RedirectResponse(url=f"{settings.FRONTEND_URL}/admin/login?error=Unauthorized+Admin+Email")
             

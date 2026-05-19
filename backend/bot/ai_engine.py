@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import httpx
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 from google import genai
@@ -224,7 +225,7 @@ class AIEngine:
             "CRITICAL RULES:\n"
             "1. Match the user's language and alphabet script exactly. If they use Roman Urdu, respond in Roman Urdu.\n"
             "2. Keep responses concise and helpful. Do not generate unnecessarily long paragraphs.\n"
-            "3. YOU MUST ALWAYS RESPOND IN EXACT JSON FORMAT. Do not wrap it in markdown code blocks. Just valid JSON:\n"
+            "3. YOU MUST ALWAYS RESPOND IN EXACT, VALID JSON FORMAT. Escape any internal quotes properly using \\\". Do not wrap it in markdown code blocks. Just valid JSON:\n"
             "{\"text\": \"Your actual response message here\", \"response_type\": \"voice\" OR \"text\"}\n"
             "Use 'voice' for standard conversational replies. Use 'text' ONLY if the response contains code, lists, tabular data, or search results that must be read on screen.\n\n"
             f"{memory_prompt}"
@@ -253,14 +254,17 @@ class AIEngine:
 
             raw_bot_response = await asyncio.to_thread(_execute_chat)
             
-            # Clean up JSON if AI accidentally added markdown formatting
+            # Robust JSON parsing using Regex (Fix 10)
             clean_json = raw_bot_response.replace('```json', '').replace('```', '').strip()
+            json_match = re.search(r'\{.*\}', clean_json, re.DOTALL)
+            if json_match:
+                clean_json = json_match.group(0)
             
             try:
                 parsed_response = json.loads(clean_json)
                 text_content = parsed_response.get("text", "Error parsing text")
             except json.JSONDecodeError:
-                # Fallback if Gemini fails to output JSON
+                # Graceful Fallback if Gemini fails to output correct JSON
                 parsed_response = {"text": raw_bot_response, "response_type": "text"}
                 text_content = raw_bot_response
                 clean_json = json.dumps(parsed_response)
@@ -284,8 +288,11 @@ class AIEngine:
                 "Format required: {\"summary_text\": \"Concise summary\", \"key_facts\": [\"fact 1\"], \"email_addresses_mentioned\": [\"email@example.com\"], \"current_topic\": \"topic\"}\n\n"
                 f"User: {last_user_msg}\nAI: {last_ai_msg}"
             )
-            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=prompt)
-            json_str = response.text.replace('```json', '').replace('```', '').strip()
+            # Force 100% valid JSON mode
+            config = types.GenerateContentConfig(response_mime_type="application/json")
+            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=prompt, config=config)
+            
+            json_str = response.text.strip()
             data = json.loads(json_str)
             
             await self.memory.save_conversation_summary(
@@ -314,8 +321,11 @@ class AIEngine:
                 "Return ONLY a valid JSON array of strings. Example: [\"Received, thank you.\", \"I will check and revert.\", \"Noted.\"]\n\n"
                 f"Email Body:\n{email_body[:2000]}"
             )
-            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=prompt)
-            json_str = response.text.replace('```json', '').replace('```', '').strip()
+            # Force 100% valid JSON Array mode
+            config = types.GenerateContentConfig(response_mime_type="application/json")
+            response = await asyncio.to_thread(self.client.models.generate_content, model=self.model_name, contents=prompt, config=config)
+            
+            json_str = response.text.strip()
             replies = json.loads(json_str)
             return replies if isinstance(replies, list) and len(replies) > 0 else ["Thanks!", "Noted.", "I'll reply soon."]
         except Exception as e:

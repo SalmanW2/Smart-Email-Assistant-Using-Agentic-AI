@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, EmailStr
-from db.models import db_manager
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+import jwt
 import httpx
 import asyncio
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pydantic import BaseModel, EmailStr
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from db.models import db_manager
 from config import settings
 
 router = APIRouter()
+
+# --- JWT Configuration (Fix 1 & 8) ---
+SECRET_KEY = getattr(settings, "JWT_SECRET", settings.BOT_TOKEN)
+ALGORITHM = "HS256"
 
 # --- Pydantic Models for Validation ---
 class AdminLoginPayload(BaseModel):
@@ -40,16 +45,38 @@ async def send_telegram_notification(telegram_id: int, message: str):
     except Exception as e:
         print(f"Failed to send telegram notification: {e}")
 
-async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
-    if not x_admin_email:
-        raise HTTPException(status_code=401, detail="Missing admin header")
+# --- Secure Admin Dependency (Supports JWT & Fallback) ---
+async def get_current_admin(
+    authorization: str | None = Header(None), 
+    x_admin_email: str | None = Header(None)
+) -> Dict:
+    email = None
+    
+    # 1. Try JWT Bearer Token first
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    # 2. Fallback to raw email header if frontend hasn't updated headers yet
+    if not email and x_admin_email:
+        email = x_admin_email
+        
+    if not email:
+        raise HTTPException(status_code=401, detail="Missing authentication")
+        
     try:
         admins = await db_manager.get_admin_users()
         if admins is None: admins = []
     except Exception as e:
         raise HTTPException(status_code=500, detail="Database timeout/error")
         
-    safe_email = x_admin_email.strip().lower()
+    safe_email = email.strip().lower()
     admin = next((entry for entry in admins if entry.get("email", "").strip().lower() == safe_email), None)
     
     if not admin:
@@ -60,13 +87,24 @@ async def get_current_admin(x_admin_email: str | None = Header(None)) -> Dict:
 
 @router.post("/login")
 async def admin_login(payload: AdminLoginPayload):
-    """Manual login for admins using email and password."""
+    """Manual login for admins using email and password, returns JWT."""
     is_valid = await db_manager.verify_admin_password(payload.email, payload.password)
     if not is_valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     role = await db_manager.get_admin_role(payload.email)
-    return {"status": "success", "email": payload.email, "role": role}
+    
+    # Generate JWT Token (Expires in 24 hours)
+    expire = datetime.utcnow() + timedelta(hours=24)
+    to_encode = {"sub": payload.email, "role": role, "exp": expire}
+    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    return {
+        "status": "success", 
+        "token": token,  # FIXED: Frontend now receives the JWT token to proceed
+        "email": payload.email, 
+        "role": role
+    }
 
 @router.post("/set-password")
 async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(get_current_admin)):
@@ -183,7 +221,7 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
         db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
         
         # --- SEND TELEGRAM NOTIFICATION (with Admin Info) ---
-        admin_email = admin.get("email", "System Administrator") # Admin ki details nikaal li
+        admin_email = admin.get("email", "System Administrator")
 
         if payload.is_verified:
             msg = f"🎉 *Account Approved!*\nYour access has been granted.\n\n👤 *Action by Admin:* {admin_email}\n\nPlease type /start or select an option from the menu."
@@ -244,7 +282,6 @@ async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current
             telegram_id = int(id_or_telegram_id)
             success = await db_manager.unblock_user(telegram_id)
         else:
-            # Safely fetch telegram_id before deleting the block record
             block_record = await db_manager.db.run(lambda: db_manager.db.client.table("blocked_users").select("block_value").eq("id", id_or_telegram_id).execute())
             if block_record.data:
                 telegram_id = int(block_record.data[0]["block_value"])
@@ -256,7 +293,6 @@ async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current
         if not success:
             raise HTTPException(status_code=500, detail="Failed to unblock user")
             
-        # --- SEND TELEGRAM NOTIFICATION ---
         if telegram_id:
             msg = "✅ *Account Restored!*\nYour restriction has been lifted by the Admin. You can now use the bot again."
             asyncio.create_task(send_telegram_notification(telegram_id, msg))
@@ -271,9 +307,6 @@ async def logout():
     """Logout handler."""
     return {"message": "Logged out successfully"}
 
-# ==========================================
-# NEW FEATURES DATA EXPOSURE
-# ==========================================
 @router.get("/scheduled_emails")
 async def get_scheduled_emails(admin: Dict = Depends(get_current_admin)):
     """Fetch all scheduled emails for monitoring."""

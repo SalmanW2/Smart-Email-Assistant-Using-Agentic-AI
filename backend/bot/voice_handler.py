@@ -3,6 +3,7 @@ import os
 import tempfile
 import uuid
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Optional
 from config import settings
@@ -24,28 +25,32 @@ class VoiceHandler:
 
     async def synthesize(self, text: str, telegram_id: Optional[int] = None, preferred_method: str = "google") -> str:
         """
-        Generates speech audio and returns the local file path.
+        Generates speech audio after cleaning Markdown.
         Implements strict fallback: Google Cloud TTS -> Edge TTS.
         Logs usage to the database automatically.
         """
+        # --- Markdown Cleaner (Fix 6) ---
+        # Removes *, _, #, ` to prevent TTS from reading symbols aloud
+        clean_text = re.sub(r'[*_#`]', '', text)
+        
         output_path = ""
         method_used = "edge_tts" # Default fallback
 
         if preferred_method == "google" and self.google_available:
             try:
                 # Attempt primary high-quality generation
-                output_path = await self._google_synthesize(text)
+                output_path = await self._google_synthesize(clean_text)
                 method_used = "google_tts"
             except Exception as e:
                 logger.warning(f"Google TTS quota/error encountered. Falling back to Edge TTS: {e}")
-                output_path = await self._edge_synthesize(text)
+                output_path = await self._edge_synthesize(clean_text)
         else:
             # If Google is not preferred or not configured, use Edge TTS
-            output_path = await self._edge_synthesize(text)
+            output_path = await self._edge_synthesize(clean_text)
 
-        # --- DB LOGGING: Track TTS Usage ---
+        # --- DB LOGGING: Track TTS Usage (Fix 6) ---
         if telegram_id and output_path and os.path.exists(output_path):
-            char_count = len(text)
+            char_count = len(clean_text)
             # Run in background to prevent delaying the voice message
             asyncio.create_task(db_manager.log_tts_usage(telegram_id, method_used, char_count))
 

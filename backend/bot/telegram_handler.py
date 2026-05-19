@@ -138,6 +138,9 @@ class TelegramBotManager:
     async def _send_smart_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg_obj, raw_ai_response: str, user_id: int, user_prefs: dict):
         try:
             clean_json = raw_ai_response.replace('```json', '').replace('```', '').strip()
+            json_match = re.search(r'\{.*\}', clean_json, re.DOTALL)
+            if json_match:
+                clean_json = json_match.group(0)
             parsed_data = json.loads(clean_json)
             text_content = parsed_data.get("text", "Processing...")
             response_type = parsed_data.get("response_type", "text")
@@ -149,7 +152,8 @@ class TelegramBotManager:
 
         if response_type == "voice" and voice_pref in ["voice", "both"]:
             await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
-            audio_path = await self.voice.synthesize(text_content, telegram_id=user_id, preferred_method=user_prefs.get("preferred_tts_method", "google"))
+            clean_tts_text = re.sub(r'[*_#`]', '', text_content)
+            audio_path = await self.voice.synthesize(clean_tts_text, telegram_id=user_id, preferred_method=user_prefs.get("preferred_tts_method", "google"))
             
             if audio_path and os.path.exists(audio_path):
                 with open(audio_path, 'rb') as audio:
@@ -190,7 +194,7 @@ class TelegramBotManager:
         if att_count > 0:
             kb.append([InlineKeyboardButton("📥 Get Attachments", callback_data=f"getatt_{m_id}_{nav_context}_{nav_offset}")])
         kb.append([InlineKeyboardButton("↩️ Reply", callback_data=f"manual_reply_{m_id}_{nav_context}_{nav_offset}"), InlineKeyboardButton("🗑️ Trash", callback_data=f"manual_del_{m_id}_{nav_context}_{nav_offset}")])
-        kb.append([InlineKeyboardButton("🤖 AI Summary", callback_data=f"sum_{m_id}_{nav_context}_{nav_offset}")])
+        kb.append([InlineKeyboardButton("🤖 AI Summary", callback_data=f"sum_{m_id}_{nav_context}_{nav_offset}"), InlineKeyboardButton("🔊 Listen", callback_data=f"tts_sum_{m_id}_{nav_context}_{nav_offset}")])
         kb.append(self.get_back_button(nav_context, int(nav_offset)))
         
         await query.edit_message_text(formatted_email, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
@@ -226,7 +230,8 @@ class TelegramBotManager:
                 self.navigation_history[user_id] = {'type': 'search' if is_search else 'inbox', 'offset': offset}
 
             safe_query = "in:inbox" if query == "label:INBOX" else query
-            messages = await self.gmail.get_emails(user_id, query=safe_query, max_results=6)
+            # Fetch offset + 3 to determine if there is a next page
+            messages = await self.gmail.get_emails(user_id, query=safe_query, max_results=offset + 3)
             
             if not messages and offset == 0:
                 text = f"📭 No emails found for: `{safe_query}`" if is_search else "📭 Your Inbox is empty."
@@ -235,8 +240,9 @@ class TelegramBotManager:
                 else: await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
                 return
 
-            has_next = len(messages) > 2
             display_messages = messages[offset:offset+2]
+            has_next = len(messages) > offset + 2
+            
             output_lines = [f"🔍 *Results:* `{safe_query}`\n" if is_search else "📥 *Your Inbox:*\n"]
             kb = []
             nav_context = "search" if is_search else "inbox"
@@ -273,10 +279,7 @@ class TelegramBotManager:
         user = update.effective_user
         access = await self._check_user_access(user.id, user.first_name, user.username)
         if await self._handle_unauthorized_states(update, access["status"], user.id): return
-        await self.show_main_menu(update, context)
-
-    async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
+        
         kb = [
             [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
              InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
@@ -285,6 +288,17 @@ class TelegramBotManager:
             [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
         ]
         text = f"👋 *Welcome {user.first_name}!*\n\nI am your AI Email Assistant. Select an option below or send me a message/voice note."
+        await self._send_or_edit(update, text, InlineKeyboardMarkup(kb))
+
+    async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        kb = [
+            [InlineKeyboardButton("📥 Inbox", callback_data="manual_read_0"),
+             InlineKeyboardButton("✍️ Compose", callback_data="menu_compose")],
+            [InlineKeyboardButton("🔍 Search Emails", callback_data="menu_search_prompt"),
+             InlineKeyboardButton("📎 Attachments", callback_data="show_attachments")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
+        ]
+        text = "🎛️ *Main Dashboard*\n\nWhat would you like to do next?"
         await self._send_or_edit(update, text, InlineKeyboardMarkup(kb))
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -428,7 +442,8 @@ class TelegramBotManager:
                 users = await self.db.get_active_auto_check_users()
                 for user in users:
                     uid = user["telegram_id"]
-                    emails = await self.gmail.get_emails(uid, query='is:unread', max_results=3)
+                    # Fetching 10 to ensure we don't miss ones below top 3 if unread pile up
+                    emails = await self.gmail.get_emails(uid, query='is:unread', max_results=10)
                     for email in emails:
                         msg_id = email['id']
                         if msg_id not in self.notified_emails:
@@ -441,7 +456,11 @@ class TelegramBotManager:
                                 self.run_in_background(self._bg_save_contact(uid, safe_sender))
                                 
                                 text = f"🔔 *New Email*\n\n*From:* {safe_sender[:30]}\n*Subject:* {safe_subject[:40]}"
-                                kb = [[InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_inbox_0")]]
+                                kb = [
+                                    [InlineKeyboardButton("📖 Read", callback_data=f"full_{msg_id}_inbox_0")],
+                                    [InlineKeyboardButton("🤖 AI Summary", callback_data=f"sum_{msg_id}_inbox_0"),
+                                     InlineKeyboardButton("🔊 Listen Summary", callback_data=f"tts_sum_{msg_id}_inbox_0")]
+                                ]
                                 await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
             except Exception: pass
 
@@ -542,7 +561,9 @@ class TelegramBotManager:
             await query.edit_message_text("🧹 *All temporary session files have been securely wiped.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
         elif data == "add_att":
-            await query.edit_message_text("📎 *Please upload the next file directly in this chat.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
+            self.compose_states[user_id] = self.compose_states.get(user_id, {'step': 'AWAIT_ATTACHMENT', 'attachments': []})
+            self.compose_states[user_id]['step'] = 'AWAIT_ATTACHMENT'
+            await query.edit_message_text("📎 *Ready for next file.*\nPlease upload the document, photo, or audio directly in this chat now.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
 
         elif data == "send_manual_draft_direct":
             state = self.compose_states.pop(user_id, None)
@@ -629,6 +650,36 @@ class TelegramBotManager:
                 kb.append([InlineKeyboardButton("📖 Read Full", callback_data=f"full_{m_id}_{nav_context}_{offset}")])
                 kb.append(self.get_back_button(nav_context, int(offset)))
                 await query.edit_message_text(f"🤖 *AI Summary:*\n\n{summary_text}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+            elif action == "tts_sum":
+                await query.edit_message_text("🔊 Analyzing & Generating Audio Summary...")
+                await context.bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
+                body = await self.gmail.read_full_email(user_id, m_id)
+                
+                raw_response = await self.ai_engine.agent_chat(f"Create a concise 3-sentence spoken summary for this email without formatting. Do not include introductory text, just the core facts: {body[:3000]}", user_id)
+                try:
+                    summary_json = json.loads(raw_response.replace('```json', '').replace('```', '').strip())
+                    text_to_speak = summary_json.get("text", raw_response)
+                except:
+                    text_to_speak = raw_response
+
+                clean_tts_text = re.sub(r'[*_#`]', '', text_to_speak)
+                audio_path = await self.voice.synthesize(clean_tts_text, telegram_id=user_id)
+                
+                smart_replies = await self.ai_engine.generate_smart_replies(body)
+                kb = []
+                for reply_text in smart_replies:
+                    kb.append([InlineKeyboardButton(f"✅ Quick Reply: {reply_text}", callback_data=f"sr_{m_id}_{reply_text[:25]}")])
+                kb.append([InlineKeyboardButton("📖 Read Full", callback_data=f"full_{m_id}_{nav_context}_{offset}")])
+                kb.append(self.get_back_button(nav_context, int(offset)))
+
+                if audio_path and os.path.exists(audio_path):
+                    with open(audio_path, 'rb') as audio:
+                        await context.bot.send_voice(chat_id=user_id, voice=audio, caption="🔊 Concise Audio Summary")
+                    os.remove(audio_path)
+                    await query.edit_message_text(f"🤖 *AI Audio Summary Sent!*\n\n{text_to_speak}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+                else:
+                    await query.edit_message_text("❌ Failed to generate audio.", reply_markup=InlineKeyboardMarkup(kb))
 
             elif action == "manual_del":
                 if await self.gmail.delete_email(user_id, m_id):
