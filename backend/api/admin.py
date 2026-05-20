@@ -10,7 +10,7 @@ from config import settings
 
 router = APIRouter()
 
-# --- JWT Configuration (Fix 1 & 8) ---
+# --- JWT Configuration ---
 SECRET_KEY = getattr(settings, "JWT_SECRET", settings.BOT_TOKEN)
 ALGORITHM = "HS256"
 
@@ -35,17 +35,20 @@ class PermissionPayload(BaseModel):
     reason: str = "Blocked by Admin"
 
 # --- Helper: Telegram Notification ---
-async def send_telegram_notification(telegram_id: int, message: str):
+async def send_telegram_notification(telegram_id: int, message: str, reply_markup: dict = None):
     """Sends a background notification directly to the user via Telegram API."""
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
     payload = {"chat_id": telegram_id, "text": message, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
     try:
         async with httpx.AsyncClient() as client:
             await client.post(url, json=payload)
     except Exception as e:
         print(f"Failed to send telegram notification: {e}")
 
-# --- Secure Admin Dependency (Supports JWT & Fallback) ---
+# --- Secure Admin Dependency ---
 async def get_current_admin(
     authorization: str | None = Header(None), 
     x_admin_email: str | None = Header(None)
@@ -63,7 +66,7 @@ async def get_current_admin(
         except jwt.PyJWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-    # 2. Fallback to raw email header if frontend hasn't updated headers yet
+    # 2. Fallback to raw email header
     if not email and x_admin_email:
         email = x_admin_email
         
@@ -87,28 +90,25 @@ async def get_current_admin(
 
 @router.post("/login")
 async def admin_login(payload: AdminLoginPayload):
-    """Manual login for admins using email and password, returns JWT."""
     is_valid = await db_manager.verify_admin_password(payload.email, payload.password)
     if not is_valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     role = await db_manager.get_admin_role(payload.email)
     
-    # Generate JWT Token (Expires in 24 hours)
     expire = datetime.utcnow() + timedelta(hours=24)
     to_encode = {"sub": payload.email, "role": role, "exp": expire}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
     return {
         "status": "success", 
-        "token": token,  # FIXED: Frontend now receives the JWT token to proceed
+        "token": token,  
         "email": payload.email, 
         "role": role
     }
 
 @router.post("/set-password")
 async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(get_current_admin)):
-    """Set or update admin password."""
     if admin.get("email") != payload.email and admin.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Cannot change another user's password")
     
@@ -119,12 +119,10 @@ async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(
 
 @router.get("/role")
 async def get_role(admin: Dict = Depends(get_current_admin)):
-    """Simple role check for frontend routing."""
     return {"role": admin.get("role", "admin")}
 
 @router.get("/stats")
 async def get_stats(admin: Dict = Depends(get_current_admin)):
-    """Fetch all dashboard counters, including new STT and Scheduled Emails stats."""
     try:
         all_users = await db_manager.get_all_users() or []
         total_users = len(all_users)
@@ -138,14 +136,12 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
             
         admins_list = await db_manager.get_admin_users() or []
         
-        # Stats: Conversations
         try:
             history = await db_manager.get_all_conversation_history() or []
             total_conversations = len(history)
         except:
             total_conversations = 0
 
-        # Stats: STT Usage
         try:
             stt_res = await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").select("*").execute())
             stt_usage = stt_res.data if getattr(stt_res, 'data', None) else []
@@ -153,7 +149,6 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
         except:
             total_stt_seconds_used = 0
 
-        # Stats: Scheduled Emails
         try:
             sched_res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").select("*").execute())
             scheduled_emails = sched_res.data if getattr(sched_res, 'data', None) else []
@@ -179,22 +174,18 @@ async def get_stats(admin: Dict = Depends(get_current_admin)):
 
 @router.get("/users")
 async def get_users(admin: Dict = Depends(get_current_admin)):
-    """List all registered bot users."""
     return await db_manager.get_all_users() or []
 
 @router.post("/users/{telegram_id}/permissions")
 async def update_user_permissions(telegram_id: int, payload: PermissionPayload, admin: Dict = Depends(get_current_admin)):
-    """Unified endpoint to handle Approve, Block, and Restrictions (AI/Voice) and notify the user."""
     try:
         def _update():
-            # 1. Update core user flags
             db_manager.db.client.table("users").update({
                 "is_verified": payload.is_verified,
                 "ai_allowed": payload.ai_allowed,
                 "voice_allowed": payload.voice_allowed
             }).eq("telegram_id", telegram_id).execute()
 
-            # 2. Handle Blocklist logic
             if not payload.is_verified:
                 expires_at = None
                 if payload.block_days > 0:
@@ -214,26 +205,36 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
                         "reason": payload.reason
                     }).eq("block_value", str(telegram_id)).execute()
             else:
-                # If verified, ensure they are NOT in blocklist
                 db_manager.db.client.table("blocked_users").delete().eq("block_value", str(telegram_id)).execute()
 
         await db_manager.db.run(_update)
         db_manager._invalidate_cache(["all_users", "all_blocked_users", "active_auto_check_users"])
         
-        # --- SEND TELEGRAM NOTIFICATION (with Admin Info) ---
+        # --- DYNAMIC NOTIFICATION & BUTTON LOGIC ---
         admin_email = admin.get("email", "System Administrator")
+        user = await db_manager.get_user(telegram_id)
+        has_auth_token = bool(user and user.get("auth_token"))
+        reply_markup = None
 
         if payload.is_verified:
-            msg = f"🎉 *Account Approved!*\nYour access has been granted.\n\n👤 *Action by Admin:* {admin_email}\n\nPlease type /start or select an option from the menu."
+            if has_auth_token:
+                msg = f"🎉 *Account Approved!*\nYour access to the AI Email Assistant has been restored.\n\n👤 *Action by:* {admin_email}"
+                reply_markup = {"inline_keyboard": [[{"text": "🔙 Go to Main Menu", "callback_data": "menu_main"}]]}
+            else:
+                msg = f"🎉 *Account Approved!*\nYour application is accepted. Please link your Gmail account to start using the assistant.\n\n👤 *Action by:* {admin_email}"
+                state_uuid = await db_manager.create_auth_session(telegram_id)
+                login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={telegram_id}"
+                reply_markup = {"inline_keyboard": [[{"text": "🔗 Connect Google Workspace", "url": login_url}]]}
+                
             if not payload.ai_allowed or not payload.voice_allowed:
-                msg += "\n\n⚠️ *Note:* Some advanced features (AI generation or Voice) might be restricted."
+                msg += "\n\n⚠️ *Note:* Some advanced features might be restricted."
         else:
             if payload.block_days > 0:
-                msg = f"🚫 *Account Suspended*\nYour access has been temporarily suspended for {payload.block_days} days.\n\n👤 *Action by Admin:* {admin_email}\n*Reason:* {payload.reason}"
+                msg = f"🚫 *Account Suspended*\nYour access has been temporarily suspended for {payload.block_days} days.\n\n👤 *Action by:* {admin_email}\n*Reason:* {payload.reason}"
             else:
-                msg = f"🚫 *Account Blocked*\nYour access has been permanently revoked.\n\n👤 *Action by Admin:* {admin_email}\n*Reason:* {payload.reason}"
+                msg = f"🚫 *Account Blocked*\nYour access has been permanently revoked.\n\n👤 *Action by:* {admin_email}\n*Reason:* {payload.reason}"
         
-        asyncio.create_task(send_telegram_notification(telegram_id, msg))
+        asyncio.create_task(send_telegram_notification(telegram_id, msg, reply_markup))
         
         return {"message": "User permissions updated successfully"}
     except Exception as e:
@@ -242,12 +243,10 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
 
 @router.get("/admins")
 async def get_admins(admin: Dict = Depends(get_current_admin)):
-    """List all admin users."""
     return await db_manager.get_admin_users() or []
 
 @router.post("/admins")
 async def add_new_admin(payload: AddAdminPayload, admin: Dict = Depends(get_current_admin)):
-    """Add a new admin email to the system."""
     if admin.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Super Admin access required")
     success = await db_manager.add_admin_user(payload.email, payload.role, added_by=admin.get("email"))
@@ -257,7 +256,6 @@ async def add_new_admin(payload: AddAdminPayload, admin: Dict = Depends(get_curr
 
 @router.delete("/admins/{id_or_email}")
 async def remove_admin(id_or_email: str, admin: Dict = Depends(get_current_admin)):
-    """Remove admin privileges."""
     if admin.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="Super Admin access required")
     success = await db_manager.remove_admin_user(id_or_email)
@@ -267,7 +265,6 @@ async def remove_admin(id_or_email: str, admin: Dict = Depends(get_current_admin
 
 @router.get("/blocks")
 async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
-    """List all blocked identifiers."""
     try:
         return await db_manager.get_all_blocked_users() or []
     except Exception:
@@ -275,7 +272,6 @@ async def get_all_blocks(admin: Dict = Depends(get_current_admin)):
 
 @router.delete("/blocks/{id_or_telegram_id}")
 async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current_admin)):
-    """Remove a user from the blocklist and notify them."""
     try:
         telegram_id = None
         if id_or_telegram_id.isdigit():
@@ -294,8 +290,9 @@ async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current
             raise HTTPException(status_code=500, detail="Failed to unblock user")
             
         if telegram_id:
-            msg = "✅ *Account Restored!*\nYour restriction has been lifted by the Admin. You can now use the bot again."
-            asyncio.create_task(send_telegram_notification(telegram_id, msg))
+            msg = "✅ *Account Restored!*\nYour restriction has been lifted by the Admin."
+            kb = {"inline_keyboard": [[{"text": "🔙 Go to Main Menu", "callback_data": "menu_main"}]]}
+            asyncio.create_task(send_telegram_notification(telegram_id, msg, kb))
 
         return {"message": "User unblocked"}
     except Exception as e:
@@ -304,12 +301,10 @@ async def unblock_user(id_or_telegram_id: str, admin: Dict = Depends(get_current
 
 @router.post("/logout")
 async def logout():
-    """Logout handler."""
     return {"message": "Logged out successfully"}
 
 @router.get("/scheduled_emails")
 async def get_scheduled_emails(admin: Dict = Depends(get_current_admin)):
-    """Fetch all scheduled emails for monitoring."""
     try:
         res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").select("*").order("created_at", desc=True).execute())
         return {"scheduled_emails": res.data if getattr(res, 'data', None) else []}
@@ -319,7 +314,6 @@ async def get_scheduled_emails(admin: Dict = Depends(get_current_admin)):
 
 @router.get("/stt_usage")
 async def get_stt_usage(admin: Dict = Depends(get_current_admin)):
-    """Fetch speech-to-text analytics and duration tracking."""
     try:
         res = await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").select("*").order("created_at", desc=True).execute())
         return {"stt_usage": res.data if getattr(res, 'data', None) else []}
@@ -329,7 +323,6 @@ async def get_stt_usage(admin: Dict = Depends(get_current_admin)):
         
 @router.get("/saved_attachments")
 async def get_saved_attachments(admin: Dict = Depends(get_current_admin)):
-    """Fetch logs of files and documents permanently memorized by AI."""
     try:
         res = await db_manager.db.run(lambda: db_manager.db.client.table("saved_attachments").select("*").order("created_at", desc=True).execute())
         return {"saved_attachments": res.data if getattr(res, 'data', None) else []}

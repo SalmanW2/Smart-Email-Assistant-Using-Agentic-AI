@@ -133,7 +133,7 @@ class TelegramBotManager:
         return [InlineKeyboardButton("🔙 Main Dashboard", callback_data="menu_main")]
 
     # ==========================================
-    # SMART AI RESPONSE PARSER
+    # SMART AI RESPONSE PARSER (With HITL Draft)
     # ==========================================
     async def _send_smart_ai_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE, msg_obj, raw_ai_response: str, user_id: int, user_prefs: dict):
         try:
@@ -144,10 +144,30 @@ class TelegramBotManager:
             parsed_data = json.loads(clean_json)
             text_content = parsed_data.get("text", "Processing...")
             response_type = parsed_data.get("response_type", "text")
+            draft_data = parsed_data.get("draft")  # Handle AI Draft Preparation
         except Exception:
             text_content = raw_ai_response
             response_type = "text"
+            draft_data = None
 
+        # --- HITL (Human-in-the-Loop) Draft Logic ---
+        if draft_data:
+            self.compose_states[user_id] = {
+                'step': 'AWAIT_ATTACHMENT',
+                'to': draft_data.get("to", ""),
+                'subj': draft_data.get("subject", ""),
+                'body': draft_data.get("body", ""),
+                'attachments': []
+            }
+            kb_send = [
+                [InlineKeyboardButton("🚀 Send Now", callback_data="send_manual_draft_direct")], 
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]
+            ]
+            draft_text = f"📄 *Draft Ready for Review*\n\n*To:* `{draft_data.get('to')}`\n*Subject:* `{draft_data.get('subject')}`\n*Body:*\n_{draft_data.get('body')}_\n\n📎 *You can upload an attachment or click Send Now.*"
+            await msg_obj.edit_text(draft_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_send))
+            return
+
+        # --- Standard Response Logic ---
         voice_pref = user_prefs.get("voice_preference", "text")
 
         if response_type == "voice" and voice_pref in ["voice", "both"]:
@@ -157,13 +177,15 @@ class TelegramBotManager:
             
             if audio_path and os.path.exists(audio_path):
                 with open(audio_path, 'rb') as audio:
-                    await msg_obj.reply_voice(voice=audio)
+                    kb = InlineKeyboardMarkup([self.get_back_button()])
+                    if voice_pref == "both":
+                        await msg_obj.edit_text(f"🤖 {text_content}", parse_mode="Markdown")
+                        await context.bot.send_voice(chat_id=user_id, voice=audio, reply_markup=kb)
+                    else:
+                        # Append buttons directly to the voice message and delete the text message
+                        await context.bot.send_voice(chat_id=user_id, voice=audio, caption="🔊 AI Voice Response", reply_markup=kb)
+                        await msg_obj.delete() 
                 os.remove(audio_path)
-                
-                if voice_pref == "both":
-                    await msg_obj.edit_text(f"🤖 {text_content}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
-                else:
-                    await msg_obj.delete() 
                 return
         
         await msg_obj.edit_text(f"🤖 {text_content}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([self.get_back_button()]))
@@ -230,7 +252,7 @@ class TelegramBotManager:
                 self.navigation_history[user_id] = {'type': 'search' if is_search else 'inbox', 'offset': offset}
 
             safe_query = "in:inbox" if query == "label:INBOX" else query
-            # Fetch offset + 3 to determine if there is a next page
+            # Fetch offset + 3 to properly determine if there is a next page
             messages = await self.gmail.get_emails(user_id, query=safe_query, max_results=offset + 3)
             
             if not messages and offset == 0:
@@ -321,7 +343,7 @@ class TelegramBotManager:
             elif state['step'] == 'AWAIT_BODY':
                 state['body'] = text; state['step'] = 'AWAIT_ATTACHMENT'; state['attachments'] = []
                 kb_send = [[InlineKeyboardButton("🚀 Send Now", callback_data="send_manual_draft_direct")], [InlineKeyboardButton("❌ Cancel", callback_data="cancel_compose")]]
-                await update.message.reply_text(f"📄 *Draft Ready*\n\n*To:* {state.get('to')}\n*Subject:* {state.get('subj')}\n\nUpload an attachment or click Send Now.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_send))
+                await update.message.reply_text(f"📄 *Draft Ready*\n\n*To:* {state.get('to')}\n*Subject:* {state.get('subj')}\n*Body:* {state.get('body')}\n\nUpload an attachment or click Send Now.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_send))
             elif state['step'] == 'AWAIT_ATTACHMENT':
                 await update.message.reply_text("Upload file or Send.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Send Now", callback_data="send_manual_draft_direct")]]))
             return
@@ -442,8 +464,8 @@ class TelegramBotManager:
                 users = await self.db.get_active_auto_check_users()
                 for user in users:
                     uid = user["telegram_id"]
-                    # Fetching 10 to ensure we don't miss ones below top 3 if unread pile up
-                    emails = await self.gmail.get_emails(uid, query='is:unread', max_results=10)
+                    # Fix 4: Time Gated query ensures no unread spam from days ago
+                    emails = await self.gmail.get_emails(uid, query='is:unread newer_than:1d', max_results=10)
                     for email in emails:
                         msg_id = email['id']
                         if msg_id not in self.notified_emails:
@@ -675,9 +697,10 @@ class TelegramBotManager:
 
                 if audio_path and os.path.exists(audio_path):
                     with open(audio_path, 'rb') as audio:
-                        await context.bot.send_voice(chat_id=user_id, voice=audio, caption="🔊 Concise Audio Summary")
+                        # Append the kb array to the voice message and delete the text message
+                        await context.bot.send_voice(chat_id=user_id, voice=audio, caption="🔊 Audio Summary", reply_markup=InlineKeyboardMarkup(kb))
                     os.remove(audio_path)
-                    await query.edit_message_text(f"🤖 *AI Audio Summary Sent!*\n\n{text_to_speak}", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+                    await query.message.delete()
                 else:
                     await query.edit_message_text("❌ Failed to generate audio.", reply_markup=InlineKeyboardMarkup(kb))
 
