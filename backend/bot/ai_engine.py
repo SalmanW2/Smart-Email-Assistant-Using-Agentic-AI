@@ -73,6 +73,11 @@ class AIEngine:
         """Prepares an email draft for the user to review. MUST be called when the user asks to send or reply to an email."""
         if not self.current_user_id: 
             return "Error: User context missing."
+        
+        # If AI doesn't know the recipient, mark it dynamically
+        if not to_email or to_email.strip() == "":
+            to_email = "[Specify Recipient]"
+            
         self.pending_drafts[self.current_user_id] = {
             "to": to_email,
             "subject": subject,
@@ -166,7 +171,7 @@ class AIEngine:
         text_result = ""
         method_used = "groq_whisper"
         
-        stt_prompt = "Transcribe the audio accurately. Match the exact language and dialect spoken. If the user speaks a local language but expects English alphabets, transcribe using English alphabets (Romanized)."
+        stt_prompt = "Transcribe the audio accurately. Mirror the exact spoken language. If the language is typically written in Latin/English alphabets in everyday texting, transcribe using Latin/English alphabets."
 
         if settings.GROQ_API_KEY:
             try:
@@ -216,11 +221,12 @@ class AIEngine:
             f"USER PROFILE:\nName: {user_info['name']}\nEmail: {user_info['email']}\n\n"
             "TOOLS AVAILABLE: search_gmail, read_gmail_message, prepare_email_draft, schedule_email, save_contact, search_contact, search_saved_attachments, read_memory_document.\n\n"
             "CRITICAL RULES:\n"
-            "1. ADAPT TO USER LANGUAGE: Guess the exact language and alphabet script the user is communicating in. If they type/speak in a local language (e.g., Punjabi, Urdu) using English alphabets, you MUST reply in the exact same language using English alphabets. Do not force standard English if the user is using a dialect.\n"
-            "2. NEVER REFUSE VOICE: You are equipped with a Text-to-Speech (TTS) engine. If the user asks you to speak or send a voice note, NEVER say you cannot. Simply set \"response_type\": \"voice\" in your JSON.\n"
-            "3. NO PLACEHOLDERS: NEVER use placeholders like [Your Name] or [Your Company]. Always use the exact Name and Email provided in the USER PROFILE above.\n"
-            "4. NO BLIND SENDING: Do not send emails directly. Always use the 'prepare_email_draft' tool. Once the tool returns success, tell the user the draft is ready for their review.\n"
-            "5. JSON OUTPUT ONLY: YOU MUST ALWAYS RESPOND IN EXACT, VALID JSON FORMAT. Escape internal quotes properly using \\\". Do not wrap it in markdown code blocks. Format:\n"
+            "1. ADAPT TO USER LANGUAGE & SCRIPT: You must perfectly mirror the exact language and the exact alphabet script the user uses. Do not force standard English or native scripts if the user is using a dialect or transliteration.\n"
+            "2. NEVER REFUSE VOICE: You are equipped with a Text-to-Speech (TTS) engine. If the user asks you to speak, send a voice note, or talk, NEVER say you cannot. Simply set \"response_type\": \"voice\" in your JSON.\n"
+            "3. NO PLACEHOLDERS: NEVER use placeholders like [Your Name], [Your Company], or [Your Email]. Always use the exact Name and Email provided in the USER PROFILE above.\n"
+            "4. NO BLIND SENDING: Do not send emails directly. Always use the 'prepare_email_draft' tool. Once the tool returns success, tell the user the draft is ready. If the recipient is missing, set to_email to '[Specify Recipient]'.\n"
+            "5. BE SHORT & FACTUAL: Provide short, direct, accurate, 100% correct, and factual answers without unnecessary pleasantries or filler text.\n"
+            "6. JSON OUTPUT ONLY: YOU MUST ALWAYS RESPOND IN EXACT, VALID JSON FORMAT. Escape internal quotes properly using \\\". Do not wrap it in markdown code blocks. Format:\n"
             "{\"text\": \"Your actual response message here\", \"response_type\": \"voice\" OR \"text\"}\n"
             "Use 'voice' for standard conversational replies. Use 'text' ONLY if the response contains code, long lists, or data that must be read on screen.\n\n"
             f"{memory_prompt}"
