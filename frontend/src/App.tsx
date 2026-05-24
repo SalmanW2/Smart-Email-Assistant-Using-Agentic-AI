@@ -47,7 +47,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         }
 
         setIsValid(true);
-      } catch (err) {
+      } catch {
         localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_email');
         localStorage.removeItem('admin_role');

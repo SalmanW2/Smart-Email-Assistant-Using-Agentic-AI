@@ -134,26 +134,6 @@ CREATE TABLE IF NOT EXISTS tts_usage (
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
 );
 
--- Indexes for Performance
-CREATE INDEX idx_users_telegram_id ON users(telegram_id);
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_contacts_telegram_id ON contacts(telegram_id);
-CREATE INDEX idx_contacts_email ON contacts(email_address);
-CREATE INDEX idx_conversation_summaries_telegram_id ON conversation_summaries(telegram_id);
-CREATE INDEX idx_conversation_summaries_date ON conversation_summaries(conversation_date);
-CREATE INDEX idx_email_cache_telegram_id ON email_cache(telegram_id);
-CREATE INDEX idx_conversation_history_telegram_id ON conversation_history(telegram_id);
-CREATE INDEX idx_blocked_users_value ON blocked_users(block_value);
-
--- 1. Users table mein admin restrictions ke naye columns add karna
-ALTER TABLE users 
-ADD COLUMN IF NOT EXISTS ai_allowed BOOLEAN DEFAULT TRUE,
-ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE;
-
--- 2. Blocked users table mein temporary suspension (Time-bound block) ke liye column add karna
-ALTER TABLE blocked_users
-ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
-
 -- Scheduled Emails Table
 CREATE TABLE IF NOT EXISTS scheduled_emails (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -184,17 +164,49 @@ CREATE TABLE IF NOT EXISTS saved_attachments (
     file_id VARCHAR(255) NOT NULL,
     file_name VARCHAR(500),
     context_topic VARCHAR(255), -- (e.g., "Ghous Invoice")
-    sent_to_emails JSONB DEFAULT '[]'::jsonb, -- کن کن logon ko bheji ja chuki hai
+    sent_to_emails JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
 );
 
+-- Contact Messages Table (Public Contact Form)
+CREATE TABLE IF NOT EXISTS contact_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_email VARCHAR(255) NOT NULL,
+    message_text TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'reviewed', 'resolved'
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMP,
+    reviewed_by VARCHAR(255)
+);
+
+-- Indexes for Performance
+CREATE INDEX idx_users_telegram_id ON users(telegram_id);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_contacts_telegram_id ON contacts(telegram_id);
+CREATE INDEX idx_contacts_email ON contacts(email_address);
+CREATE INDEX idx_conversation_summaries_telegram_id ON conversation_summaries(telegram_id);
+CREATE INDEX idx_conversation_summaries_date ON conversation_summaries(conversation_date);
+CREATE INDEX idx_email_cache_telegram_id ON email_cache(telegram_id);
+CREATE INDEX idx_conversation_history_telegram_id ON conversation_history(telegram_id);
+CREATE INDEX idx_blocked_users_value ON blocked_users(block_value);
 CREATE INDEX idx_saved_attachments_telegram_id ON saved_attachments(telegram_id);
+CREATE INDEX idx_contact_messages_status ON contact_messages(status);
+CREATE INDEX idx_contact_messages_created_at ON contact_messages(created_at);
 
--- Agar pehle se unique constraint nahi lagi hui thi toh yeh run karein:
-ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
-ALTER TABLE contacts ADD CONSTRAINT contacts_telegram_id_email_address_key UNIQUE (telegram_id, email_address);
+-- Admin restrictions columns
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS ai_allowed BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE;
 
--- Add auto_check_enabled to user_preferences table
+-- Temporary suspension for blocked users
+ALTER TABLE blocked_users
+ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
+
+-- Auto-check preference
 ALTER TABLE user_preferences 
 ADD COLUMN IF NOT EXISTS auto_check_enabled BOOLEAN DEFAULT TRUE;
+
+-- Unique constraint enforcement
+ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
+ALTER TABLE contacts ADD CONSTRAINT contacts_telegram_id_email_address_key UNIQUE (telegram_id, email_address);

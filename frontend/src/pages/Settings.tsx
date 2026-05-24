@@ -13,7 +13,6 @@ const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const adminEmail = localStorage.getItem('admin_email') || '';
   const token = localStorage.getItem('admin_token') || '';
 
   const handlePasswordChange = async (e: React.FormEvent) => {
@@ -54,7 +53,7 @@ const Settings = () => {
         const data = await res.json();
         setMessage({ type: 'error', text: data.detail || 'Failed to change password.' });
       }
-    } catch (err) {
+    } catch {
       setMessage({ type: 'error', text: 'Network error. Please try again.' });
     } finally {
       setLoading(false);

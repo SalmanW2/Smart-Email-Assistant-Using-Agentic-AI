@@ -47,7 +47,7 @@ const About = () => {
       } else {
         setSubmitStatus({type: 'error', text: 'Failed to send message. Please try again later.'});
       }
-    } catch (err) {
+    } catch {
       setSubmitStatus({type: 'error', text: 'Network error. Please check your connection and try again.'});
     } finally {
       setSubmitting(false);
