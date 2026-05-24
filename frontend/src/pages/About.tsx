@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { 
@@ -6,15 +6,19 @@ import {
   ChevronRight, Phone, Send, Lock, CheckCircle2 
 } from 'lucide-react';
 
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+
 const About = () => {
   const location = useLocation();
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<{type: 'success'|'error', text: string} | null>(null);
 
-  // FIX: Smooth Scroll Logic for Sidebar Links (/about#help, /about#contact)
   useEffect(() => {
     if (location.hash) {
       const element = document.getElementById(location.hash.substring(1));
       if (element) {
-        // Thora delay taake page render hone ke baad smooth scroll ho
         setTimeout(() => {
           element.scrollIntoView({ behavior: 'smooth' });
         }, 100);
@@ -24,16 +28,39 @@ const About = () => {
     }
   }, [location]);
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setSubmitStatus(null);
+
+    try {
+      const res = await fetch(`${backendUrl}/api/user/public/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, message }),
+      });
+
+      if (res.ok) {
+        setSubmitStatus({type: 'success', text: 'Message sent successfully! We will get back to you soon.'});
+        setEmail('');
+        setMessage('');
+      } else {
+        setSubmitStatus({type: 'error', text: 'Failed to send message. Please try again later.'});
+      }
+    } catch (err) {
+      setSubmitStatus({type: 'error', text: 'Network error. Please check your connection and try again.'});
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-50 via-white to-blue-50 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950/20 font-sans transition-colors duration-500">
       <Navbar />
       
-      {/* Main Content Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 space-y-24">
         
-        {/* ==========================================
-            1. HERO / ABOUT SECTION
-        ========================================== */}
+        {/* HERO / ABOUT SECTION */}
         <section id="about" className="text-center space-y-6 pt-10 animate-in fade-in slide-in-from-bottom-8 duration-700 scroll-mt-24">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 font-bold text-sm border border-blue-100 dark:border-blue-500/20 mb-4 shadow-sm">
             <Bot className="w-4 h-4" /> Powered by Agentic AI
@@ -54,9 +81,7 @@ const About = () => {
           </div>
         </section>
 
-        {/* ==========================================
-            2. HOW IT WORKS
-        ========================================== */}
+        {/* HOW IT WORKS */}
         <section id="how-it-works" className="scroll-mt-24">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-black text-slate-900 dark:text-white">How It Works</h2>
@@ -79,11 +104,8 @@ const About = () => {
           </div>
         </section>
 
-        {/* ==========================================
-            3. SECURITY & PRIVACY
-        ========================================== */}
+        {/* SECURITY & PRIVACY */}
         <section id="security" className="bg-slate-900 dark:bg-slate-950 text-white rounded-[3rem] p-8 sm:p-12 shadow-2xl relative overflow-hidden scroll-mt-24">
-          {/* Decorative Background Glows */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30 animate-pulse"></div>
           <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-500 rounded-full mix-blend-screen filter blur-[100px] opacity-30 animate-pulse delay-1000"></div>
           
@@ -108,9 +130,7 @@ const About = () => {
           </div>
         </section>
 
-        {/* ==========================================
-            4. HELP & GUIDES (FAQ)
-        ========================================== */}
+        {/* HELP & GUIDES (FAQ) */}
         <section id="help" className="scroll-mt-24">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-black text-slate-900 dark:text-white">Help & Guides</h2>
@@ -118,7 +138,7 @@ const About = () => {
           </div>
           <div className="max-w-3xl mx-auto space-y-4">
             {[
-              { q: "How do I connect my Gmail account?", a: "Start the bot on Telegram and use the /connect command. It will provide a secure Google OAuth link for authorization." },
+              { q: "How do I connect my Gmail account?", a: "Start the bot on Telegram with /start. It will show a secure Google OAuth link for authorization." },
               { q: "What is 'Agentic AI'?", a: "Unlike standard chatbots, Agentic AI doesn't just talk; it acts. It can read your command, structure a professional email, identify the recipient, and dispatch it automatically." },
               { q: "Why are my voice notes failing?", a: "Ensure the administrator has not restricted your voice privileges. Also, make sure your voice note is clear and under the maximum duration limit." },
               { q: "What happens if I get blocked?", a: "If an admin blocks your account, the bot will stop responding to your commands immediately. You will need to contact support or your system admin to lift the restriction." }
@@ -133,9 +153,7 @@ const About = () => {
           </div>
         </section>
 
-        {/* ==========================================
-            5. CONTACT US
-        ========================================== */}
+        {/* CONTACT US */}
         <section id="contact" className="max-w-4xl mx-auto text-center scroll-mt-24 pb-12">
           <div className="bg-blue-50/50 dark:bg-blue-900/10 p-8 sm:p-12 rounded-[3rem] border border-blue-100 dark:border-blue-800/30 shadow-inner">
             <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-3xl flex items-center justify-center mb-6 shadow-xl shadow-blue-500/30 transform rotate-3 hover:rotate-0 transition-transform">
@@ -146,24 +164,36 @@ const About = () => {
               Our support team is available to assist you with any technical issues, onboarding process, or custom feature requests.
             </p>
             
-            <form className="max-w-md mx-auto space-y-4 text-left" onSubmit={(e) => { e.preventDefault(); alert("Message sent successfully! We will get back to you soon."); }}>
+            {submitStatus && (
+              <div className={`max-w-md mx-auto mb-6 p-4 rounded-2xl font-bold text-sm flex items-center gap-2 ${submitStatus.type === 'success' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>
+                {submitStatus.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <Send className="w-5 h-5" />}
+                {submitStatus.text}
+              </div>
+            )}
+            
+            <form className="max-w-md mx-auto space-y-4 text-left" onSubmit={handleSubmit}>
               <input 
                 type="email" 
                 placeholder="Your Email Address" 
                 required 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all dark:text-white font-medium shadow-sm" 
               />
               <textarea 
                 placeholder="How can we help you?" 
                 required 
-                rows={4} 
+                rows={4}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
                 className="w-full p-4 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all dark:text-white font-medium shadow-sm resize-none"
               ></textarea>
               <button 
                 type="submit" 
-                className="w-full bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-800 dark:hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-lg mt-2"
+                disabled={submitting}
+                className="w-full bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-800 dark:hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-lg mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Send className="w-4 h-4" /> Send Message
+                <Send className="w-4 h-4" /> {submitting ? 'Sending...' : 'Send Message'}
               </button>
             </form>
           </div>
