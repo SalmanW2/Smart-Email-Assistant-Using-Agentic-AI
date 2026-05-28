@@ -329,3 +329,50 @@ async def get_saved_attachments(admin: Dict = Depends(get_current_admin)):
     except Exception as e:
         print(f"Error fetching saved attachments: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+@router.get("/contact_messages")
+async def get_contact_messages(admin: Dict = Depends(get_current_admin)):
+    """Get all public contact form messages."""
+    try:
+        res = await db_manager.db.run(
+            lambda: db_manager.db.client.table("contact_messages")
+                    .select("*").order("created_at", desc=True).execute()
+        )
+        return res.data if getattr(res, 'data', None) else []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/contact_messages/{msg_id}")
+async def update_contact_message_status(
+    msg_id: str,
+    admin: Dict = Depends(get_current_admin)
+):
+    """Mark a contact message as reviewed."""
+    try:
+        await db_manager.db.run(
+            lambda: db_manager.db.client.table("contact_messages").update({
+                "status": "reviewed",
+                "reviewed_at": datetime.utcnow().isoformat(),
+                "reviewed_by": admin.get("email")
+            }).eq("id", msg_id).execute()
+        )
+        return {"message": "Marked as reviewed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/change-password")
+async def change_admin_password(
+    payload: dict,
+    admin: Dict = Depends(get_current_admin)
+):
+    """Change admin password with current password verification."""
+    current_password = payload.get("current_password", "")
+    new_password = payload.get("new_password", "")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    is_valid = await db_manager.verify_admin_password(admin["email"], current_password)
+    if not is_valid:
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    success = await db_manager.set_admin_password(admin["email"], new_password)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update password")
+    return {"message": "Password updated successfully"}

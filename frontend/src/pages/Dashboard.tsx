@@ -5,7 +5,7 @@ import {
   Users, ShieldAlert, CheckCircle, Activity, Shield, Ban, Search,
   UserPlus, Trash2, ArrowUpRight, Zap, X, AlertCircle,
   MicOff, CalendarClock, LineChart, Mail, Mic, ShieldOff,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare
 } from 'lucide-react';
 
 interface User { telegram_id: number; first_name: string; username: string; email: string; is_verified: boolean; ai_allowed?: boolean; voice_allowed?: boolean; created_at: string; }
@@ -14,6 +14,7 @@ interface Block { id: string; block_type: string; block_value: string; reason: s
 interface Stats { total_users: number; verified_users: number; blocked_users: number; total_admins: number; total_stt_seconds_used: number; total_scheduled_emails: number; total_conversations: number; }
 interface STTUsage { id: string; duration_seconds: number; method: string; created_at: string; }
 interface ScheduledEmail { id: string; to_email: string; status: string; scheduled_time: string; }
+interface ContactMessage { id: string; sender_email: string; message_text: string; status: string; created_at: string; reviewed_by?: string; }
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
 
@@ -137,6 +138,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [sttUsage, setSttUsage] = useState<STTUsage[]>([]);
   const [scheduledEmails, setScheduledEmails] = useState<ScheduledEmail[]>([]);
+  const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
@@ -229,13 +231,14 @@ const Dashboard = () => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [usersRes, adminsRes, blocksRes, statsRes, sttRes, schedRes] = await Promise.all([
+      const [usersRes, adminsRes, blocksRes, statsRes, sttRes, schedRes, contactRes] = await Promise.all([
         fetch(`${backendUrl}/api/admin/users`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/admins`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/blocks`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/stats`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/stt_usage`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/scheduled_emails`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/contact_messages`, { headers: getHeaders() }),
       ]);
       if (usersRes.ok) setUsers(await usersRes.json() || []);
       if (adminsRes.ok) setAdmins(await adminsRes.json() || []);
@@ -243,6 +246,7 @@ const Dashboard = () => {
       if (statsRes.ok) setStats(await statsRes.json() || null);
       if (sttRes.ok) { const d = await sttRes.json(); setSttUsage(d.stt_usage || []); }
       if (schedRes.ok) { const d = await schedRes.json(); setScheduledEmails(d.scheduled_emails || []); }
+      if (contactRes.ok) { setContactMessages(await contactRes.json() || []); }
     } catch (err) { console.error('Data fetch failed', err); }
     finally { setIsLoading(false); }
   };
@@ -329,8 +333,8 @@ const Dashboard = () => {
       <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-800/50 sticky top-20 z-40 transition-colors duration-500 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex space-x-2 sm:space-x-6 overflow-x-auto py-2">
-            {['stats', 'users', 'blocklist', 'admins'].map((tab) => (
-              (tab !== 'admins' || role === 'super_admin') && (
+            {['stats', 'users', 'blocklist', 'admins', 'messages'].map((tab) => (
+              (tab !== 'admins' || role === 'super_admin') && (tab !== 'messages' || true) && (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -340,6 +344,7 @@ const Dashboard = () => {
                   {tab === 'users' && <Users className="w-4 h-4" />}
                   {tab === 'blocklist' && <Ban className="w-4 h-4" />}
                   {tab === 'admins' && <Shield className="w-4 h-4" />}
+                  {tab === 'messages' && <MessageSquare className="w-4 h-4" />}
                   {tab}
                 </button>
               )
@@ -582,6 +587,54 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+
+        {/* CONTACT MESSAGES */}
+        {activeTab === 'messages' && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-200/50 dark:border-slate-800/50 overflow-hidden shadow-sm transition-colors duration-500">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800/50 flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-blue-500" />
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Contact Messages</h2>
+              <span className="ml-auto text-xs font-bold px-2 py-1 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-full">{contactMessages.length} messages</span>
+            </div>
+            {isLoading ? <ListSkeletonLoader /> : (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                {contactMessages.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 font-medium">No contact messages yet.</div>
+                ) : contactMessages.map((cm) => (
+                  <div key={cm.id} className="p-5 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-sm">{cm.sender_email}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${cm.status === "reviewed" ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400" : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400"}`}>{cm.status}</span>
+                          <span className="text-xs text-slate-400">{new Date(cm.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 font-medium leading-relaxed break-words">{cm.message_text}</p>
+                        {cm.reviewed_by && <p className="text-xs text-slate-400 mt-1">Reviewed by: {cm.reviewed_by}</p>}
+                      </div>
+                      {cm.status === "pending" && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`${backendUrl}/api/admin/contact_messages/${cm.id}`, {
+                                method: "PATCH", headers: getHeaders()
+                              });
+                              if (res.ok) fetchData();
+                            } catch {}
+                          }}
+                          className="shrink-0 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                        >
+                          Mark Reviewed
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
