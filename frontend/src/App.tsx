@@ -26,6 +26,76 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const validateToken = async () => {
+      // 1. Pehle URL Query Parameters check karo (Google Redirect case)
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token');
+      const urlEmail = urlParams.get('email');
+
+      // Agar URL mein token hai (Google Login se aaya hai), toh use pehle save karo
+      if (urlToken && urlEmail) {
+        localStorage.setItem('admin_token', urlToken);
+        localStorage.setItem('admin_email', urlEmail);
+        
+        // URL ko clean karo taake refresh karne par ?token=... saaf ho jaye
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      // 2. Ab localStorage se values uthao
+      const token = localStorage.getItem('admin_token');
+      const email = localStorage.getItem('admin_email');
+
+      if (!token || !email) {
+        setIsValid(false);
+        return;
+      }
+
+      try {
+        // Token format and expiry basic validation
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp * 1000 < Date.now()) {
+          setIsValid(false);
+          return;
+        }
+
+        // Backend API verification 
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_BACKEND || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+        const res = await fetch(`${backendUrl}/api/admin/get_current_admin`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          setIsValid(true);
+        } else {
+          setIsValid(false);
+        }
+      } catch (err) {
+        setIsValid(false);
+      }
+    };
+
+    validateToken();
+  }, []);
+
+  if (isValid === null) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-400 font-bold">Verifying access...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isValid) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+  useEffect(() => {
+    const validateToken = async () => {
       const token = localStorage.getItem('admin_token');
       const email = localStorage.getItem('admin_email');
 
