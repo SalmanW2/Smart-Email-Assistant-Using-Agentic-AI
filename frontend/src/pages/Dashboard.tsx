@@ -162,10 +162,8 @@ const Dashboard = () => {
     const reset = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_email');
-        localStorage.removeItem('admin_role');
-        navigate('/admin/login?error=Session+expired+due+to+inactivity');
+        localStorage.clear();
+        window.location.href = '/admin/login?error=Session+expired+due+to+inactivity';
       }, 600000);
     };
     const events = ['mousemove', 'keydown', 'scroll', 'click', 'touchstart'];
