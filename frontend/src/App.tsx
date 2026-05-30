@@ -26,21 +26,18 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const validateToken = async () => {
-      // 1. Pehle URL Query Parameters check karo (Google Redirect case)
+      // 1. Intercept URL parameters if redirected from Google Auth
       const urlParams = new URLSearchParams(window.location.search);
       const urlToken = urlParams.get('token');
       const urlEmail = urlParams.get('email');
 
-      // Agar URL mein token hai (Google Login se aaya hai), toh use pehle save karo
       if (urlToken && urlEmail) {
         localStorage.setItem('admin_token', urlToken);
         localStorage.setItem('admin_email', urlEmail);
-        
-        // URL ko clean karo taake refresh karne par ?token=... saaf ho jaye
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
-      // 2. Ab localStorage se values uthao
+      // 2. Fetch from localStorage
       const token = localStorage.getItem('admin_token');
       const email = localStorage.getItem('admin_email');
 
@@ -50,31 +47,29 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
       }
 
       try {
-        // Token format and expiry basic validation
+        // 3. Robust Client-Side Validation First (Prevents blinking checks)
         const payload = JSON.parse(atob(token.split('.')[1]));
         if (payload.exp * 1000 < Date.now()) {
-          localStorage.removeItem('admin_token');
-          localStorage.removeItem('admin_email');
-          localStorage.removeItem('admin_role');
+          localStorage.clear();
           setIsValid(false);
           return;
         }
 
-        // Backend API verification 
+        // Set true immediately on verified token shape to stop flickering/bumping
+        setIsValid(true);
+
+        // 4. Background verification with server (Silently signs out ONLY on definite 401)
         const backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_BACKEND || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
         const res = await fetch(`${backendUrl}/api/admin/get_current_admin`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        
-        if (res.ok) {
-          setIsValid(true);
-        } else {
+
+        if (!res.ok && res.status === 401) {
+          localStorage.clear();
           setIsValid(false);
         }
       } catch (err) {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_email');
-        localStorage.removeItem('admin_role');
+        localStorage.clear();
         setIsValid(false);
       }
     };
