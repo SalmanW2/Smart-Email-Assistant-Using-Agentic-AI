@@ -131,9 +131,6 @@ const AccordionUserItem = ({ user, blocks, onUpdate, isManaging, setManageUserId
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 const Dashboard = () => {
-  const [showPasswordPrompt, setShowPasswordPrompt] = useState(
-    localStorage.getItem('prompt_easy_password') === 'true'
-  );
   const [activeTab, setActiveTab] = useState('stats');
   const [users, setUsers] = useState<User[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
