@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from db.models import db_manager
 from config import settings
+from pydantic import BaseModel
+from typing import Optional    
 
 router = APIRouter()
 
@@ -33,7 +35,11 @@ class PermissionPayload(BaseModel):
     voice_allowed: bool
     block_days: int = 0  # 0 means permanent if blocked
     reason: str = "Blocked by Admin"
-
+# 1. Model mein current_password ko Optional banayein
+class PasswordChangeRequest(BaseModel):
+    current_password: Optional[str] = ""
+    new_password: str
+    
 # --- Helper: Telegram Notification ---
 async def send_telegram_notification(telegram_id: int, message: str, reply_markup: dict = None):
     """Sends a background notification directly to the user via Telegram API."""
@@ -359,20 +365,17 @@ async def update_contact_message_status(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/change-password")
-async def change_admin_password(
-    payload: dict,
-    admin: Dict = Depends(get_current_admin)
-):
-    """Change admin password with current password verification."""
-    current_password = payload.get("current_password", "")
-    new_password = payload.get("new_password", "")
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    is_valid = await db_manager.verify_admin_password(admin["email"], current_password)
-    if not is_valid:
-        raise HTTPException(status_code=401, detail="Current password is incorrect")
-    success = await db_manager.set_admin_password(admin["email"], new_password)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to update password")
+def change_password(request: PasswordChangeRequest, admin=Depends(get_current_admin), db: Session=Depends(get_db)):
+    admin_user = db.query(AdminUser).filter(AdminUser.email == admin["email"]).first()
+    if not admin_user:
+        raise HTTPException(status_code=404, detail="Admin not found")
+
+    if request.current_password and admin_user.password_hash:
+        if not verify_password(request.current_password, admin_user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    admin_user.password_hash = get_password_hash(request.new_password)
+    db.commit()
     return {"message": "Password updated successfully"}
