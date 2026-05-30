@@ -1,229 +1,224 @@
-# AI Email Assistant
+🤖 Smart Email Assistant (Agentic AI)
 
-An intelligent email management system powered by AI, featuring Telegram bot integration, voice processing, and comprehensive contact management.
+An enterprise-grade, intelligent email management system powered by Agentic AI. It seamlessly bridges the Gmail API with a Telegram bot interface, allowing users to manage, read, summarize, and draft emails using natural language text or voice notes. Backed by a secure React admin dashboard and a robust, fully asynchronous FastAPI/Supabase infrastructure.
 
-## Features
+✨ Core Features
 
-### 🤖 AI-Powered Email Assistant
-- Natural language processing with Google Gemini LLM Model
-- Intelligent email drafting and responses
-- Email analysis and insights
-- Conversation memory and context awareness
+🧠 Agentic AI Engine
 
-### 📧 Email Integration
-- Secure Google OAuth 2.0 authentication
-- Gmail API integration for email access
-- Email caching and quick access
-- Smart email categorization
+Google Gemini LLM Integration: Advanced natural language processing for complex queries.
 
-### 👥 Contact Management
-- AI-powered contact extraction from emails
-- Contact relationship mapping
-- Search and organization features
-- Contact frequency tracking
+Context-Aware Summarization: Converts long email threads into concise, professional bullet points.
 
-### 📱 Telegram Bot Interface
-- Intuitive chat-based interface
-- Voice message processing
-- Inline keyboards for quick actions
-- Real-time notifications
+Intelligent Reply Generation: Contextual drafting of responses based on email history.
 
-### 🔊 Voice Processing
-- Text-to-speech 
-- Speech-to-text 
-- Fallback voice processing with Google Cloud Speech Edge TTS, pyttsx3
-- Multi-Natural-language support
+Human-in-the-Loop (HITL) Drafting: Autonomously detects missing information (e.g., recipient email) and smoothly asks the user for input without crashing.
 
-### 👨‍💼 Admin Dashboard
-- User management and approval system
-- System statistics and analytics
-- Admin authentication with PBKDF2 hashing
-- Role-based access control
+Conversation Memory: Maintains context across multiple interactions for a seamless chat experience.
 
-### 🛡️ Security & Reliability
-- Supabase PostgreSQL with Row Level Security
-- Service role key for backend operations
-- "No-crash" database error handling
-- Secure password hashing
+📱 Premium Telegram Interface
 
-## Architecture
+Clean MarkdownV2 Layouts: Professionally structured notifications and summaries without raw JSON leaks.
 
-### Database Layer
-- **Supabase PostgreSQL**: Primary database with RLS
-- **Async Operations**: Non-blocking database calls
-- **Memory Management**: Conversation summaries for token optimization
-- **Contact Mapping**: Relationship tracking between contacts
+Interactive Inline Keyboards: Quick actions for Read, Summarize, Reply, and Trash directly within the chat.
 
-### API Layer
-- **FastAPI**: Modern async web framework
-- **RESTful Endpoints**: Clean API design
-- **CORS Support**: Cross-origin resource sharing
-- **Webhook Integration**: Telegram bot communication
+Multi-Attachment Staging: Upload files directly in chat to stage them for email drafts.
 
-### Bot Layer
-- **Telegram Bot API**: Interactive chat interface
-- **Command Handling**: Structured command processing
-- **Callback Queries**: Inline keyboard interactions
-- **Voice Processing**: Audio message handling
+Secure Downloading: Conditional 'Get Attachments' buttons with batch-limited guardrails to prevent memory overload.
 
-### AI Engine
-- **Google Gemini 2.0**: Advanced language model
-- **Context Awareness**: Memory-based conversations
-- **Email Analysis**: Intelligent content processing
-- **Response Generation**: Natural language responses
+🔊 Advanced Voice Processing
 
-## Project Structure
+Speech-to-Text (STT): Process voice commands and dictate emails naturally.
 
-```
-backend/
-├── main.py                 # FastAPI application entry point
-├── config.py              # Environment configuration
-├── auth.py                # Authentication endpoints
-├── admin.py               # Admin dashboard endpoints
-├── user.py                # User-specific endpoints
-├── telegram_handler.py    # Telegram bot logic
-├── ai_engine.py          # AI processing engine
-├── voice_handler.py      # Voice processing utilities
-└── db/
-    ├── models.py         # Database operations
-    ├── memory.py         # Conversation memory management
-    └── contacts.py       # Contact relationship management
+Text-to-Speech (TTS): Generates high-quality auditory email summaries using Edge TTS / Google Cloud Speech.
 
-database/
-├── schema.sql            # Database schema
-└── seed.sql              # Initial data seeding
+Auto-Cleanup: Temporary overlay messages (e.g., "Generating audio...") are instantly deleted upon completion to keep the chat clean.
 
-frontend/                  # React/Vite admin dashboard
-requirements.txt           # Python dependencies
-```
+👨‍💼 Secure Admin Dashboard (React/Vite)
 
-## Setup Instructions
+Smart Authentication: Google OAuth 2.0 integration that safely bypasses manual password checks for verified providers.
 
-### Prerequisites
-- Python 3.10+
-- PostgreSQL/Supabase account
-- Google Cloud Platform account
-- Telegram Bot Token
+User Management: Granular controls for user provisioning, approval, and temporary/permanent suspensions (ban days).
 
-### Environment Configuration
+Real-Time System Stats: Monitor active scheduled emails, STT usage tracking, and blocked threats.
 
-Create a `.env` file in the backend directory:
+Auto-Inactivity Timeouts: Secure session handling that logs out inactive admins after 10 minutes.
 
-```env
-# Database
-SUPABASE_URL=your_supabase_url
+⚡ 100% Async Architecture
+
+Non-Blocking Event Loops: Background crons for auto-fetching new emails and dispatching scheduled emails.
+
+Supabase PostgREST: Utilizes the asynchronous Supabase Python Client (db_manager.db.run()) to ensure crash-free relational queries without blocking the API.
+
+🏗️ Architecture
+
+Database Layer
+
+Supabase (PostgreSQL): Primary database with Row Level Security (RLS).
+
+Async Operations: Completely non-blocking, eliminating traditional SQLAlchemy Session bottlenecks.
+
+Contact Mapping: Relationship tracking and intelligent extraction between contacts.
+
+API Layer
+
+FastAPI: Modern, high-performance web framework.
+
+Webhook Integration: Direct production binding to Telegram API updates.
+
+JWT Auth: Secure, token-based endpoints for the React dashboard.
+
+Bot Layer
+
+python-telegram-bot (v22+): Handles structured command processing and callback queries.
+
+Background Jobs: Managed queue for pinging, email checking, and schedule dispatching.
+
+📂 Project Structure
+
+Smart-Email-Assistant-Using-Agentic-AI/
+├── backend/
+│   ├── main.py                 # FastAPI application ka entry point (Server engine)
+│   ├── config.py               # Settings aur Environment configuration management
+│   ├── requirements.txt         # Python backend dependencies (FastAPI, PyJWT, etc.)
+│   ├── bot/
+│   │   ├── __init__.py
+│   │   ├── telegram_handler.py # Core Telegram bot logic, layouts, aur 100% clean UI code
+│   │   ├── ai_engine.py        # Gemini Agentic AI processing engine (with HITL loops)
+│   │   ├── gmail_client.py     # Google OAuth 2.0 aur Gmail API backend wrapper
+│   │   ├── voice_handler.py    # Text-to-Speech (TTS) aur Speech-to-Text (STT) handler
+│   │   └── contact_manager.py  # Contact list mapping aur intelligent extraction logic
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── auth.py             # User authentication endpoints (Telegram login logs)
+│   │   ├── admin.py            # Admin router (Supabase password change + async bypass check)
+│   │   └── user.py             # User profile preferences aur dynamic contacts CRUD endpoints
+│   └── db/
+│       ├── __init__.py
+│       ├── models.py           # Supabase async database thread operations (db_manager logic)
+│       └── memory.py           # AI agent conversation memory aur context storage handlers
+│
+├── frontend/                   # React + Vite + Tailwind Admin Dashboard cluster
+│   ├── package.json            # Node.js dependencies aur scripts compilation framework
+│   ├── vite.config.ts          # Vite asset pipeline aur proxy definitions configuration
+│   ├── tsconfig.json           # TypeScript strict type compiler matching parameters
+│   ├── tailwind.config.js      # Tailwind UI design colors aur transition criteria grid
+│   └── src/
+│       ├── main.tsx            # Application DOM mounting entry pivot
+│       ├── App.tsx             # Main routing registry, Google auth interception, & route locks
+│       ├── index.css           # Global core styles allocation matrix
+│       ├── components/
+│       │   └── Navbar.tsx      # Multi-mode clean responsive navigation layout matrix
+│       └── pages/
+│           ├── Landing.tsx     # Public promotional landing frame screen
+│           ├── About.tsx       # System description matrix info window
+│           ├── AdminLogin.tsx  # Admin access gateway validation layout portal
+│           ├── Dashboard.tsx   # Core stats view, accordions layout, & auto inactivity timeout hook
+│           └── Settings.tsx    # Secure change password component (Google login layout conditional bypass)
+│
+├── database/                   # Cloud persistence schema scripts
+│   ├── schema.sql              # Supabase PostgreSQL structural tables setup guidelines
+│   └── seed.sql                # Core initialization data setup scripts (Default Super Admin entry)
+│
+├── LICENSE                     # MIT License structural validation file
+├── .gitignore
+└── README.md                   # Production grade comprehensive documentation text manual
+
+
+
+🚀 Setup Instructions
+
+Prerequisites
+
+Python 3.10+
+
+Node.js (for frontend)
+
+Supabase Account (PostgreSQL)
+
+Google Cloud Console Account (Gmail API, OAuth2)
+
+Telegram Bot Token (via @BotFather)
+
+1. Environment Configuration
+
+Create a .env file in the backend/ directory:
+
+# Database (Supabase)
+SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
-# Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
+# Telegram Bot
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+RENDER_WEB_SERVICE_URL=[https://your-production-url.com](https://your-production-url.com)
 
-# Google APIs
+# Google APIs (OAuth & Gemini)
 GOOGLE_API_KEY=your_gemini_api_key
 GOOGLE_CLIENT_ID=your_oauth_client_id
 GOOGLE_CLIENT_SECRET=your_oauth_client_secret
-GOOGLE_REDIRECT_URI=your_redirect_uri
+GOOGLE_REDIRECT_URI=[https://your-domain.com/api/auth/oauth/callback](https://your-domain.com/api/auth/oauth/callback)
 
-# Google Cloud (optional for voice)
-GOOGLE_CLOUD_PROJECT=your_project_id
+# Security & App Config
+JWT_SECRET=your_secure_jwt_secret
 
-# Application
-BASE_URL=https://your-domain.com
-FRONTEND_URL=https://your-frontend-domain.com
-SECRET_KEY=your-secret-key
-DEBUG=false
-PORT=8000
-```
 
-### Database Setup
+2. Backend Installation
 
-1. Create a new Supabase project
-2. Run the schema.sql file to create tables
-3. Run the seed.sql file to add initial admin user
-4. Update RLS policies as needed
+git clone https://github.com/SalmanW2/Smart-Email-Assistant-Using-Agentic-AI.git
+cd Smart-Email-Assistant-Using-Agentic-AI/backend
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-### Installation
 
-1. Clone the repository
-2. Navigate to the backend directory
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Run the application:
-   ```bash
-   python main.py
-   ```
+3. Frontend Installation
 
-### Telegram Bot Setup
+cd ../frontend
+npm install
+npm run dev
 
-1. Create a bot with @BotFather on Telegram
-2. Set the webhook URL to your domain:
-   ```
-   https://your-domain.com/webhook/telegram
-   ```
 
-## API Endpoints
+4. Telegram Bot Configuration
 
-### Authentication
-- `POST /api/auth/start-auth` - Start OAuth flow
-- `GET /api/auth/oauth/callback` - OAuth callback
-- `POST /api/auth/admin/login` - Admin login
+Go to Telegram and search for @BotFather.
 
-### Admin
-- `GET /api/admin/users` - List all users
-- `POST /api/admin/users/action` - User actions (approve/block)
-- `GET /api/admin/admins` - List admins
-- `POST /api/admin/admins/add` - Add admin
-- `GET /api/admin/stats` - System statistics
+Create a new bot and copy the HTTP API Token.
 
-### User
-- `GET /api/user/profile` - User profile
-- `PUT /api/user/preferences` - Update preferences
-- `GET /api/user/contacts` - List contacts
-- `POST /api/user/contacts` - Add contact
-- `PUT /api/user/contacts/{id}` - Update contact
-- `DELETE /api/user/contacts/{id}` - Delete contact
-- `GET /api/user/contacts/search` - Search contacts
+Add the token to your .env file.
 
-## Security Features
+Note: In production, the bot automatically binds its webhook to ${RENDER_WEB_SERVICE_URL}/webhook/telegram.
 
-- **Row Level Security**: Database-level access control
-- **Service Role Key**: Backend admin operations bypass RLS
-- **PBKDF2 Password Hashing**: Secure admin authentication
-- **OAuth 2.0**: Secure Google account linking
-- **Input Validation**: Pydantic models for data validation
-- **Error Handling**: Comprehensive exception handling
+🌐 API Endpoints
 
-## Performance Optimizations
+Authentication
 
-- **Async Operations**: Non-blocking I/O throughout
-- **Connection Pooling**: Efficient database connections
-- **Memory Management**: Conversation summaries reduce token usage
-- **Caching**: Email and contact data caching
-- **Background Tasks**: Long-running operations don't block
+POST /api/auth/start-auth - Initiates the OAuth flow.
 
-## Development
+GET /api/auth/oauth/callback - Google OAuth return redirect.
 
-### Running Tests
-```bash
-pytest
-```
+POST /api/admin/login - Secure manual admin login.
 
-### Code Formatting
-```bash
-black .
-isort .
-```
+Admin Dashboard
 
-### Linting
-```bash
-flake8 .
-```
+GET /api/admin/stats - Fetch real-time system metrics.
 
-## Deployment
+GET /api/admin/users - List all connected Telegram users.
 
-### Docker
-```dockerfile
+POST /api/admin/users/{id}/permissions - Update AI/Voice permissions or suspend users.
+
+POST /api/admin/change-password - Modify admin credentials safely.
+
+🛡️ Security & Reliability
+
+No SQLAlchemy Crashes: The backend strictly uses the Supabase Python Client to ensure non-blocking, crash-free relational queries.
+
+Attachment Guardrails: Telegram attachment downloads are capped (e.g., max 10 files or 20MB per batch) with instant local thread-cleanup os.remove() to prevent server storage leaks.
+
+Strict Frontend Routing: React protected routes intercept unauthorized access, tying session validation strictly to JWT expiries and browser interaction events.
+
+Role-Based Access Control (RBAC): Distinct privileges for admin and super_admin roles to prevent unauthorized system modifications.
+
+🐳 Deployment (Docker)
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -234,38 +229,38 @@ COPY . .
 EXPOSE 8000
 
 CMD ["python", "main.py"]
-```
 
-### Environment Variables
-Ensure all required environment variables are set in production.
 
-### Webhook Configuration
-Configure Telegram webhooks to point to your production domain.
+Ensure all environment variables from .env are injected into your production container (e.g., via Render, Heroku, or AWS secrets).
 
-## Contributing
+🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+Fork the repository
 
-## License
+Create a feature branch (git checkout -b feature/NewFeature)
+
+Commit your changes (git commit -m 'Add NewFeature')
+
+Push to the branch (git push origin feature/NewFeature)
+
+Open a Pull Request
+
+📜 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Support
+📞 Support & Roadmap
 
-For support and questions:
-- Create an issue on GitHub
-- Check the documentation
-- Review the code comments
+Current Roadmap:
 
-## Roadmap
+[x] Integrate Agentic AI Engine for HITL drafting.
 
-- [ ] Email threading and conversation grouping
-- [ ] Advanced contact relationship analysis
-- [ ] Multi-language support expansion
-- [ ] Integration with additional email providers
-- [ ] Mobile app development
-- [ ] Advanced analytics dashboard
+[x] Migrate to 100% Async Supabase operations.
+
+[x] Refine Telegram UI/Typography.
+
+[ ] Implement email threading and conversation grouping.
+
+[ ] Add multi-language dynamic translation support.
+
+For support, please open an issue on the GitHub repository.
