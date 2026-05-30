@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Save, ArrowLeft, CheckCircle } from 'lucide-react';
 import Navbar from '../components/Navbar';
@@ -13,12 +13,20 @@ const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Auto-detect Google Login via local storage flag
+  // Auto-detect if user came from Google redirect bypass
   const [isGoogleSetup, setIsGoogleSetup] = useState(
     localStorage.getItem('prompt_easy_password') === 'true'
   );
 
   const token = localStorage.getItem('admin_token') || '';
+
+  // Clean-up local storage sticky flag if manual credentials exist or on mount
+  useEffect(() => {
+    // If we land here via manual routing or standard settings tab (without prompt_easy_password)
+    if (localStorage.getItem('prompt_easy_password') !== 'true') {
+      setIsGoogleSetup(false);
+    }
+  }, []);
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +58,6 @@ const Settings = () => {
       });
 
       if (res.ok) {
-        // Success hote hi instantly flag aur state clear kardo
         const wasGoogleSetup = isGoogleSetup;
         localStorage.removeItem('prompt_easy_password');
         setIsGoogleSetup(false);
@@ -60,7 +67,6 @@ const Settings = () => {
         setNewPassword('');
         setConfirmPassword('');
 
-        // Google flow tha toh redirect maro
         if (wasGoogleSetup) {
           setTimeout(() => navigate('/admin/dashboard'), 1500);
         }
@@ -108,7 +114,7 @@ const Settings = () => {
 
           <form onSubmit={handlePasswordChange} className="p-6 space-y-6">
             
-            {/* Google Login Banner */}
+            {/* Google Redirect Easy Pass Banner */}
             {isGoogleSetup && (
               <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-4 rounded-xl text-sm font-medium flex items-center gap-2">
                 <Lock className="w-4 h-4 shrink-0" /> 
@@ -127,7 +133,7 @@ const Settings = () => {
               </div>
             )}
 
-            {/* Manual Login Current Password Field (Hidden during Google Setup) */}
+            {/* Current Password Field (Safely Bypassed ONLY if redirected from Google) */}
             {!isGoogleSetup && (
               <div>
                 <label className="block text-sm font-bold text-slate-300 mb-2">Current Password</label>
