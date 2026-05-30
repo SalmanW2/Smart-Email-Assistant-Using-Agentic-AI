@@ -1,3 +1,4 @@
+
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import Landing from './pages/Landing';
@@ -34,6 +35,8 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
       if (urlToken && urlEmail) {
         localStorage.setItem('admin_token', urlToken);
         localStorage.setItem('admin_email', urlEmail);
+        // ✨ Google login detecter (flag set)
+        localStorage.setItem('prompt_easy_password', 'true'); 
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
