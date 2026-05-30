@@ -88,7 +88,7 @@ const AccordionUserItem = ({ user, blocks, onUpdate, isManaging, setManageUserId
           </div>
         </div>
       </div>
-
+      
       {isManaging && (
         <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-950/30 animate-in slide-in-from-top-2 duration-300">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -131,6 +131,9 @@ const AccordionUserItem = ({ user, blocks, onUpdate, isManaging, setManageUserId
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 const Dashboard = () => {
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(
+    localStorage.getItem('prompt_easy_password') === 'true'
+  );
   const [activeTab, setActiveTab] = useState('stats');
   const [users, setUsers] = useState<User[]>([]);
   const [admins, setAdmins] = useState<Admin[]>([]);
