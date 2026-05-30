@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import Landing from './pages/Landing';
 import About from './pages/About';
@@ -53,6 +53,9 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         // Token format and expiry basic validation
         const payload = JSON.parse(atob(token.split('.')[1]));
         if (payload.exp * 1000 < Date.now()) {
+          localStorage.removeItem('admin_token');
+          localStorage.removeItem('admin_email');
+          localStorage.removeItem('admin_role');
           setIsValid(false);
           return;
         }
@@ -62,62 +65,13 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         const res = await fetch(`${backendUrl}/api/admin/get_current_admin`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-
+        
         if (res.ok) {
           setIsValid(true);
         } else {
           setIsValid(false);
         }
       } catch (err) {
-        setIsValid(false);
-      }
-    };
-
-    validateToken();
-  }, []);
-
-  if (isValid === null) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400 font-bold">Verifying access...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isValid) {
-    return <Navigate to="/admin/login" replace />;
-  }
-
-  return <>{children}</>;
-};
-
-  useEffect(() => {
-    const validateToken = async () => {
-      const token = localStorage.getItem('admin_token');
-      const email = localStorage.getItem('admin_email');
-
-      if (!token || !email) {
-        setIsValid(false);
-        return;
-      }
-
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        const exp = payload.exp * 1000;
-        
-        if (Date.now() >= exp) {
-          localStorage.removeItem('admin_token');
-          localStorage.removeItem('admin_email');
-          localStorage.removeItem('admin_role');
-          setIsValid(false);
-          return;
-        }
-
-        setIsValid(true);
-      } catch {
         localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_email');
         localStorage.removeItem('admin_role');
@@ -160,12 +114,12 @@ const NotFound = () => {
           The page you're looking for doesn't exist or has been moved.
         </p>
         <div className="pt-4">
-          <a
-            href="/"
+          <Link
+            to="/"
             className="inline-flex items-center gap-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-blue-500/30"
           >
             ← Back to Home
-          </a>
+          </Link>
         </div>
       </div>
     </div>
