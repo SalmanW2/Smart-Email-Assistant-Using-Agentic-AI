@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Save, ArrowLeft, CheckCircle } from 'lucide-react'; 
+import { Lock, Save, ArrowLeft, CheckCircle } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_BACKEND || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
@@ -13,7 +13,7 @@ const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // State mein rakha taake password update hote hi UI instantly update ho (Banner gayab ho jaye)
+  // Auto-detect Google Login via local storage flag
   const [isGoogleSetup, setIsGoogleSetup] = useState(
     localStorage.getItem('prompt_easy_password') === 'true'
   );
@@ -50,7 +50,7 @@ const Settings = () => {
       });
 
       if (res.ok) {
-        // ✨ Success hote hi flag remove aur state update (Google Banner instantly gayab!)
+        // Success hote hi instantly flag aur state clear kardo
         const wasGoogleSetup = isGoogleSetup;
         localStorage.removeItem('prompt_easy_password');
         setIsGoogleSetup(false);
@@ -60,7 +60,7 @@ const Settings = () => {
         setNewPassword('');
         setConfirmPassword('');
 
-        // Agar first time Google setup tha toh dashboard bhej do
+        // Google flow tha toh redirect maro
         if (wasGoogleSetup) {
           setTimeout(() => navigate('/admin/dashboard'), 1500);
         }
@@ -108,11 +108,11 @@ const Settings = () => {
 
           <form onSubmit={handlePasswordChange} className="p-6 space-y-6">
             
-            {/* Google Login Wala First Time Banner */}
+            {/* Google Login Banner */}
             {isGoogleSetup && (
               <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-4 rounded-xl text-sm font-medium flex items-center gap-2">
                 <Lock className="w-4 h-4 shrink-0" /> 
-                First-time configuration detected. Current password field is safely bypassed for you to set a manual password.
+                Set your unique password for easy login.
               </div>
             )}
 
@@ -127,7 +127,7 @@ const Settings = () => {
               </div>
             )}
 
-            {/* Normal Manual Login ka Current Password Block */}
+            {/* Manual Login Current Password Field (Hidden during Google Setup) */}
             {!isGoogleSetup && (
               <div>
                 <label className="block text-sm font-bold text-slate-300 mb-2">Current Password</label>
@@ -174,7 +174,7 @@ const Settings = () => {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10 mt-4"
             >
               <Save className="w-5 h-5" />
-              {loading ? 'Saving preferences...' : 'Update Security Credentials'}
+              {loading ? 'Processing...' : 'Save Password'}
             </button>
           </form>
         </div>
