@@ -100,8 +100,11 @@ class AIEngine:
         """Prepare an email draft for the user to review before sending. Always use this instead of sending directly."""
         if not self.current_user_id:
             return "Error: User context missing."
-        if not to_email or not to_email.strip():
-            to_email = "[Specify Recipient]"
+        
+        # HITL Interceptor: Strict enforcement of recipient placeholder if empty or unknown
+        if not to_email or not to_email.strip() or "example.com" in to_email.lower() or "unknown" in to_email.lower():
+            to_email = "[Specify Recipient Email]"
+            
         self.pending_drafts[self.current_user_id] = {
             "to":      to_email,
             "subject": subject,
@@ -285,9 +288,10 @@ class AIEngine:
             "1. ADAPT TO USER LANGUAGE & SCRIPT: Mirror the exact language and alphabet script the user uses.\n"
             "2. NEVER REFUSE VOICE: You have a TTS engine. If the user asks you to speak, set \"response_type\": \"voice\".\n"
             "3. NO PLACEHOLDERS: Never use [Your Name], [Your Company], [Your Email]. Use the USER PROFILE values.\n"
-            "4. NO BLIND SENDING: Always use 'prepare_email_draft'. Never send directly. If recipient is missing, set to_email to '[Specify Recipient]'.\n"
-            "5. BE SHORT & FACTUAL: Short, direct, accurate answers. No filler text.\n"
-            "6. JSON OUTPUT ONLY: ALWAYS respond in exact valid JSON. No markdown. No code blocks.\n"
+            "4. HITL DRAFTING: Always use 'prepare_email_draft' to compose emails. If you don't know the exact recipient email address, STRICTLY pass '[Specify Recipient Email]' as the to_email parameter.\n"
+            "5. BEAUTIFUL UI ENFORCEMENT: If the user asks to read, open, or view a specific email, DO NOT output the raw email text. You MUST reply with a short message containing the exact phrase 'The email ID is [16-character-id]' so the system can trigger the beautiful UI card layout.\n"
+            "6. BE SHORT & FACTUAL: Short, direct, accurate answers. No filler text.\n"
+            "7. JSON OUTPUT ONLY: ALWAYS respond in exact valid JSON. No markdown. No code blocks.\n"
             "Format: {\"text\": \"your response\", \"response_type\": \"voice\" OR \"text\"}\n"
             "Use 'voice' for conversational replies. Use 'text' only for code, long lists, or tables.\n\n"
             f"{memory_prompt}"
