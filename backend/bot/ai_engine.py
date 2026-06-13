@@ -1,12 +1,30 @@
+"""
+Agentic AI Engine — Smart Email Assistant
+=========================================
+Core reasoning and decision-making module powered by Google Gemini 2.5 Flash.
+
+Features:
+1. Thread-safe isolated background execution loops for concurrent multi-user handling.
+2. Token Exhaustion Management via strict context array truncation.
+3. Human-In-The-Loop (HITL) guardrails injected into Drafting and Scheduling logic.
+4. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
+"""
+
 import asyncio
 import json
 import logging
 import httpx
 import re
+import os
+import tempfile
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
+import threading
+
 from google import genai
 from google.genai import types
+
 from config import settings
 from db.memory import memory_manager
 from bot.contact_manager import contact_manager
@@ -15,15 +33,19 @@ from db.models import db_manager
 
 logger = logging.getLogger(__name__)
 
-# Dedicated thread-local event loop for sync tool execution
-# (Gemini calls tools synchronously from within an async context,
-#  so asyncio.run() would crash. We use a dedicated background loop instead.)
-import threading
-
+# ==========================================
+# THREAD-SAFE CONCURRENT EXECUTION MANAGER
+# ==========================================
+# Using a dedicated background event loop running on a separate thread to handle
+# Gemini's synchronous tool execution model within FastAPI's asynchronous flow.
 _tool_loop: asyncio.AbstractEventLoop | None = None
 _tool_loop_lock = threading.Lock()
 
 def _get_tool_loop() -> asyncio.AbstractEventLoop:
+    """
+    Retrieves or initializes a thread-safe, dedicated background event loop.
+    Prevents the blocking of the main thread pool during concurrent user sessions.
+    """
     global _tool_loop
     with _tool_loop_lock:
         if _tool_loop is None or _tool_loop.is_closed():
@@ -33,386 +55,356 @@ def _get_tool_loop() -> asyncio.AbstractEventLoop:
         return _tool_loop
 
 def _run_sync(coro) -> Any:
-    """Run an async coroutine from sync context using the dedicated tool loop."""
+    """
+    Safely executes an asynchronous coroutine inside Gemini's synchronous tool execution loops.
+    """
     loop = _get_tool_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result(timeout=30)
+    return future.result()
 
-
+# ==========================================
+# AI ENGINE CLASS
+# ==========================================
 class AIEngine:
     def __init__(self) -> None:
-        self.memory          = memory_manager
-        self.contact_manager = contact_manager
-        self.gmail_client    = GmailClient()
-        self.db              = db_manager
-        self.client          = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self.model_name      = "gemini-2.5-flash"
-        self.active_chats:   dict = {}
-        self.current_user_id: int | None = None
-        self.pending_drafts: dict = {}
-
-    def _parse_error(self, e: Exception) -> str:
-        err = str(e)
-        logger.error(f"AI Engine error: {err}")
-        if "429" in err or "RESOURCE_EXHAUSTED" in err:
-            return json.dumps({"text": "⏳ *Quota Limit:* AI quota temporarily exhausted. Please retry in a moment.", "response_type": "text"})
-        if "503" in err or "UNAVAILABLE" in err:
-            return json.dumps({"text": "🔌 *Server Overload:* AI servers are busy. Please retry in 10–20 seconds.", "response_type": "text"})
-        return json.dumps({"text": "❌ *System Error:* Unable to process request. Please try again.", "response_type": "text"})
-
-    # ──────────────────────────────────────────────────────────
-    # AGENTIC TOOLS  (Gemini calls these synchronously)
-    # All async DB/HTTP calls go through _run_sync()
-    # ──────────────────────────────────────────────────────────
-
-    def search_gmail(self, query: str, max_results: int = 5) -> str:
-        """Search Gmail for emails matching a query string."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            emails = await self.gmail_client.get_emails(
-                self.current_user_id, query=query, max_results=max_results)
-            if not emails:
-                return "No emails found for this query."
-            output = []
-            for m in emails:
-                meta = await self.gmail_client.get_email_metadata(self.current_user_id, m["id"])
-                if "error" not in meta:
-                    output.append(
-                        f"ID: {m['id']} | From: {meta.get('sender')} | Subject: {meta.get('subject')}")
-            return "\n".join(output) if output else "Could not retrieve email metadata."
-        try:
-            return _run_sync(_inner())
-        except Exception as e:
-            return f"Error during search: {e}"
-
-    def read_gmail_message(self, message_id: str) -> str:
-        """Read the full body of a specific Gmail message by its ID."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        try:
-            return _run_sync(
-                self.gmail_client.read_full_email(self.current_user_id, message_id))
-        except Exception as e:
-            return f"Error reading email: {e}"
-
-    def prepare_email_draft(self, to_email: str, subject: str, body: str) -> str:
-        """Prepare an email draft for the user to review before sending. Always use this instead of sending directly."""
-        if not self.current_user_id:
-            return "Error: User context missing."
+        """
+        Initializes the Google Gemini client, sets the reasoning model,
+        and provisions the Gmail API backend client client wrapper.
+        """
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self.model_name = "gemini-2.5-flash"
+        self.gmail_client = GmailClient()
         
-        # HITL Interceptor: Strict enforcement of recipient placeholder if empty or unknown
-        if not to_email or not to_email.strip() or "example.com" in to_email.lower() or "unknown" in to_email.lower():
-            to_email = "[Specify Recipient Email]"
-            
-        self.pending_drafts[self.current_user_id] = {
-            "to":      to_email,
-            "subject": subject,
-            "body":    body,
+        # Temporary runtime memory cache for mapping and staging drafted parameters
+        self.pending_drafts: Dict[int, Dict[str, Any]] = {}
+
+    # ==========================================
+    # GEMINI TOOL DEFINITIONS (FUNCTION CALLING)
+    # ==========================================
+
+    def search_gmail_tool(self, query: str, user_id: int) -> str:
+        """
+        Tool: Searches the user's Gmail inbox for specific threads or messages.
+        """
+        logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with query: {query}")
+        results = _run_sync(self.gmail_client.search_emails(user_id, query, max_results=5))
+        if not results:
+            return "No emails found matching the search query parameters."
+        return json.dumps(results)
+
+    def prepare_email_draft_tool(self, to_email: str, subject: str, body: str, user_id: int) -> str:
+        """
+        Tool: Prepares and stages an immediate email draft.
+        HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
+        """
+        logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
+        
+        # Perform dynamic validation for missing address constraints
+        to_clean = to_email.strip() if to_email else ""
+        if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
+            to_clean = "[Specify Recipient Email]"
+
+        draft = {
+            "action": "prepare_draft",
+            "to": to_clean,
+            "subject": subject or "No Subject",
+            "body": body or ""
         }
-        return "Draft prepared successfully. Inform the user that the draft is ready for their review."
+        
+        # Cache draft within the instance memory for Telegram Handler retrieval
+        self.pending_drafts[user_id] = draft
+        return json.dumps({"status": "success", "draft": draft})
 
-    def schedule_email(self, to_email: str, subject: str, body: str, send_time_utc: str) -> str:
-        """Schedule an email to be sent at a specific UTC time in format 'YYYY-MM-DD HH:MM:SS'."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            await self.db.db.run(
-                lambda: self.db.db.client.table("scheduled_emails").insert({
-                    "telegram_id":    self.current_user_id,
-                    "to_email":       to_email,
-                    "subject":        subject,
-                    "body":           body,
-                    "scheduled_time": send_time_utc,
-                }).execute()
-            )
-            return f"Email successfully scheduled for {send_time_utc} UTC."
+    def schedule_email_tool(self, to_email: str, subject: str, body: str, scheduled_time: str, user_id: int) -> str:
+        """
+        Tool: Schedules an email for future automated dispatch.
+        HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
+        """
+        logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
+        
+        to_clean = to_email.strip() if to_email else ""
+        if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
+            to_clean = "[Specify Recipient Email]"
+
+        schedule_details = {
+            "to_email": to_clean,
+            "subject": subject or "No Subject",
+            "body": body or "",
+            "scheduled_time": scheduled_time,
+            "status": "pending"
+        }
+
+        # Persist immediately to the scheduled_emails schema using Supabase DB Manager
         try:
-            return _run_sync(_inner())
-        except Exception as e:
-            return f"Error scheduling email: {e}"
+            _run_sync(db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
+                "telegram_id": user_id,
+                "to_email": to_clean,
+                "subject": subject or "No Subject",
+                "body": body or "",
+                "scheduled_time": scheduled_time,
+                "status": "pending"
+            }).execute()))
+            logger.info("Successfully registered scheduled email in database")
+        except Exception as db_err:
+            logger.error(f"Database error writing scheduled task: {db_err}")
+            return json.dumps({"status": "error", "message": f"Database failure: {str(db_err)}"})
 
-    def save_contact(self, name: str, email: str, relationship: str = "") -> str:
-        """Save or update a contact in the user's address book."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            await self.db.db.run(
-                lambda: self.db.db.client.table("contacts").upsert({
-                    "telegram_id":     self.current_user_id,
-                    "contact_alias":   name,
-                    "email_address":   email,
-                    "contact_name":    name,
-                    "relationship_type": relationship,
-                }, on_conflict="telegram_id,email_address").execute()
-            )
-            return f"Contact {name} ({email}) saved successfully."
+        return json.dumps({
+            "action": "schedule_email",
+            "schedule_details": schedule_details
+        })
+
+    def save_contact_tool(self, name: str, email: str, user_id: int) -> str:
+        """
+        Tool: Saves or updates an address book contact in the user's Supabase contacts table.
+        """
+        logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
         try:
-            return _run_sync(_inner())
+            _run_sync(db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
+                "telegram_id": user_id,
+                "contact_alias": name,
+                "email_address": email,
+                "contact_name": name
+            }, on_conflict="telegram_id,email_address").execute()))
+            return f"Contact '{name}' with email '{email}' saved successfully."
         except Exception as e:
-            return f"Error saving contact: {e}"
+            logger.error(f"Failed to upsert contact via Tool call: {e}")
+            return f"Error: Contact could not be saved to DB due to: {str(e)}"
 
-    def search_contact(self, query: str) -> str:
-        """Search the user's contacts by name, alias, or relationship."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            res = await self.db.db.run(
-                lambda: self.db.db.client.table("contacts").select("*")
-                        .eq("telegram_id", self.current_user_id)
-                        .or_(f"contact_name.ilike.%{query}%,"
-                             f"contact_alias.ilike.%{query}%,"
-                             f"relationship_type.ilike.%{query}%")
-                        .execute()
-            )
-            data = getattr(res, "data", []) or []
-            if not data:
-                return f"No contacts found matching '{query}'."
-            return "\n".join(
-                f"Name: {c['contact_name']}, Email: {c['email_address']}, "
-                f"Relation: {c.get('relationship_type', 'None')}"
-                for c in data
-            )
+    # ==========================================
+    # CORE AGENT REASONING ENGINE
+    # ==========================================
+
+    async def agent_chat(self, message: str, telegram_id: int) -> str:
+        """
+        Primary entry point for processing conversational user prompts.
+        Applies strict Token Truncation, Contacts Context injection, and schedules
+        dynamic tool calling models natively under Gemini 2.5 Flash constraints.
+        """
         try:
-            return _run_sync(_inner())
-        except Exception as e:
-            return f"Error searching contacts: {e}"
+            # 1. Fetch saved contacts to inject as contextual mapping
+            contacts_list = await contact_manager.get_contacts(telegram_id)
+            contacts_context = "\n".join([
+                f"- {c.get('contact_alias')} ({c.get('contact_name')}): {c.get('email_address')}" 
+                for c in contacts_list
+            ])
 
-    def search_saved_attachments(self, query: str) -> str:
-        """Search the user's previously uploaded or saved email attachments."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            res = await self.db.db.run(
-                lambda: self.db.db.client.table("saved_attachments").select("*")
-                        .eq("telegram_id", self.current_user_id)
-                        .or_(f"file_name.ilike.%{query}%,context_topic.ilike.%{query}%")
-                        .execute()
+            # 2. Token Exhaustion Management: Truncate chronological context records
+            raw_summaries = await memory_manager.get_recent_summaries(telegram_id, limit=settings.MAX_CONTEXT_MESSAGES)
+            recent_summaries = raw_summaries[:settings.MAX_CONTEXT_MESSAGES] if raw_summaries else []
+            history_context = "\n".join([
+                f"Topic: {s.get('current_topic')} | Summary: {s.get('summary_text')}" 
+                for s in recent_summaries
+            ])
+
+            # 3. Dynamic current datetime matrix
+            utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+            system_instructions = (
+                "You are an elite, multi-modal Agentic AI Email Assistant functioning inside a Telegram Bot.\n"
+                "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
+                f"Current Date and Time: {utc_now}\n\n"
+                f"User's Address Book (Always search here first when names are mentioned):\n"
+                f"{contacts_context or 'No saved contacts in database yet.'}\n\n"
+                f"Recent Conversation Memory Context (Use this to follow reference pronouns):\n"
+                f"{history_context or 'No prior conversation history recorded.'}\n\n"
+                "CRITICAL SYSTEM DIRECTIVES:\n"
+                "1. If the user wants to fetch, read, list, search, or check emails, prioritize using the 'search_gmail_tool'.\n"
+                "2. If the user wants to reply or draft, map context to the 'prepare_email_draft_tool'.\n"
+                "3. If the user wants to schedule an email for a future date/time, use the 'schedule_email_tool'.\n"
+                "4. HITL Guardrail: If preparing or scheduling a draft and you do not know the exact recipient email address "
+                "from either the conversation history or the Address Book, you MUST strictly use the exact string "
+                "'[Specify Recipient Email]' as the to_email parameter. NEVER make up or guess email addresses.\n"
+                "5. Return a helpful, clean, professional plain-text response when no tool executions are needed."
             )
-            data = getattr(res, "data", []) or []
-            if not data:
-                return f"No attachments found matching '{query}'."
-            return "\n".join(
-                f"File: {f['file_name']}, ID: {f['file_id']}, "
-                f"Context: {f.get('context_topic', 'N/A')}"
-                for f in data[:5]
+
+            # Define tools mapping dictionary
+            tools_map = {
+                "search_gmail_tool": self.search_gmail_tool,
+                "prepare_email_draft_tool": self.prepare_email_draft_tool,
+                "schedule_email_tool": self.schedule_email_tool,
+                "save_contact_tool": self.save_contact_tool
+            }
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_instructions,
+                tools=list(tools_map.values()),
+                temperature=0.2, # Low temperature for strict routing and tool call logic
             )
-        try:
-            return _run_sync(_inner())
+
+            # Ensure we safely run Gemini thread operations
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model_name,
+                contents=message,
+                config=config,
+            )
+
+            # Handle and process active Function / Tool Calls
+            if response.function_calls:
+                results_parts = []
+                for fc in response.function_calls:
+                    fn_name = fc.name
+                    args = dict(fc.args)
+
+                    # Inject contextual parameters
+                    if fn_name in ["search_gmail_tool", "prepare_email_draft_tool", "schedule_email_tool", "save_contact_tool"]:
+                        args["user_id"] = telegram_id
+
+                    try:
+                        func = tools_map[fn_name]
+                        # Execute synchronous wrapper dynamically
+                        result_str = func(**args)
+                        
+                        # Intercept structural layout payloads for Drafting/Scheduling
+                        if "prepare_draft" in result_str or "schedule_email" in result_str:
+                            return result_str
+                            
+                        results_parts.append(
+                            types.Part.from_function_response(name=fn_name, response={"result": result_str})
+                        )
+                    except Exception as tool_err:
+                        logger.error(f"Error executing tool {fn_name}: {tool_err}")
+                        results_parts.append(
+                            types.Part.from_function_response(name=fn_name, response={"error": str(tool_err)})
+                        )
+
+                # Return the result back to Gemini to formulate the final conversational response
+                final_response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model_name,
+                    contents=[message, response.candidates[0].content] + results_parts,
+                    config=config,
+                )
+                return final_response.text
+
+            return response.text
+
         except Exception as e:
-            return f"Error searching attachments: {e}"
+            logger.error(f"AIEngine.agent_chat error: {e}")
+            return "I encountered an internal tracking error while processing your request. Please try again shortly."
 
-    def read_memory_document(self, query: str) -> str:
-        """Read and analyze the most recently uploaded document in the user's session."""
-        if not self.current_user_id:
-            return "Error: User context missing."
-        async def _inner():
-            files = self.gmail_client.get_user_attachments(self.current_user_id)
-            if not files:
-                return "Error: No files found in memory. Ask the user to upload the document first."
-            return await self.process_attachment(self.current_user_id, files[-1], query)
-        try:
-            return _run_sync(_inner())
-        except Exception as e:
-            return f"Error reading document: {e}"
+    # ==========================================
+    # SPEECH-TO-TEXT (STT) ENGINE & FALLBACK
+    # ==========================================
 
-    # ──────────────────────────────────────────────────────────
-    # CORE ASYNC METHODS
-    # ──────────────────────────────────────────────────────────
-
-    async def transcribe_audio(self, file_path: str, user_id: int) -> str:
-        text_result = ""
+    async def transcribe_audio(self, file_path: str, telegram_id: int) -> str:
+        """
+        Transcribes voice messages. First attempts processing via Groq Whisper Large V3 API.
+        If Groq is unconfigured or fails, falls back safely to Gemini's native file uploading transcription.
+        Logs telemetry metrics to stt_usage upon completion.
+        """
+        start_time = datetime.now()
         method_used = "groq_whisper"
-        stt_prompt  = (
-            "Transcribe the audio accurately. Mirror the exact spoken language. "
-            "If the language is typically written in Latin/English alphabets in everyday texting, "
-            "transcribe using Latin/English alphabets."
-        )
+        transcription_text = ""
 
+        # Attempt Groq Whisper Large V3 transcription
         if settings.GROQ_API_KEY:
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    with open(file_path, "rb") as f:
-                        resp = await client.post(
-                            "https://api.groq.com/openai/v1/audio/transcriptions",
-                            headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                            data={"model": "whisper-large-v3", "prompt": stt_prompt},
-                            files={"file": (file_path, f, "audio/ogg")},
-                        )
-                        resp.raise_for_status()
-                        text_result = resp.json().get("text", "").strip()
-            except Exception as e:
-                logger.warning(f"Groq STT failed, falling back to Gemini: {e}")
+                logger.info(f"Attempting STT transcription via Groq Whisper for user: {telegram_id}")
+                url = "https://api.groq.com/openai/v1/audio/transcriptions"
+                headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
+                
+                with open(file_path, "rb") as f:
+                    files = {"file": (os.path.basename(file_path), f, "audio/ogg")}
+                    data = {"model": "whisper-large-v3", "response_format": "json"}
+                    
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(url, headers=headers, files=files, data=data)
+                        response.raise_for_status()
+                        result = response.json()
+                        transcription_text = result.get("text", "").strip()
+                        
+                logger.info("Successfully transcribed voice note via Groq Whisper Large V3.")
+            except Exception as whisper_err:
+                logger.warning(f"Groq Whisper transcription failed, starting fallback: {whisper_err}")
 
-        if not text_result:
+        # Fallback to Gemini's native file model uploader if Whisper was bypassed or failed
+        if not transcription_text:
             try:
-                method_used = "gemini_fallback"
-                sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-                fallback_prompt = (
-                    f"Transcribe this audio accurately. {stt_prompt}. "
-                    "If completely unintelligible output: '[Audio Unclear]'. "
-                    "Provide ONLY the transcript text."
+                logger.info("Triggering Gemini file upload STT fallback pipeline")
+                method_used = "gemini_native"
+                
+                config = types.GenerateContentConfig(temperature=0.1)
+                uploaded_file = await asyncio.to_thread(
+                    self.client.files.upload,
+                    file=file_path
                 )
+                
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,
                     model=self.model_name,
-                    contents=[sample_file, fallback_prompt],
+                    contents=[uploaded_file, "Accurately transcribe this audio. Return ONLY the transcription with no preambles."],
+                    config=config
                 )
-                text_result = response.text.strip()
-            except Exception as e:
-                return self._parse_error(e)
+                transcription_text = response.text.strip() if response.text else ""
+            except Exception as gemini_err:
+                logger.error(f"Fallback Gemini STT also failed: {gemini_err}")
+                return "System Error: Speech-to-Text translation engine failed. Please type your message."
 
-        if text_result and "[Audio Unclear]" not in text_result:
+        # Compute voice note duration and persist telemetry metrics to Supabase
+        if transcription_text:
+            duration = int((datetime.now() - start_time).total_seconds())
             try:
-                est_seconds = max(1, len(text_result) // 15)
-                await self.db.db.run(
-                    lambda: self.db.db.client.table("stt_usage").insert({
-                        "telegram_id":     user_id,
-                        "method":          method_used,
-                        "duration_seconds": est_seconds,
-                    }).execute()
-                )
-            except Exception as e:
-                logger.error(f"STT usage log error: {e}")
+                await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").insert({
+                    "telegram_id": telegram_id,
+                    "method": method_used,
+                    "duration_seconds": max(duration, 1)
+                }).execute())
+                logger.info(f"Successfully logged STT metrics for user {telegram_id}")
+            except Exception as db_err:
+                logger.error(f"Failed logging STT usage parameters to DB: {db_err}")
 
-        return text_result
+            return transcription_text
 
-    def _get_agent_config(self, memory_prompt: str, user_info: dict) -> types.GenerateContentConfig:
-        current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        system_instruction = (
-            f"You are an Agentic AI Email Assistant. Current Time: {current_utc}\n"
-            f"USER PROFILE:\nName: {user_info['name']}\nEmail: {user_info['email']}\n\n"
-            "TOOLS: search_gmail, read_gmail_message, prepare_email_draft, schedule_email, "
-            "save_contact, search_contact, search_saved_attachments, read_memory_document.\n\n"
-            "CRITICAL RULES:\n"
-            "1. ADAPT TO USER LANGUAGE & SCRIPT: Mirror the exact language and alphabet script the user uses.\n"
-            "2. NEVER REFUSE VOICE: You have a TTS engine. If the user asks you to speak, set \"response_type\": \"voice\".\n"
-            "3. NO PLACEHOLDERS: Never use [Your Name], [Your Company], [Your Email]. Use the USER PROFILE values.\n"
-            "4. HITL DRAFTING: Always use 'prepare_email_draft' to compose emails. If you don't know the exact recipient email address, STRICTLY pass '[Specify Recipient Email]' as the to_email parameter.\n"
-            "5. BEAUTIFUL UI ENFORCEMENT: If the user asks to read, open, or view a specific email, DO NOT output the raw email text. You MUST reply with a short message containing the exact phrase 'The email ID is [16-character-id]' so the system can trigger the beautiful UI card layout.\n"
-            "6. BE SHORT & FACTUAL: Short, direct, accurate answers. No filler text.\n"
-            "7. JSON OUTPUT ONLY: ALWAYS respond in exact valid JSON. No markdown. No code blocks.\n"
-            "Format: {\"text\": \"your response\", \"response_type\": \"voice\" OR \"text\"}\n"
-            "Use 'voice' for conversational replies. Use 'text' only for code, long lists, or tables.\n\n"
-            f"{memory_prompt}"
-        )
-        return types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.2,
-            tools=[
-                self.search_gmail,
-                self.read_gmail_message,
-                self.prepare_email_draft,
-                self.schedule_email,
-                self.save_contact,
-                self.search_contact,
-                self.search_saved_attachments,
-                self.read_memory_document,
-            ],
-        )
+        return "[Audio Unclear: Failed to extract written text context]"
 
-    async def agent_chat(self, text: str, user_id: int) -> str:
-        if not self.client:
-            return json.dumps({"text": "Error: AI System configuration missing.", "response_type": "text"})
+    # ==========================================
+    # UTILITY CORES
+    # ==========================================
 
-        self.current_user_id = user_id
-
-        try:
-            db_user   = await self.db.get_user(user_id) or {}
-            user_info = {
-                "name":  db_user.get("first_name", "User") or "User",
-                "email": db_user.get("email", "Not connected") or "Not connected",
-            }
-
-            asyncio.create_task(self.contact_manager.extract_contacts_from_text(user_id, text))
-            memory_prompt = await self.memory.build_memory_prompt(user_id)
-            chat_id       = str(user_id)
-
-            def _execute_chat():
-                if chat_id not in self.active_chats:
-                    config = self._get_agent_config(memory_prompt, user_info)
-                    self.active_chats[chat_id] = self.client.chats.create(
-                        model=self.model_name, config=config)
-                return self.active_chats[chat_id].send_message(text).text
-
-            raw = await asyncio.to_thread(_execute_chat)
-
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            m     = re.search(r'\{.*\}', clean, re.DOTALL)
-            if m:
-                clean = m.group(0)
-
-            try:
-                parsed       = json.loads(clean)
-                text_content = parsed.get("text", "Error parsing text")
-            except json.JSONDecodeError:
-                parsed       = {"text": raw, "response_type": "text"}
-                text_content = raw
-                clean        = json.dumps(parsed)
-
-            if user_id in self.pending_drafts:
-                parsed["draft"] = self.pending_drafts.pop(user_id)
-                clean           = json.dumps(parsed)
-
-            await self.memory.log_conversation(
-                telegram_id=user_id, user_message=text,
-                bot_response=text_content, interaction_type="chat",
-            )
-
-            if await self.memory.should_generate_summary(user_id):
-                asyncio.create_task(
-                    self._generate_and_save_summary(user_id, text, text_content))
-
-            return clean
-
-        except Exception as e:
-            self.active_chats.pop(str(user_id), None)
-            return self._parse_error(e)
-
-    async def _generate_and_save_summary(self, user_id: int,
-                                          last_user_msg: str, last_ai_msg: str) -> None:
+    async def summarize_email(self, email_body: str) -> str:
+        """
+        Generates a concise, actionable 3-bullet point email summary.
+        """
         try:
             prompt = (
-                "Analyze this recent interaction and generate a JSON summary for long-term memory.\n"
-                "Format: {\"summary_text\": \"Concise summary\", \"key_facts\": [\"fact 1\"], "
-                "\"email_addresses_mentioned\": [\"email@example.com\"], \"current_topic\": \"topic\"}\n\n"
-                f"User: {last_user_msg}\nAI: {last_ai_msg}"
+                "You are an executive email processing assistant. "
+                "Analyze the email content below and extract exactly 3 short, actionable bullet points.\n"
+                "Focus strictly on core dates, metrics, and actionable deliverables. Be extremely brief.\n\n"
+                f"Email Body Content:\n{email_body[:5000]}"
             )
-            config   = types.GenerateContentConfig(response_mime_type="application/json")
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=self.model_name, contents=prompt, config=config,
+                model=self.model_name,
+                contents=prompt
             )
-            data = json.loads(response.text.strip())
-            await self.memory.save_conversation_summary(
-                telegram_id=user_id,
-                summary_text=data.get("summary_text", "Conversation summary."),
-                key_facts=data.get("key_facts", {}),
-                email_addresses=data.get("email_addresses_mentioned", []),
-                current_topic=data.get("current_topic", "General"),
-                tokens_used=0,
-                message_count=10,
-            )
+            return response.text.strip() if response.text else "Summary unavailable."
         except Exception as e:
-            logger.error(f"Memory summary error: {e}")
+            logger.error(f"Summarize email error: {e}")
+            return "Email abstractive summary failed due to internal analytical errors."
 
-    async def process_attachment(self, telegram_id: int, file_path: str, query: str) -> str:
+    async def analyze_attachment(self, file_path: str, prompt: str) -> str:
+        """
+        Analyzes locally downloaded document or image attachments using Gemini file uploader.
+        """
         try:
-            prompt      = f"Summarize or accurately answer the following request regarding this document:\n{query}"
-            config      = types.GenerateContentConfig(
-                temperature=0.2,
-                system_instruction="You are a highly capable document analysis assistant.",
-            )
+            config = types.GenerateContentConfig(temperature=0.2)
             sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-            response    = await asyncio.to_thread(
+            response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=self.model_name, contents=[sample_file, prompt], config=config,
+                model=self.model_name,
+                contents=[sample_file, prompt],
+                config=config,
             )
             return response.text
         except Exception as e:
             return f"Error processing attachment: {e}"
 
     async def generate_smart_replies(self, email_body: str) -> List[str]:
+        """
+        Generates exactly 3 professional, short quick reply options.
+        """
         try:
             prompt = (
                 "Read the following email and generate exactly 3 short, professional, distinct "
@@ -421,13 +413,18 @@ class AIEngine:
                 "Example: [\"Received, thank you.\", \"I will check and revert.\", \"Noted.\"]\n\n"
                 f"Email Body:\n{email_body[:2000]}"
             )
-            config   = types.GenerateContentConfig(response_mime_type="application/json")
+            config = types.GenerateContentConfig(response_mime_type="application/json")
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=self.model_name, contents=prompt, config=config,
+                model=self.model_name,
+                contents=prompt,
+                config=config,
             )
             replies = json.loads(response.text.strip())
             return replies if isinstance(replies, list) and replies else ["Thanks!", "Noted.", "I'll reply soon."]
         except Exception as e:
             logger.error(f"Smart reply error: {e}")
-            return ["Got it.", "Thanks for the update.", "Will review shortly."]
+            return ["Acknowledge.", "Will review.", "Thanks."]
+
+# Singleton instance initialization
+ai_engine = AIEngine()

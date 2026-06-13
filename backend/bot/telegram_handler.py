@@ -8,6 +8,9 @@ Production-ready. All known bugs fixed:
 - AI Interceptor: Detects email IDs in AI text and auto-triggers beautiful UI cards.
 - HTML/MD Safe: Full escaping for special characters to prevent render crashes.
 - Async Supabase: 100% async database calls without thread leaking.
+- File Size Constraints: Max 20MB bot API limit enforced.
+- Centralized Cleanups: Prevents resource exhaustion via robust finally execution.
+- Cron Resiliency: Network back-off sleep cycles embedded for robust stability.
 """
 
 import logging
@@ -30,7 +33,7 @@ from telegram.ext import (
 from config import settings
 from db.models import db_manager
 from db.memory import memory_manager
-from bot.ai_engine import AIEngine
+from bot.ai_engine import ai_engine
 from bot.gmail_client import GmailClient
 from bot.voice_handler import voice_handler
 from bot.contact_manager import contact_manager
@@ -233,7 +236,7 @@ def _draft_text(state: dict) -> str:
 class TelegramBotManager:
     def __init__(self):
         self.application: Application | None = None
-        self.ai_engine       = AIEngine()
+        self.ai_engine       = ai_engine
         self.db              = db_manager
         self.memory          = memory_manager
         self.gmail           = GmailClient()
@@ -243,7 +246,6 @@ class TelegramBotManager:
         self.compose_states:    dict = {}   # uid -> {step, to, subj, body, attachments}
         self.search_states:     dict = {}   # uid -> 'AWAIT_QUERY'
         self.current_queries:   dict = {}   # uid -> last search query string
-        self.pending_sends:     dict = {}   # uid -> draft dict (undo window)
         self._mid_cache:        dict = {}   # short_id[:16] -> full Gmail message ID
         self.notified_emails:    set = set()
         self.active_voice_tasks: set = set()
@@ -590,7 +592,10 @@ class TelegramBotManager:
             transcribed = await self.ai_engine.transcribe_audio(fp, u.id)
         finally:
             if os.path.exists(fp):
-                os.remove(fp)
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
 
         if "[Audio Unclear]" in transcribed or transcribed.startswith("System Error"):
             await msg.edit_text("❌ *Audio unclear.* Please try again.", parse_mode="Markdown")
@@ -642,8 +647,10 @@ class TelegramBotManager:
         if not att:
             return
 
-        if getattr(att, "file_size", 0) > 20 * 1024 * 1024:
-            await update.message.reply_text("❌ *File too large* (max 20 MB).", parse_mode="Markdown")
+        # Explicit absolute 20MB file size validation restrictions before download triggers
+        # (20 * 1024 * 1024 bytes)
+        if getattr(att, "file_size", 0) > 20971520:
+            await update.message.reply_text("❌ *File too large.* The Telegram Bot API restricts bot downloads to a maximum of 20 MB per file.", parse_mode="Markdown")
             return
 
         uid   = u.id
@@ -655,8 +662,9 @@ class TelegramBotManager:
         try:
             fo = await context.bot.get_file(att.file_id)
             await fo.download_to_drive(fpath)
-        except Exception:
-            await msg.edit_text("❌ *Download failed.*", parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Telegram file download failed: {e}")
+            await msg.edit_text("❌ *Download failed.* Could not fetch the attachment from Telegram servers.", parse_mode="Markdown")
             return
 
         # Bind active compose sequence
@@ -842,7 +850,6 @@ class TelegramBotManager:
                     pass
             self.compose_states.pop(uid, None)
             self.search_states.pop(uid, None)
-            self.pending_sends.pop(uid, None)
             await query.edit_message_text(
                 "🚫 *Canceled.*\n\nReturning to dashboard.",
                 parse_mode="Markdown",
@@ -906,14 +913,6 @@ class TelegramBotManager:
 
         if action == "send_draft":
             await self._do_send_draft(query, uid, context)
-            return
-
-        if action == "undo_send":
-            self.pending_sends.pop(uid, None)
-            await query.edit_message_text(
-                "✅ *Send canceled.* The email was not sent.",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([kb_back_step("main")]))
             return
 
         # ── Settings ──────────────────────────────────────────────────────────
@@ -1019,7 +1018,7 @@ class TelegramBotManager:
     # ── Email action sub-handlers ──────────────────────────────────────────────
 
     async def _do_send_draft(self, query, uid: int, context):
-        """Dispatches payload matrix configurations to Gmail outbound systems safely."""
+        """Dispatches payload matrix configurations to Gmail outbound systems safely. Complete elimination of 7-second undo cache buffer."""
         state = self.compose_states.pop(uid, None)
         if not state or not state.get("to") or "[Specify Recipient Email]" in state.get("to", ""):
             await query.edit_message_text(
@@ -1029,25 +1028,15 @@ class TelegramBotManager:
             )
             return
 
-        self.pending_sends[uid] = state
-        msg = await query.edit_message_text(
-            "⏳ *Sending in 7 seconds...*\n_(tap Undo to cancel)_",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("↩️ Undo Send", callback_data="undo_send")]
-            ]))
+        msg = await query.edit_message_text("⏳ *Sending Email...*", parse_mode="Markdown")
 
-        async def _send():
-            await asyncio.sleep(7)
-            if uid not in self.pending_sends:
-                return
-            draft = self.pending_sends.pop(uid)
+        async def _send_immediately():
             try:
                 result = await self.gmail.send_email(
-                    uid, draft["to"], draft["subj"], draft.get("body", ""),
-                    draft.get("attachments", [])
+                    uid, state["to"], state.get("subj", "No Subject"), state.get("body", ""),
+                    state.get("attachments", [])
                 )
-                self._bg(self._save_contact(uid, draft["to"]))
+                self._bg(self._save_contact(uid, state["to"]))
                 await msg.edit_text(
                     f"✅ *Email Dispatched Successfully!*", 
                     parse_mode="Markdown", 
@@ -1078,8 +1067,16 @@ class TelegramBotManager:
                     parse_mode="Markdown", 
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Fix Parameters", callback_data="compose")]])
                 )
+            finally:
+                # Centralized file cleanup execution pattern with robust finally block
+                for fp in state.get("attachments", []):
+                    if os.path.exists(fp):
+                        try:
+                            os.remove(fp)
+                        except Exception as e:
+                            logger.error(f"Failed cleaning up attachment {fp}: {e}")
 
-        asyncio.create_task(_send())
+        asyncio.create_task(_send_immediately())
 
     async def _do_summary(self, query, mid_short: str,
                            ctx: str, offset: int, uid: int):
@@ -1241,110 +1238,121 @@ class TelegramBotManager:
             pass
 
     async def job_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        """Scans inbox structures automatically matching DB user permissions."""
+        """Scans inbox structures automatically matching DB user permissions. Injects connection back-off sleep retry cycles."""
         async with self.email_lock:
-            try:
-                users = await self.db.get_active_auto_check_users()
-                for user in users:
-                    uid = user["telegram_id"]
-                    try:
-                        emails = await self.gmail.get_emails(
-                            uid, query="is:unread newer_than:1d", max_results=10)
-                    except Exception:
-                        continue
-
-                    for email_item in emails:
-                        mid = email_item["id"]
-                        if mid in self.notified_emails:
-                            continue
-                        self.notified_emails.add(mid)
-                        self._store_mid(mid)
-
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    users = await self.db.get_active_auto_check_users()
+                    for user in users:
+                        uid = user["telegram_id"]
                         try:
-                            meta = await self.gmail.get_email_metadata(uid, mid)
+                            emails = await self.gmail.get_emails(
+                                uid, query="is:unread newer_than:1d", max_results=10)
                         except Exception:
                             continue
-                        if "error" in meta:
-                            continue
 
-                        sender  = _safe_md(meta.get("sender",  "Unknown"))
-                        subject = _safe_md(meta.get("subject", "No Subject"))
-                        att_ct  = len(meta.get("attachments", []))
-                        att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
+                        for email_item in emails:
+                            mid = email_item["id"]
+                            if mid in self.notified_emails:
+                                continue
+                            self.notified_emails.add(mid)
+                            self._store_mid(mid)
 
-                        text = (
-                            f"📩 *New Email Received*\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"👤 *From:* {sender}\n"
-                            f"📝 *Subject:* {subject}"
-                            f"{att_line}"
-                        )
+                            try:
+                                meta = await self.gmail.get_email_metadata(uid, mid)
+                            except Exception:
+                                continue
+                            if "error" in meta:
+                                continue
 
-                        try:
-                            await self.db.db.run(
-                                lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
-                                self.db.db.client.table("email_cache").upsert(
-                                    {"telegram_id": u, "gmail_message_id": m,
-                                     "sender": s, "subject": sub, "preview": "new"},
-                                    on_conflict="telegram_id,gmail_message_id"
-                                ).execute()
+                            sender  = _safe_md(meta.get("sender",  "Unknown"))
+                            subject = _safe_md(meta.get("subject", "No Subject"))
+                            att_ct  = len(meta.get("attachments", []))
+                            att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
+
+                            text = (
+                                f"📩 *New Email Received*\n"
+                                f"━━━━━━━━━━━━━━━━━━\n"
+                                f"👤 *From:* {sender}\n"
+                                f"📝 *Subject:* {subject}"
+                                f"{att_line}"
                             )
-                        except Exception:
-                            pass
 
-                        await context.bot.send_message(
-                            chat_id=uid, text=text, parse_mode="Markdown",
-                            reply_markup=kb_notification(mid, bool(att_ct)))
+                            try:
+                                await self.db.db.run(
+                                    lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
+                                    self.db.db.client.table("email_cache").upsert(
+                                        {"telegram_id": u, "gmail_message_id": m,
+                                         "sender": s, "subject": sub, "preview": "new"},
+                                        on_conflict="telegram_id,gmail_message_id"
+                                    ).execute()
+                                )
+                            except Exception:
+                                pass
 
-            except Exception as e:
-                logger.error(f"job_emails error: {e}")
+                            await context.bot.send_message(
+                                chat_id=uid, text=text, parse_mode="Markdown",
+                                reply_markup=kb_notification(mid, bool(att_ct)))
+                    break # Break loop if execution successful
+                except Exception as e:
+                    logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(3 ** attempt) # Exponential back-off
+
 
     async def job_scheduled(self, context: ContextTypes.DEFAULT_TYPE):
-        """Iterates background buffers dispatching queued email routines."""
-        try:
-            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            res = await self.db.db.run(
-                lambda: self.db.db.client.table("scheduled_emails")
-                        .select("*").eq("status", "pending")
-                        .lte("scheduled_time", now).execute())
-            
-            for task in (getattr(res, "data", []) or []):
-                uid   = task["telegram_id"]
-                paths = []
-                try:
-                    for att in (task.get("attachments") or []):
-                        if isinstance(att, dict) and "file_id" in att:
-                            try:
-                                fo   = await context.bot.get_file(att["file_id"])
-                                path = os.path.join(
-                                    tempfile.gettempdir(),
-                                    att.get("file_name", f"att_{uuid.uuid4().hex[:6]}"))
-                                await fo.download_to_drive(path)
-                                paths.append(path)
-                            except Exception:
-                                pass
+        """Iterates background buffers dispatching queued email routines. Injects connection back-off sleep retry cycles."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                res = await self.db.db.run(
+                    lambda: self.db.db.client.table("scheduled_emails")
+                            .select("*").eq("status", "pending")
+                            .lte("scheduled_time", now).execute())
+                
+                for task in (getattr(res, "data", []) or []):
+                    uid   = task["telegram_id"]
+                    paths = []
+                    try:
+                        for att in (task.get("attachments") or []):
+                            if isinstance(att, dict) and "file_id" in att:
+                                try:
+                                    fo   = await context.bot.get_file(att["file_id"])
+                                    path = os.path.join(
+                                        tempfile.gettempdir(),
+                                        att.get("file_name", f"att_{uuid.uuid4().hex[:6]}"))
+                                    await fo.download_to_drive(path)
+                                    paths.append(path)
+                                except Exception:
+                                    pass
 
-                    result = await self.gmail.send_email(
-                        uid, task["to_email"], task["subject"], task["body"], paths)
-                    status = "sent" if "successfully" in result.lower() else "failed"
+                        result = await self.gmail.send_email(
+                            uid, task["to_email"], task["subject"], task["body"], paths)
+                        status = "sent" if "successfully" in result.lower() else "failed"
 
-                    await self.db.db.run(
-                        lambda t=task, s=status: self.db.db.client.table("scheduled_emails")
-                        .update({"status": s}).eq("id", t["id"]).execute())
+                        await self.db.db.run(
+                            lambda t=task, s=status: self.db.db.client.table("scheduled_emails")
+                            .update({"status": s}).eq("id", t["id"]).execute())
 
-                    note = (f"✅ *Scheduled Email Sent!*\n*To:* `{_safe_md(task['to_email'])}`"
-                            if status == "sent"
-                            else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
-                    await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")
-                finally:
-                    for fp in paths:
-                        if os.path.exists(fp):
-                            try:
-                                os.remove(fp)
-                            except Exception:
-                                pass
-        except Exception as e:
-            logger.error(f"job_scheduled error: {e}")
+                        note = (f"✅ *Scheduled Email Sent!*\n*To:* `{_safe_md(task['to_email'])}`"
+                                if status == "sent"
+                                else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
+                        await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")
+                    finally:
+                        # Centralized file cleanup execution pattern with robust finally block
+                        for fp in paths:
+                            if os.path.exists(fp):
+                                try:
+                                    os.remove(fp)
+                                except Exception as e:
+                                    logger.error(f"Failed cleaning up scheduled attachment {fp}: {e}")
+                break # Break loop if execution successful
+            except Exception as e:
+                logger.error(f"job_scheduled connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3 ** attempt) # Exponential back-off
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 telegram_handler = TelegramBotManager()
