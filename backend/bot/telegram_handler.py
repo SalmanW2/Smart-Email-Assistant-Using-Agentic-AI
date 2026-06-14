@@ -2,6 +2,7 @@
 Telegram Bot Handler — Smart Email Assistant
 ============================================
 Production-ready. All known bugs fixed:
+- Dynamic Token Interceptor: Resolves 401/403 Token Expiry gracefully.
 - Smart Back Buttons: No more dead-end loops.
 - Edit Draft Hub: Users can dynamically edit To, Subject, and Body before sending.
 - Graceful Errors: HTTP 400 errors are caught and explained politely.
@@ -39,6 +40,9 @@ from bot.voice_handler import voice_handler
 from bot.contact_manager import contact_manager
 
 logging.basicConfig(level=logging.INFO)
+# Hide spammy API logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +69,6 @@ def _clean_ai_text(raw: str) -> str:
         return ""
     cleaned = re.sub(r'```json|```', '', raw).strip()
     
-    # Try JSON parse first
     m = re.search(r'\{.*\}', cleaned, re.DOTALL)
     if m:
         try:
@@ -76,7 +79,6 @@ def _clean_ai_text(raw: str) -> str:
         except Exception:
             pass
             
-    # If it looks like JSON but unparseable, strip the braces/quotes manually
     if cleaned.startswith("{") and "text" in cleaned:
         t = re.search(r'"text"\s*:\s*"(.*?)"(?:,|\})', cleaned, re.DOTALL)
         if t:
@@ -180,7 +182,7 @@ def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeybo
     return InlineKeyboardMarkup(rows)
 
 def kb_notification(msg_id: str, has_att: bool) -> InlineKeyboardMarkup:
-    """Push notification — Read, AI Summary, Listen, Get Attachments (conditional)."""
+    """Push notification — Read, AI Summary, Listen, Get Attachments."""
     mid = msg_id[:16]
     rows = [
         [InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "inbox", 0))],
@@ -274,7 +276,6 @@ class TelegramBotManager:
         except Exception as e:
             logger.debug(f"Preference fetch fallback error: {e}")
             pass
-        # Default safety fallback state
         return {"ai_mode_enabled": True, "voice_preference": "text", "auto_check_enabled": True}
 
     async def _send(self, update: Update, text: str,
@@ -291,7 +292,7 @@ class TelegramBotManager:
                     text, parse_mode=parse_mode, reply_markup=markup,
                     disable_web_page_preview=True)
         except Exception as e:
-            logger.debug(f"_send: {e}")
+            logger.debug(f"_send error: {e}")
 
     async def _edit(self, obj, text: str,
                     markup: InlineKeyboardMarkup | None = None,
@@ -305,7 +306,34 @@ class TelegramBotManager:
                 await obj.reply_text(text, parse_mode=parse_mode, reply_markup=markup,
                                      disable_web_page_preview=True)
         except Exception as e:
-            logger.debug(f"_edit: {e}")
+            logger.debug(f"_edit error: {e}")
+
+    # ── Token Authorization Fallback Routers ───────────────────────────────────
+
+    async def _prompt_reauth(self, msg_obj, uid: int):
+        """Generates dynamic block message requesting re-authentication for active user clicks."""
+        state = await self.db.create_auth_session(uid)
+        url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
+        text  = "⚠️ *Connection Broken:*\nYour Google Workspace token has expired or was revoked.\nPlease reconnect your account to continue."
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
+        await self._edit(msg_obj, text, markup)
+
+    async def _send_reauth_direct(self, context, uid: int):
+        """Generates dynamic block message for background cron loops to prevent spam."""
+        # Disable auto-check to prevent spamming the user every minute
+        await self.db.update_user_preferences(uid, {"auto_check_enabled": False})
+        
+        state = await self.db.create_auth_session(uid)
+        url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
+        text  = ("⚠️ *Connection Broken:*\n"
+                 "Your Google Workspace token has expired or been revoked.\n\n"
+                 "Please reconnect your account to restore inbox syncing.\n"
+                 "_(Background polling has been temporarily paused to prevent spam)._")
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
+        try:
+            await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            pass
 
     # ── Access gate ────────────────────────────────────────────────────────────
 
@@ -373,7 +401,6 @@ class TelegramBotManager:
             self.application.job_queue.run_repeating(self.job_scheduled, interval=60,  first=30)
             self.application.job_queue.run_repeating(self.job_ping,      interval=840, first=60)
             
-        # Auto-adapt runtime environments layer toggle (Dev vs Production safety)
         if settings.RENDER_WEB_SERVICE_URL and not settings.RENDER_WEB_SERVICE_URL.startswith("http://localhost"):
             await self.application.bot.set_webhook(
                 url=f"{settings.RENDER_WEB_SERVICE_URL}/webhook/telegram")
@@ -392,7 +419,6 @@ class TelegramBotManager:
     # ── Commands ───────────────────────────────────────────────────────────────
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handles the /start command execution payload."""
         u   = update.effective_user
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -405,7 +431,6 @@ class TelegramBotManager:
             kb_main_menu())
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Spawns the main menu safely."""
         u   = update.effective_user
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -416,10 +441,15 @@ class TelegramBotManager:
     # ── Email list ─────────────────────────────────────────────────────────────
 
     async def _show_list(self, msg_obj, uid: int, offset: int, is_search: bool):
-        """Renders paginated views for inbox matrices or search scopes."""
+        """Renders paginated views. Triggers Auth Prompt if token fails."""
         query = self.current_queries.get(uid, "is:unread") if is_search else "label:INBOX"
         try:
             messages = await self.gmail.get_emails(uid, query=query, max_results=offset + 3)
+            
+            # Dynamic Token Validation Interceptor
+            if messages == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(msg_obj, uid)
+                
         except Exception:
             messages = []
 
@@ -435,7 +465,9 @@ class TelegramBotManager:
 
         for i, m in enumerate(display):
             self._store_mid(m["id"])
-            meta    = await self.gmail.get_email_metadata(uid, m["id"])
+            meta = await self.gmail.get_email_metadata(uid, m["id"])
+            if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(msg_obj, uid)
             if "error" in meta:
                 continue
                 
@@ -449,14 +481,21 @@ class TelegramBotManager:
     # ── Full email render ──────────────────────────────────────────────────────
 
     async def _show_email(self, query, mid_short: str, ctx: str, offset: int, uid: int):
-        """Renders the entire email contents inside HTML parsers preventing unescaped crashes."""
+        """Renders HTML cards cleanly. Validates tokens explicitly."""
         await query.edit_message_text("⏳ Loading email...")
         full_mid = self._full_mid(mid_short)
-        body     = await self.gmail.read_full_email(uid, full_mid)
-        meta     = await self.gmail.get_email_metadata(uid, full_mid)
         
+        details = await self.gmail.get_email_details(uid, full_mid)
+        if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
+            
+        meta = await self.gmail.get_email_metadata(uid, full_mid)
+        if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
+            
         self._store_mid(meta.get("id", full_mid))
 
+        body         = details.get("body", "") if details else ""
         safe_body    = _esc_html(body[:4000] + ("\n\n[… Truncated]" if len(body) > 4000 else ""))
         safe_sender  = _esc_html(meta.get("sender",  "Unknown"))
         safe_subject = _esc_html(meta.get("subject", "No Subject"))
@@ -478,7 +517,6 @@ class TelegramBotManager:
         self._bg(self._save_contact(uid, meta.get("sender", "")))
 
     async def _save_contact(self, uid: int, raw_sender: str):
-        """Extracts and persists target email data safely."""
         try:
             m     = re.search(r'<(.+?)>', raw_sender)
             email = m.group(1) if m else raw_sender.strip()
@@ -496,7 +534,6 @@ class TelegramBotManager:
     # ── Text handler ───────────────────────────────────────────────────────────
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Parses generalized free-form text input streams from clients."""
         u   = update.effective_user
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -533,7 +570,6 @@ class TelegramBotManager:
         await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
 
     async def _compose_step(self, update: Update, uid: int, text: str):
-        """Navigates sequentially through the hit-and-loop compose architecture arrays."""
         state = self.compose_states[uid]
         step  = state.get("step")
 
@@ -573,7 +609,6 @@ class TelegramBotManager:
     # ── Voice handler ──────────────────────────────────────────────────────────
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Processes audio payloads for STT transcription flows."""
         u   = update.effective_user
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -603,7 +638,6 @@ class TelegramBotManager:
 
         uid = u.id
 
-        # Route voice to compose body if waiting
         if uid in self.compose_states and self.compose_states[uid].get("step") == "AWAIT_BODY":
             self.compose_states[uid]["body"] = transcribed
             self.compose_states[uid]["step"] = "AWAIT_ATT"
@@ -634,7 +668,7 @@ class TelegramBotManager:
     # ── Attachment handler ─────────────────────────────────────────────────────
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Processes standalone attachments natively staged by the user client."""
+        """Processes files natively. Rejects strictly anything over 20MB."""
         u   = update.effective_user
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -647,8 +681,7 @@ class TelegramBotManager:
         if not att:
             return
 
-        # Explicit absolute 20MB file size validation restrictions before download triggers
-        # (20 * 1024 * 1024 bytes)
+        # Explicit absolute 20MB file size validation restrictions
         if getattr(att, "file_size", 0) > 20971520:
             await update.message.reply_text("❌ *File too large.* The Telegram Bot API restricts bot downloads to a maximum of 20 MB per file.", parse_mode="Markdown")
             return
@@ -667,7 +700,6 @@ class TelegramBotManager:
             await msg.edit_text("❌ *Download failed.* Could not fetch the attachment from Telegram servers.", parse_mode="Markdown")
             return
 
-        # Bind active compose sequence
         if uid in self.compose_states:
             state = self.compose_states[uid]
             state.setdefault("attachments", []).append(fpath)
@@ -693,16 +725,10 @@ class TelegramBotManager:
 
     # ── AI response dispatcher ─────────────────────────────────────────────────
 
-    async def _dispatch_ai(self, update, context, msg_obj,
-                            raw: str, uid: int, prefs: dict):
-        """
-        Parses AI output blocks. 
-        Hooks smart interceptors for email reading and resolves HITL schema targets.
-        """
+    async def _dispatch_ai(self, update, context, msg_obj, raw: str, uid: int, prefs: dict):
         text_content = _clean_ai_text(raw)
         draft_data   = None
 
-        # Smart Interceptor: If AI outputs an email ID and intent is to read
         if "198306a5" in text_content or "email id is" in text_content.lower() or "here is the email" in text_content.lower():
             mid_match = re.search(r'([a-f0-9]{16})', text_content.lower())
             if mid_match:
@@ -711,7 +737,6 @@ class TelegramBotManager:
                 await self._show_email(msg_obj if update.callback_query else update.message, detected_mid, "inbox", 0, uid)
                 return
 
-        # Try full JSON parse for draft field parameters
         try:
             cleaned = re.sub(r'```json|```', '', raw).strip()
             m       = re.search(r'\{.*\}', cleaned, re.DOTALL)
@@ -722,11 +747,9 @@ class TelegramBotManager:
         except Exception:
             pass
 
-        # Check pending_drafts from primary engine sequence
         if uid in self.ai_engine.pending_drafts:
             draft_data = self.ai_engine.pending_drafts.pop(uid)
 
-        # HITL Draft Injection Framework
         if draft_data:
             to_field = (draft_data.get("to") or "").strip()
             if not to_field or "[Specify Recipient" in to_field:
@@ -753,7 +776,6 @@ class TelegramBotManager:
                 await self._edit(msg_obj, _draft_text(self.compose_states[uid]), kb_draft())
             return
 
-        # Execute Voice output validation criteria mappings
         voice_pref = prefs.get("voice_preference", "text")
         try:
             parsed_full = json.loads(re.sub(r'```json|```', '', raw).strip())
@@ -796,7 +818,6 @@ class TelegramBotManager:
     # ── Button handler ─────────────────────────────────────────────────────────
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Interprets explicit click sequences directly via encoded payload arrays."""
         query  = update.callback_query
         uid    = query.from_user.id
         data   = query.data
@@ -806,8 +827,6 @@ class TelegramBotManager:
             pass
 
         action, args = _parse_cb(data)
-
-        # ── Static actions ─────────────────────────────────────────────────────
 
         if action == "menu_main":
             self.compose_states.pop(uid, None)
@@ -915,8 +934,6 @@ class TelegramBotManager:
             await self._do_send_draft(query, uid, context)
             return
 
-        # ── Settings ──────────────────────────────────────────────────────────
-
         if action == "settings":
             prefs = await self._prefs(uid)
             await query.edit_message_text(
@@ -955,7 +972,7 @@ class TelegramBotManager:
                 parse_mode="Markdown")
             return
 
-        # ── Parameterized email actions: action:mid_short:ctx:offset ──────────
+        # ── Parameterized email actions ────────────────────────────────────────
 
         if len(args) < 3:
             return
@@ -980,7 +997,10 @@ class TelegramBotManager:
 
         if action == "del":
             full_mid = self._full_mid(mid_s)
-            if await self.gmail.delete_email(uid, full_mid):
+            res = await self.gmail.delete_email(uid, full_mid)
+            if res == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(query.message, uid)
+            if res:
                 await query.edit_message_text(
                     "🗑️ *Email moved to Trash.*",
                     parse_mode="Markdown",
@@ -992,13 +1012,19 @@ class TelegramBotManager:
             return
 
         if action == "untrash":
-            if await self.gmail.untrash_email(uid, self._full_mid(mid_s)):
+            res = await self.gmail.untrash_email(uid, self._full_mid(mid_s))
+            if res == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(query.message, uid)
+            if res:
                 await self._show_email(query, mid_s, ctx, offset, uid)
             return
 
         if action == "reply":
             full_mid = self._full_mid(mid_s)
             meta     = await self.gmail.get_email_metadata(uid, full_mid)
+            if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(query.message, uid)
+                
             sender   = meta.get("sender", "")
             m        = re.search(r'<(.+?)>', sender)
             email    = m.group(1) if m else sender.strip()
@@ -1018,11 +1044,10 @@ class TelegramBotManager:
     # ── Email action sub-handlers ──────────────────────────────────────────────
 
     async def _do_send_draft(self, query, uid: int, context):
-        """Dispatches payload matrix configurations to Gmail outbound systems safely. Complete elimination of 7-second undo cache buffer."""
         state = self.compose_states.pop(uid, None)
         if not state or not state.get("to") or "[Specify Recipient Email]" in state.get("to", ""):
             await query.edit_message_text(
-                "⚠️ *Validation Error:* Cannot process outbound data streams. Recipient address is invalid or unresolved placeholder format template.", 
+                "⚠️ *Validation Error:* Cannot process outbound data streams. Recipient address is invalid.", 
                 parse_mode="Markdown", 
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Re-evaluate", callback_data="compose")]])
             )
@@ -1036,6 +1061,10 @@ class TelegramBotManager:
                     uid, state["to"], state.get("subj", "No Subject"), state.get("body", ""),
                     state.get("attachments", [])
                 )
+                
+                if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                    return await self._prompt_reauth(msg, uid)
+                    
                 self._bg(self._save_contact(uid, state["to"]))
                 await msg.edit_text(
                     f"✅ *Email Dispatched Successfully!*", 
@@ -1043,24 +1072,11 @@ class TelegramBotManager:
                     reply_markup=InlineKeyboardMarkup([kb_back_step("main")])
                 )
             except Exception as e:
-                # Smart exception parser optimization layer (Pass failure back to Gemini NLP analytics)
                 error_msg = str(e)
-                user_friendly_alert = "❌ *Transmission Error:* Form validation checks failed. Please verify destination email address formatting constraint models."
+                user_friendly_alert = "❌ *Transmission Error:* Form validation checks failed."
                 
                 if "Invalid To header" in error_msg:
-                    user_friendly_alert = "⚠️ *Invalid Destination:* The recipient email boundary configuration does not match standard RFC parameters (e.g. name@domain.com)."
-                elif "subject" in error_msg.lower():
-                    user_friendly_alert = "⚠️ *Invalid Format:* Outbound payload failed validation due to illegal syntax inside subject declarations parameters."
-                
-                # Gemini fallback integration validation for unknown API limits or scope blocks
-                try:
-                    ai_explanation = await self.ai_engine.agent_chat(
-                        f"The system encountered this technical API transmission failure error string: '{error_msg}'. Translate this error into a very short, polite, professional, and empathetic explanation (1 sentence) for a business user on Telegram telling them exactly what went wrong and how to fix it without leaking code syntax stacks.", 
-                        uid
-                    )
-                    user_friendly_alert = f"❌ *Transmission Failure Context*\n━━━━━━━━━━━━━━━━━━\n🤖 {_safe_md(ai_explanation)}"
-                except Exception:
-                    pass
+                    user_friendly_alert = "⚠️ *Invalid Destination:* The recipient email boundary configuration does not match standard RFC parameters."
                 
                 await msg.edit_text(
                     user_friendly_alert, 
@@ -1068,7 +1084,6 @@ class TelegramBotManager:
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Fix Parameters", callback_data="compose")]])
                 )
             finally:
-                # Centralized file cleanup execution pattern with robust finally block
                 for fp in state.get("attachments", []):
                     if os.path.exists(fp):
                         try:
@@ -1078,20 +1093,21 @@ class TelegramBotManager:
 
         asyncio.create_task(_send_immediately())
 
-    async def _do_summary(self, query, mid_short: str,
-                           ctx: str, offset: int, uid: int):
-        """
-        Generates structured AI summary. NO smart replies.
-        Clean professional layouts preventing markdown crash cascades.
-        """
+    async def _do_summary(self, query, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
-        body     = await self.gmail.read_full_email(uid, full_mid)
-        meta     = await self.gmail.get_email_metadata(uid, full_mid)
+        
+        details = await self.gmail.get_email_details(uid, full_mid)
+        if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
+            
+        meta = await self.gmail.get_email_metadata(uid, full_mid)
+        if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
 
+        body = details.get("body", "") if details else ""
         raw_sum = await self.ai_engine.agent_chat(
-            "Summarize this email professionally in 3-4 concise bullet points. "
-            "Be direct. Use • symbol for each bullet:\n\n" + body[:3000], uid)
+            "Summarize this email professionally in 3-4 concise bullet points:\n\n" + body[:3000], uid)
 
         sum_text = _clean_ai_text(raw_sum)
 
@@ -1117,19 +1133,22 @@ class TelegramBotManager:
             text, parse_mode="Markdown",
             reply_markup=kb_summary(full_mid, ctx, offset, bool(att_ct)))
 
-    async def _do_tts(self, query, context, mid_short: str,
-                       ctx: str, offset: int, uid: int):
-        """Synthesizes voice summaries explicitly and wipes tracking indicators upon completion."""
+    async def _do_tts(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("🔊 *Generating audio summary...*", parse_mode="Markdown")
         await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
 
         full_mid = self._full_mid(mid_short)
-        body     = await self.gmail.read_full_email(uid, full_mid)
-        meta     = await self.gmail.get_email_metadata(uid, full_mid)
+        details = await self.gmail.get_email_details(uid, full_mid)
+        if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
+            
+        meta = await self.gmail.get_email_metadata(uid, full_mid)
+        if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
 
+        body = details.get("body", "") if details else ""
         raw = await self.ai_engine.agent_chat(
-            "In exactly 2-3 sentences, give a spoken summary for text-to-speech. "
-            "No markdown symbols, no bullets, natural speech only:\n\n" + body[:3000], uid)
+            "In exactly 2-3 sentences, give a spoken summary for text-to-speech:\n\n" + body[:3000], uid)
             
         tts_text  = _clean_ai_text(raw)
         clean_tts = re.sub(r'[*_#`•]', '', tts_text)
@@ -1166,48 +1185,36 @@ class TelegramBotManager:
                     caption=caption, parse_mode="Markdown", reply_markup=kb)
             try:
                 os.remove(audio)
-            except Exception:
-                pass
-                
-            try:
                 await query.message.delete()
             except Exception:
                 pass
         else:
-            await query.edit_message_text(
-                "❌ *Audio generation failed.*",
-                parse_mode="Markdown", reply_markup=kb)
+            await query.edit_message_text("❌ *Audio generation failed.*", parse_mode="Markdown", reply_markup=kb)
 
-    async def _do_attachments(self, query, context, mid_short: str,
-                               ctx: str, offset: int, uid: int):
-        """Fetches attachments enforcing robust validation constraint guardrails."""
+    async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
         back_kb  = InlineKeyboardMarkup([kb_back_step(ctx, offset, mid_short)])
 
         try:
             meta = await self.gmail.get_email_metadata(uid, full_mid)
+            if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                return await self._prompt_reauth(query.message, uid)
             if len(meta.get("attachments", [])) > 10:
-                await query.edit_message_text(
-                    "⚠️ *Download Blocked:* Batch attachment limits exceeded maximum threshold bounds (Max 10 files).", 
-                    parse_mode="Markdown", reply_markup=back_kb)
+                await query.edit_message_text("⚠️ *Download Blocked:* Max 10 files allowed.", parse_mode="Markdown", reply_markup=back_kb)
                 return
         except Exception:
             pass
 
-        try:
-            paths = await self.gmail.get_attachments(uid, full_mid)
-        except Exception:
-            paths = []
+        paths = await self.gmail.get_attachments(uid, full_mid)
+        if paths == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
 
         if not paths:
-            await query.edit_message_text(
-                "📭 *No downloadable attachments found.*",
-                parse_mode="Markdown", reply_markup=back_kb)
+            await query.edit_message_text("📭 *No downloadable attachments found.*", parse_mode="Markdown", reply_markup=back_kb)
             return
 
-        await query.edit_message_text(
-            f"📤 *Sending {len(paths)} attachment(s)...*", parse_mode="Markdown")
+        await query.edit_message_text(f"📤 *Sending {len(paths)} attachment(s)...*", parse_mode="Markdown")
 
         sent = 0
         for fp in paths:
@@ -1223,9 +1230,7 @@ class TelegramBotManager:
                 except Exception:
                     pass
 
-        await query.edit_message_text(
-            f"✅ *{sent}/{len(paths)} file(s) sent.*",
-            parse_mode="Markdown", reply_markup=back_kb)
+        await query.edit_message_text(f"✅ *{sent}/{len(paths)} file(s) sent.*", parse_mode="Markdown", reply_markup=back_kb)
 
     # ── Background jobs ────────────────────────────────────────────────────────
 
@@ -1238,7 +1243,7 @@ class TelegramBotManager:
             pass
 
     async def job_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        """Scans inbox structures automatically matching DB user permissions. Injects connection back-off sleep retry cycles."""
+        """Scans inbox structures automatically. Injects connection back-off sleep retry cycles."""
         async with self.email_lock:
             max_retries = 3
             for attempt in range(max_retries):
@@ -1246,10 +1251,14 @@ class TelegramBotManager:
                     users = await self.db.get_active_auto_check_users()
                     for user in users:
                         uid = user["telegram_id"]
-                        try:
-                            emails = await self.gmail.get_emails(
-                                uid, query="is:unread newer_than:1d", max_results=10)
-                        except Exception:
+                        emails = await self.gmail.get_unread_emails(uid, limit=10)
+                        
+                        # Dynamic Cron Security Interceptor - Suspends user parsing on Token Crash
+                        if emails == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                            await self._send_reauth_direct(context, uid)
+                            continue
+                            
+                        if not isinstance(emails, list):
                             continue
 
                         for email_item in emails:
@@ -1259,11 +1268,8 @@ class TelegramBotManager:
                             self.notified_emails.add(mid)
                             self._store_mid(mid)
 
-                            try:
-                                meta = await self.gmail.get_email_metadata(uid, mid)
-                            except Exception:
-                                continue
-                            if "error" in meta:
+                            meta = await self.gmail.get_email_metadata(uid, mid)
+                            if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
                                 continue
 
                             sender  = _safe_md(meta.get("sender",  "Unknown"))
@@ -1294,15 +1300,15 @@ class TelegramBotManager:
                             await context.bot.send_message(
                                 chat_id=uid, text=text, parse_mode="Markdown",
                                 reply_markup=kb_notification(mid, bool(att_ct)))
-                    break # Break loop if execution successful
+                    break 
                 except Exception as e:
                     logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(3 ** attempt) # Exponential back-off
+                        await asyncio.sleep(3 ** attempt)
 
 
     async def job_scheduled(self, context: ContextTypes.DEFAULT_TYPE):
-        """Iterates background buffers dispatching queued email routines. Injects connection back-off sleep retry cycles."""
+        """Iterates background buffers dispatching queued email routines."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -1330,6 +1336,15 @@ class TelegramBotManager:
 
                         result = await self.gmail.send_email(
                             uid, task["to_email"], task["subject"], task["body"], paths)
+                            
+                        # If token fails mid-schedule, alert user and freeze task
+                        if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                            await self._send_reauth_direct(context, uid)
+                            await self.db.db.run(
+                                lambda t=task: self.db.db.client.table("scheduled_emails")
+                                .update({"status": "failed"}).eq("id", t["id"]).execute())
+                            continue
+                            
                         status = "sent" if "successfully" in result.lower() else "failed"
 
                         await self.db.db.run(
@@ -1341,18 +1356,17 @@ class TelegramBotManager:
                                 else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
                         await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")
                     finally:
-                        # Centralized file cleanup execution pattern with robust finally block
                         for fp in paths:
                             if os.path.exists(fp):
                                 try:
                                     os.remove(fp)
                                 except Exception as e:
                                     logger.error(f"Failed cleaning up scheduled attachment {fp}: {e}")
-                break # Break loop if execution successful
+                break 
             except Exception as e:
                 logger.error(f"job_scheduled connection error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(3 ** attempt) # Exponential back-off
+                    await asyncio.sleep(3 ** attempt) 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 telegram_handler = TelegramBotManager()
