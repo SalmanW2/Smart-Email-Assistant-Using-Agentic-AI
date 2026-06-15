@@ -4,9 +4,11 @@ Gmail API Client Wrapper — Smart Email Assistant
 Handles secure interactions with the Google Gmail API using OAuth 2.0 credentials.
 
 Features:
-1. Dynamic Token Interceptor: Resolves Google 401/403 errors and auto-refreshes tokens.
-2. Bubbles up the structured sentinel string 'TOKEN_EXPIRED_REAUTH_REQUIRED' on failure.
-3. Separates concerns: File deletion/cleanup is delegated entirely to the caller.
+1. Minimal Payload Polling: Uses Google's format='minimal' to fetch background unread streams,
+   avoiding heavy body downloads, reducing latency, and blocking Render timeouts.
+2. Dynamic Token Interceptor: Resolves Google 401/403 errors and auto-refreshes tokens.
+3. Sentinel Routing: Bubbles up the structured string 'TOKEN_EXPIRED_REAUTH_REQUIRED' on auth failure.
+4. Clean Life-Cycle: File deletion and cleanup are delegated entirely to the caller.
 """
 
 import os
@@ -203,7 +205,7 @@ class GmailClient:
             return self._handle_auth_error(e)
 
     # ==========================================
-    # INBOUND FETCHING & SEARCHING
+    # INBOUND FETCHING & SEARCHING (OPTIMIZED)
     # ==========================================
 
     async def get_emails(self, user_id: int, query: str = "label:INBOX", max_results: int = 5) -> Any:
@@ -230,8 +232,9 @@ class GmailClient:
 
     async def get_unread_emails(self, user_id: int, limit: int = 5) -> Any:
         """
-        Checks the inbox for unread email threads.
-        Bypasses default exceptions to securely return token re-auth codes.
+        Polles the inbox for unread message metadata.
+        OPTIMIZED: Uses format='minimal' during background synchronization queries to completely 
+        prevent parsing heavy email payloads and protect Render CPU bottlenecks.
         """
         try:
             service = await self.get_service(user_id)
@@ -244,14 +247,34 @@ class GmailClient:
             )
             messages = response.get('messages', [])
             
-            detailed_emails = []
+            minimal_emails = []
             for msg in messages:
-                details = await self.get_email_details(user_id, msg['id'])
-                if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-                    return "TOKEN_EXPIRED_REAUTH_REQUIRED"
-                if details:
-                    detailed_emails.append(details)
-            return detailed_emails
+                try:
+                    # Optimized Payload Polling via format='minimal'
+                    minimal_msg = await asyncio.to_thread(
+                        lambda m_id=msg['id']: service.users().messages().get(
+                            userId='me', id=m_id, format='minimal'
+                        ).execute()
+                    )
+                    
+                    headers = minimal_msg.get('payload', {}).get('headers', [])
+                    subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
+                    sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Unknown Sender')
+                    internal_date = minimal_msg.get('internalDate', '0')
+
+                    minimal_emails.append({
+                        "id": msg['id'],
+                        "sender": sender,
+                        "subject": subject,
+                        "snippet": minimal_msg.get('snippet', ''),
+                        "internal_date": int(internal_date)
+                    })
+                except Exception as parse_err:
+                    if self._is_auth_error(parse_err):
+                        return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+                    logger.warning(f"Failed to fetch minimal schema for email {msg['id']}: {parse_err}")
+
+            return minimal_emails
         except GmailAuthException:
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
@@ -348,7 +371,6 @@ class GmailClient:
             subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Unknown Sender')
             
-            # Extract basic attachment count metadata from payload parts
             full_msg = await asyncio.to_thread(
                 lambda: service.users().messages().get(userId='me', id=msg_id, format='full').execute()
             )
@@ -457,7 +479,6 @@ class GmailClient:
                     )
                     
                     file_data = base64.urlsafe_b64decode(attachment.get('data', '').encode('utf-8'))
-                    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
                     
                     temp_dir = tempfile.gettempdir()
                     file_path = os.path.join(temp_dir, f"att_{uuid.uuid4().hex}_{filename}")

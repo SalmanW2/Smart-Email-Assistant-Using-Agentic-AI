@@ -5,9 +5,10 @@ Core reasoning and decision-making module powered by Google Gemini 2.5 Flash.
 
 Features:
 1. Thread-safe isolated background execution loops for concurrent multi-user handling.
-2. Token Exhaustion Management via strict context array truncation.
-3. Human-In-The-Loop (HITL) guardrails injected into Drafting and Scheduling logic.
-4. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
+2. Dynamic Server-Side Chat Session Mappings via active multi-turn message trackers.
+3. Token Exhaustion Management via strict chronological context history pruning.
+4. Human-In-The-Loop (HITL) guardrails injected into Drafting and Scheduling logic.
+5. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
 """
 
 import asyncio
@@ -36,8 +37,6 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # THREAD-SAFE CONCURRENT EXECUTION MANAGER
 # ==========================================
-# Using a dedicated background event loop running on a separate thread to handle
-# Gemini's synchronous tool execution model within FastAPI's asynchronous flow.
 _tool_loop: asyncio.AbstractEventLoop | None = None
 _tool_loop_lock = threading.Lock()
 
@@ -77,6 +76,9 @@ class AIEngine:
         
         # Temporary runtime memory cache for mapping and staging drafted parameters
         self.pending_drafts: Dict[int, Dict[str, Any]] = {}
+
+        # Multi-user conversation history cache for persistent stateful chat sessions
+        self.active_chats: Dict[int, List[types.Content]] = {}
 
     # ==========================================
     # GEMINI TOOL DEFINITIONS (FUNCTION CALLING)
@@ -178,7 +180,7 @@ class AIEngine:
     async def agent_chat(self, message: str, telegram_id: int) -> str:
         """
         Primary entry point for processing conversational user prompts.
-        Applies strict Token Truncation, Contacts Context injection, and schedules
+        Applies strict Token Truncation, Contacts Context injection, and resolves
         dynamic tool calling models natively under Gemini 2.5 Flash constraints.
         """
         try:
@@ -200,6 +202,7 @@ class AIEngine:
             # 3. Dynamic current datetime matrix
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+            # 4. Standardized prompt system instruction in plain block text layout
             system_instructions = (
                 "You are an elite, multi-modal Agentic AI Email Assistant functioning inside a Telegram Bot.\n"
                 "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
@@ -218,7 +221,7 @@ class AIEngine:
                 "5. Return a helpful, clean, professional plain-text response when no tool executions are needed."
             )
 
-            # Define tools mapping dictionary
+            # Register tools
             tools_map = {
                 "search_gmail_tool": self.search_gmail_tool,
                 "prepare_email_draft_tool": self.prepare_email_draft_tool,
@@ -232,11 +235,25 @@ class AIEngine:
                 temperature=0.2, # Low temperature for strict routing and tool call logic
             )
 
-            # Ensure we safely run Gemini thread operations
+            # 5. Native Chat Session Management setup
+            if telegram_id not in self.active_chats:
+                self.active_chats[telegram_id] = []
+
+            # Truncate active chat turn list to protect token limitations
+            max_turns = settings.MAX_CONTEXT_MESSAGES * 2
+            if len(self.active_chats[telegram_id]) > max_turns:
+                self.active_chats[telegram_id] = self.active_chats[telegram_id][-max_turns:]
+
+            # Construct message turns structure with current state
+            user_part = types.Part.from_text(text=message)
+            user_content = types.Content(role="user", parts=[user_part])
+            contents = self.active_chats[telegram_id] + [user_content]
+
+            logger.info(f"Triggering Gemini 2.5 Flash for user: {telegram_id} using stateful conversation tracking")
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.model_name,
-                contents=message,
+                contents=contents,
                 config=config,
             )
 
@@ -258,6 +275,9 @@ class AIEngine:
                         
                         # Intercept structural layout payloads for Drafting/Scheduling
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
+                            # Append turns to history before intercepting, keeping model context perfectly aligned
+                            self.active_chats[telegram_id].append(user_content)
+                            self.active_chats[telegram_id].append(response.candidates[0].content)
                             return result_str
                             
                         results_parts.append(
@@ -273,16 +293,29 @@ class AIEngine:
                 final_response = await asyncio.to_thread(
                     self.client.models.generate_content,
                     model=self.model_name,
-                    contents=[message, response.candidates[0].content] + results_parts,
+                    contents=contents + [response.candidates[0].content] + results_parts,
                     config=config,
                 )
+                
+                # Append final message turns to history
+                self.active_chats[telegram_id].append(user_content)
+                self.active_chats[telegram_id].append(final_response.candidates[0].content)
                 return final_response.text
 
+            # Append plain chat responses to history
+            self.active_chats[telegram_id].append(user_content)
+            self.active_chats[telegram_id].append(response.candidates[0].content)
             return response.text
 
         except Exception as e:
             logger.error(f"AIEngine.agent_chat error: {e}")
             return "I encountered an internal tracking error while processing your request. Please try again shortly."
+
+    def clear_chat_session(self, telegram_id: int) -> None:
+        """Clears the dynamic chat session history for a specific user."""
+        if telegram_id in self.active_chats:
+            self.active_chats[telegram_id] = []
+            logger.info(f"Cleared stateful chat session history for user {telegram_id}")
 
     # ==========================================
     # SPEECH-TO-TEXT (STT) ENGINE & FALLBACK
