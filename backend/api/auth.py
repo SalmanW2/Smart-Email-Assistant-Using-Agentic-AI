@@ -16,6 +16,7 @@ import jwt
 import httpx
 import asyncio
 import logging
+from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
