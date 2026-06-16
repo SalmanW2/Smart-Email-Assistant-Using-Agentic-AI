@@ -291,6 +291,10 @@ class AIEngine:
                         # Execute synchronous wrapper dynamically
                         result_str = func(**args)
                         
+                        # HARD INTERCEPTOR: Stop AI Hallucinations if Token is Expired!
+                        if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
+                            return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+
                         # Intercept structural layout payloads for Drafting/Scheduling
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
                             # Append turns to history before intercepting, keeping model context perfectly aligned

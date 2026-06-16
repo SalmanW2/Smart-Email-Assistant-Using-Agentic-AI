@@ -74,7 +74,7 @@ async def _send_welcome_to_telegram(telegram_id: int):
     kb  = {"inline_keyboard": [[{"text": "🎛️ Go to Main Dashboard", "callback_data": "menu_main"}]]}
     payload = {
         "chat_id": telegram_id,
-        "text": "✅ *Successfully Logged In!*\n\nYour Google Workspace is securely connected. Welcome to your AI Assistant!",
+        "text": "✅ *Google Workspace Connected!*\n\nYour account is now securely linked. Return to the Main Dashboard to continue.",
         "parse_mode": "Markdown",
         "reply_markup": kb,
     }

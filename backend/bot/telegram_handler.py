@@ -436,10 +436,12 @@ class TelegramBotManager:
             return
             
         self._clear_history(u.id)
+        email_display = acc["user"].get("email") or "User"
+        
         await self._send(update,
-            f"👋 *Welcome, {_safe_md(u.first_name)}!*\n\n"
-            "I'm your AI Email Assistant. Use the buttons below to manage your Gmail "
-            "with text or voice commands.",
+            f"✅ *Authenticated as {email_display}*\n\n"
+            "🎛️ *Smart Email Assistant Dashboard*\n"
+            "Select an action below to manage your inbox:",
             kb_main_menu())
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -734,12 +736,16 @@ class TelegramBotManager:
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✉️ Compose Email", callback_data="compose")],
-                    kb_back_step()[0]
+                    kb_back_step()
                 ]))
 
     # ── AI response dispatcher ─────────────────────────────────────────────────
 
     async def _dispatch_ai(self, update, context, msg_obj, raw: str, uid: int, prefs: dict):
+        # AI Engine Bubble-Up Interceptor
+        if raw == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "TOKEN_EXPIRED_REAUTH_REQUIRED" in raw:
+            return await self._prompt_reauth(msg_obj, uid)
+
         text_content = _clean_ai_text(raw)
         draft_data   = None
 
@@ -807,15 +813,10 @@ class TelegramBotManager:
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
                     if voice_pref == "both":
-                        await self._edit(msg_obj, f"🤖 {text_content}",
-                                          InlineKeyboardMarkup([kb_back_step()[0]]))
-                        await context.bot.send_voice(
-                            chat_id=uid, voice=f,
-                            reply_markup=InlineKeyboardMarkup([kb_back_step()[0]]))
+                        await self._edit(msg_obj, f"🤖 {text_content}")
+                        await context.bot.send_voice(chat_id=uid, voice=f)
                     else:
-                        await context.bot.send_voice(
-                            chat_id=uid, voice=f, caption="🔊 AI Response",
-                            reply_markup=InlineKeyboardMarkup([kb_back_step()[0]]))
+                        await context.bot.send_voice(chat_id=uid, voice=f, caption="🔊 AI Response")
                         try:
                             await msg_obj.delete()
                         except Exception:
@@ -826,8 +827,8 @@ class TelegramBotManager:
                     pass
                 return
 
-        # Do NOT escape AI generated text formatting completely to retain its original markdown
-        await self._edit(msg_obj, f"🤖 {text_content}", InlineKeyboardMarkup([kb_back_step()]))
+        # Do NOT escape AI generated text formatting completely, and do NOT attach fuzool 'Go Back' inline keyboards to generic chat
+        await self._edit(msg_obj, f"🤖 {text_content}")
 
     # ── Button handler ─────────────────────────────────────────────────────────
 
@@ -938,7 +939,7 @@ class TelegramBotManager:
             self.active_voice_tasks.discard(args[0] if args else "")
             await query.edit_message_text(
                 "🚫 *Voice command canceled.*", parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([kb_back_step()[0]]))
+                reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
 
         if action == "attach_hint":
@@ -1034,7 +1035,7 @@ class TelegramBotManager:
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("↩️ Undo", callback_data=_cb("untrash", mid_s, ctx, offset))],
-                        kb_back_step()[0]
+                        kb_back_step()
                     ]))
             return
 
@@ -1097,7 +1098,7 @@ class TelegramBotManager:
                 await msg.edit_text(
                     f"✅ *Email Dispatched Successfully!*", 
                     parse_mode="Markdown", 
-                    reply_markup=InlineKeyboardMarkup([kb_back_step()[0]])
+                    reply_markup=InlineKeyboardMarkup([kb_back_step()])
                 )
             except Exception as e:
                 error_msg = str(e)
@@ -1206,7 +1207,7 @@ class TelegramBotManager:
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
-        back_kb  = InlineKeyboardMarkup([kb_back_step()[0]])
+        back_kb  = InlineKeyboardMarkup([kb_back_step()])
 
         try:
             meta = await self.gmail.get_email_metadata(uid, full_mid)
