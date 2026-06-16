@@ -4,6 +4,8 @@ Voice Processing Handler — Smart Email Assistant
 Handles all auditory conversions including:
 1. Speech-to-Text (STT) utilizing Groq Whisper API for low-latency transcription.
 2. Text-to-Speech (TTS) utilizing Google Cloud TTS with an Edge-TTS fallback mechanism.
+3. Dynamic Language Interceptor: Auto-detects Punjabi, Urdu, and Hindi scripts to route to native voice models.
+4. Supabase Telemetry Integration: Fully synced with standard db.run lambda structures.
 """
 
 import asyncio
@@ -36,6 +38,25 @@ class VoiceHandler:
             "edge_tts_available": True,
             "groq_stt_configured": self.groq_available,
         }
+
+    def _detect_language(self, text: str) -> str:
+        """
+        Language Detection Interceptor:
+        Analyzes text characters using Unicode ranges to detect regional scripts.
+        Returns a language code for precise TTS model routing.
+        """
+        # Detect Gurmukhi (Punjabi) Script
+        if re.search(r'[\u0A00-\u0A7F]', text):
+            return 'pa'
+        # Detect Arabic/Urdu Script
+        elif re.search(r'[\u0600-\u06FF]', text):
+            return 'ur'
+        # Detect Devanagari (Hindi) Script
+        elif re.search(r'[\u0900-\u097F]', text):
+            return 'hi'
+        
+        # Default to English (also handles Roman Urdu/Roman Punjabi gracefully)
+        return 'en'
 
     # ==========================================
     # SPEECH-TO-TEXT (STT) ENGINE
@@ -96,38 +117,41 @@ class VoiceHandler:
         # Strip Markdown symbols (*, _, #, `) to prevent TTS models from reading punctuation aloud
         clean_text = re.sub(r'[*_#`]', '', text)
         
+        # Intercept and detect language natively
+        detected_lang = self._detect_language(clean_text)
+        
         output_path = ""
         method_used = "edge_tts" # Default fallback assumption
 
         if preferred_method == "google" and self.google_available:
             try:
                 # Attempt primary high-fidelity generation via Google Cloud
-                output_path = await self._google_synthesize(clean_text)
+                output_path = await self._google_synthesize(clean_text, detected_lang)
                 method_used = "google_tts"
             except Exception as e:
                 logger.error(f"Google TTS failed, initiating Edge-TTS fallback: {e}")
-                output_path = await self._edge_synthesize(clean_text)
+                output_path = await self._edge_synthesize(clean_text, detected_lang)
         else:
             # Direct Edge-TTS execution
-            output_path = await self._edge_synthesize(clean_text)
+            output_path = await self._edge_synthesize(clean_text, detected_lang)
 
-        # Log TTS token usage to the Supabase telemetry database if a valid user ID is provided
+        # Log TTS token usage to the Supabase telemetry database using robust synchronous lambda wrapper
         if telegram_id:
             try:
-                await db_manager.log_tts_usage(
-                    telegram_id=telegram_id, 
-                    method=method_used, 
-                    characters_generated=len(clean_text)
-                )
+                await db_manager.db.run(lambda: db_manager.db.client.table("tts_usage").insert({
+                    "telegram_id": telegram_id,
+                    "method": method_used,
+                    "characters_generated": len(clean_text)
+                }).execute())
             except Exception as e:
-                logger.error(f"Failed to log TTS telemetry: {e}")
+                logger.error(f"Failed to log TTS telemetry metrics to database: {e}")
 
         return output_path
 
-    async def _google_synthesize(self, text: str) -> str:
+    async def _google_synthesize(self, text: str, lang_code: str) -> str:
         """
         Primary Engine: Google Cloud Text-to-Speech API.
-        Provides superior pronunciation for bilingual (Roman Urdu / English) texts.
+        Applies dynamic language mapping for precise regional accents.
         """
         from google.cloud import texttospeech
         from google.oauth2 import service_account
@@ -147,9 +171,17 @@ class VoiceHandler:
         
         synthesis_input = texttospeech.SynthesisInput(text=text)
         
-        # 'en-IN' is optimized for regional names and mixed English/Roman-Urdu contexts
+        # Dynamic locale mapping for Google TTS
+        google_voice_map = {
+            'pa': 'pa-IN', # Punjabi
+            'ur': 'ur-PK', # Urdu
+            'hi': 'hi-IN', # Hindi
+            'en': 'en-IN'  # English / Roman Urdu optimized accent
+        }
+        target_lang = google_voice_map.get(lang_code, 'en-IN')
+
         voice_params = texttospeech.VoiceSelectionParams(
-            language_code="en-IN", 
+            language_code=target_lang, 
             ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL,
         )
         audio_config = texttospeech.AudioConfig(
@@ -168,17 +200,25 @@ class VoiceHandler:
         output_file.write_bytes(response.audio_content)
         return str(output_file)
 
-    async def _edge_synthesize(self, text: str) -> str:
+    async def _edge_synthesize(self, text: str, lang_code: str) -> str:
         """
         Fallback Engine: Microsoft Edge TTS (Free, Unlimited access).
-        Utilized if Google TTS fails or limits are exceeded.
+        Dynamically applies regional neural voices (Punjabi, Urdu, Hindi) based on detected scripts.
         """
         import edge_tts
 
         output_file = Path(tempfile.gettempdir()) / f"smart_email_voice_{uuid.uuid4().hex}.mp3"
         
-        # NeerjaNeural provides excellent clarity for South Asian and standard English pronunciations
-        communicate = edge_tts.Communicate(text, "en-IN-NeerjaNeural")
+        # Dynamic locale mapping for Edge-TTS Neural Voices
+        edge_voice_map = {
+            'pa': 'pa-IN-AmandeepNeural', # Punjabi native voice
+            'ur': 'ur-PK-AsadNeural',     # Urdu native voice
+            'hi': 'hi-IN-SwaraNeural',    # Hindi native voice
+            'en': 'en-IN-NeerjaNeural'    # English/Roman Urdu (Excellent South Asian clarity)
+        }
+        target_voice = edge_voice_map.get(lang_code, 'en-IN-NeerjaNeural')
+        
+        communicate = edge_tts.Communicate(text, target_voice)
         await communicate.save(str(output_file))
         
         return str(output_file)

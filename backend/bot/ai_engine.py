@@ -9,6 +9,8 @@ Features:
 3. Token Exhaustion Management via strict chronological context history pruning.
 4. Human-In-The-Loop (HITL) guardrails injected into Drafting and Scheduling logic.
 5. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
+6. Identity Locked: Enforces "Smart Email Assistant" persona, blocking generic LLM preambles.
+7. Multi-Lingual & Voice Aware: Understands and generates regional languages (Punjabi, Urdu) for TTS.
 """
 
 import asyncio
@@ -68,7 +70,7 @@ class AIEngine:
     def __init__(self) -> None:
         """
         Initializes the Google Gemini client, sets the reasoning model,
-        and provisions the Gmail API backend client client wrapper.
+        and provisions the Gmail API backend client wrapper.
         """
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.model_name = "gemini-2.5-flash"
@@ -159,19 +161,29 @@ class AIEngine:
     def save_contact_tool(self, name: str, email: str, user_id: int) -> str:
         """
         Tool: Saves or updates an address book contact in the user's Supabase contacts table.
+        Robust parsing implemented to prevent database composite key collision errors.
         """
         logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
+        
+        # Structural limits and constraints validation for DB injection
+        clean_email = str(email).strip().lower()
+        clean_name = str(name).strip()[:200]
+        safe_uid = int(user_id)
+        
+        if not clean_email or "@" not in clean_email:
+            return "Error: Invalid email format provided. Contact not saved."
+
         try:
             _run_sync(db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
-                "telegram_id": user_id,
-                "contact_alias": name,
-                "email_address": email,
-                "contact_name": name
+                "telegram_id": safe_uid,
+                "contact_alias": clean_name,
+                "email_address": clean_email,
+                "contact_name": clean_name
             }, on_conflict="telegram_id,email_address").execute()))
-            return f"Contact '{name}' with email '{email}' saved successfully."
+            return f"Contact '{clean_name}' with email '{clean_email}' saved successfully."
         except Exception as e:
             logger.error(f"Failed to upsert contact via Tool call: {e}")
-            return f"Error: Contact could not be saved to DB due to: {str(e)}"
+            return f"Error: Contact could not be saved to DB due to a technical constraint: {str(e)}"
 
     # ==========================================
     # CORE AGENT REASONING ENGINE
@@ -202,9 +214,15 @@ class AIEngine:
             # 3. Dynamic current datetime matrix
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            # 4. Standardized prompt system instruction in plain block text layout
+            # 4. Standardized prompt system instruction with absolute identity & language locks
             system_instructions = (
-                "You are an elite, multi-modal Agentic AI Email Assistant functioning inside a Telegram Bot.\n"
+                "IDENTITY LOCK: You are the 'Smart Email Assistant', an elite agentic system running inside Telegram.\n"
+                "NEVER break character. NEVER use generic AI disclaimers like 'As a large language model' or 'As an AI'.\n"
+                "Assume full identity and ownership of your email management capabilities.\n\n"
+                "LANGUAGE & VOICE CAPABILITIES: You are multi-lingual. You must understand and generate text in the user's "
+                "preferred language (e.g., English, Punjabi, Urdu, Roman Urdu). If the user asks for a voice message, "
+                "audio summary, or spoken response, ALWAYS generate the response normally in the requested language text. "
+                "The background Text-to-Speech (TTS) engine will read your text aloud. Do NOT apologize or claim you cannot send voice.\n\n"
                 "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
                 f"User's Address Book (Always search here first when names are mentioned):\n"
