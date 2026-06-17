@@ -11,6 +11,7 @@ Features:
 5. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
 6. Identity Locked: Enforces "Smart Email Assistant" persona, blocking generic LLM preambles.
 7. Multi-Lingual & Voice Aware: Understands and generates regional languages (Punjabi, Urdu) for TTS.
+8. Hard Directives: Forces immediate tool execution for Drafting/Searching without asking permissions.
 """
 
 import asyncio
@@ -229,14 +230,12 @@ class AIEngine:
                 f"{contacts_context or 'No saved contacts in database yet.'}\n\n"
                 f"Recent Conversation Memory Context (Use this to follow reference pronouns):\n"
                 f"{history_context or 'No prior conversation history recorded.'}\n\n"
-                "CRITICAL SYSTEM DIRECTIVES:\n"
-                "1. If the user wants to fetch, read, list, search, or check emails, prioritize using the 'search_gmail_tool'.\n"
-                "2. If the user wants to reply or draft, map context to the 'prepare_email_draft_tool'.\n"
-                "3. If the user wants to schedule an email for a future date/time, use the 'schedule_email_tool'.\n"
-                "4. HITL Guardrail: If preparing or scheduling a draft and you do not know the exact recipient email address "
-                "from either the conversation history or the Address Book, you MUST strictly use the exact string "
-                "'[Specify Recipient Email]' as the to_email parameter. NEVER make up or guess email addresses.\n"
-                "5. Return a helpful, clean, professional plain-text response when no tool executions are needed."
+                "CRITICAL SYSTEM DIRECTIVES (STRICT COMPLIANCE REQUIRED):\n"
+                "1. SEARCHING EMAILS: When the user asks to search, find, read, or check their inbox, you MUST IMMEDIATELY call the 'search_gmail_tool'. DO NOT explain that you are an AI, DO NOT make excuses. Just call the tool.\n"
+                "2. DRAFTING/SENDING EMAILS: When the user asks to write, draft, reply, or send an email, you MUST IMMEDIATELY call the 'prepare_email_draft_tool'. NEVER write the email draft as plain text in your response. NEVER ask 'Shall I prepare it?' or 'Shall I send it?'. Call the tool immediately so the system can render the interactive Draft UI Card.\n"
+                "3. SCHEDULING EMAILS: When the user asks to schedule an email, IMMEDIATELY call the 'schedule_email_tool'.\n"
+                "4. HITL GUARDRAIL: If calling 'prepare_email_draft_tool' or 'schedule_email_tool' and you do not know the exact recipient email address (from history or Address Book), you MUST strictly use '[Specify Recipient Email]' as the to_email parameter. NEVER make up or guess email addresses.\n"
+                "5. PLAIN CHAT: Only return a normal conversational text response when answering general questions that do not require email actions."
             )
 
             # Register tools
