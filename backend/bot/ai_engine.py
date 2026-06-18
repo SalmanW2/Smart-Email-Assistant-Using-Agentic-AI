@@ -11,7 +11,7 @@ Features:
 5. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
 6. Identity Locked: Enforces "Smart Email Assistant" persona, blocking generic LLM preambles.
 7. Multi-Lingual & Voice Aware: Understands and generates regional languages (Punjabi, Urdu) for TTS.
-8. Hard Directives & Simple Tagging: Forces immediate tool execution and guarantees voice via tags.
+8. Groq Failover Pipeline: Instantly falls back to Llama-3-70b if Gemini hits a rate limit!
 """
 
 import asyncio
@@ -162,11 +162,9 @@ class AIEngine:
     def save_contact_tool(self, name: str, email: str, user_id: int) -> str:
         """
         Tool: Saves or updates an address book contact in the user's Supabase contacts table.
-        Robust parsing implemented to prevent database composite key collision errors.
         """
         logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
         
-        # Structural limits and constraints validation for DB injection
         clean_email = str(email).strip().lower()
         clean_name = str(name).strip()[:200]
         safe_uid = int(user_id)
@@ -187,24 +185,152 @@ class AIEngine:
             return f"Error: Contact could not be saved to DB due to a technical constraint: {str(e)}"
 
     # ==========================================
+    # GROQ FALLBACK PIPELINE
+    # ==========================================
+
+    async def _groq_fallback_chat(self, message: str, telegram_id: int, system_instructions: str, tools_map: dict) -> str:
+        """
+        Triggered automatically when Gemini hits API rate limits (429).
+        Routes the existing context and tools directly to Llama-3-70b on Groq.
+        """
+        if not settings.GROQ_API_KEY:
+            return "⚠️ Gemini LLM limits reached and Groq API Fallback is not configured. Please wait a few seconds."
+
+        # Map Gemini History Schema to Groq (OpenAI) Chat Schema
+        messages = [{"role": "system", "content": system_instructions}]
+        
+        for turn in self.active_chats.get(telegram_id, []):
+            role = "user" if turn.role == "user" else "assistant"
+            text_content = ""
+            for part in getattr(turn, "parts", []):
+                if hasattr(part, "text") and part.text:
+                    text_content += part.text
+            if text_content:
+                messages.append({"role": role, "content": text_content})
+                
+        messages.append({"role": "user", "content": message})
+
+        # Map Custom Tools to Groq Functions
+        groq_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_gmail_tool",
+                    "description": "Searches the user's Gmail inbox for specific threads or messages.",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "prepare_email_draft_tool",
+                    "description": "Prepares and stages an immediate email draft.",
+                    "parameters": {"type": "object", "properties": {"to_email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to_email", "subject", "body"]}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "schedule_email_tool",
+                    "description": "Schedules an email for future automated dispatch.",
+                    "parameters": {"type": "object", "properties": {"to_email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "scheduled_time": {"type": "string"}}, "required": ["to_email", "subject", "body", "scheduled_time"]}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_contact_tool",
+                    "description": "Saves or updates an address book contact.",
+                    "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}}, "required": ["name", "email"]}
+                }
+            }
+        ]
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama3-70b-8192",
+            "messages": messages,
+            "tools": groq_tools,
+            "tool_choice": "auto",
+            "temperature": 0.2
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+                choice = data["choices"][0]["message"]
+                
+                if choice.get("tool_calls"):
+                    tool_call = choice["tool_calls"][0]
+                    fn_name = tool_call["function"]["name"]
+                    args = json.loads(tool_call["function"]["arguments"])
+                    args["user_id"] = telegram_id
+
+                    try:
+                        func = tools_map[fn_name]
+                        result_str = func(**args)
+                        
+                        if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
+                            return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+                            
+                        # Intercept interactive UI cards and return early
+                        if "prepare_draft" in result_str or "schedule_email" in result_str:
+                            self.active_chats[telegram_id].append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+                            self.active_chats[telegram_id].append(types.Content(role="model", parts=[types.Part.from_text(text="[Tool Execution Payload Triggered]")]))
+                            return result_str
+                            
+                        # Complete standard tool-return execution for Groq
+                        messages.append(choice)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call["id"],
+                            "name": fn_name,
+                            "content": result_str
+                        })
+                        payload["messages"] = messages
+                        
+                        resp2 = await client.post(url, headers=headers, json=payload)
+                        resp2.raise_for_status()
+                        final_text = resp2.json()["choices"][0]["message"].get("content", "")
+                        
+                        self.active_chats[telegram_id].append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+                        self.active_chats[telegram_id].append(types.Content(role="model", parts=[types.Part.from_text(text=final_text)]))
+                        return final_text
+                        
+                    except Exception as tool_err:
+                        logger.error(f"Groq tool error: {tool_err}")
+                        return f"Error executing tool during fallback: {tool_err}"
+                else:
+                    # Plain chat response
+                    content = choice.get("content", "")
+                    self.active_chats[telegram_id].append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+                    self.active_chats[telegram_id].append(types.Content(role="model", parts=[types.Part.from_text(text=content)]))
+                    return content
+                    
+        except Exception as e:
+            logger.error(f"Groq Fallback also failed: {e}")
+            return "⚠️ System is experiencing extremely high traffic and both AI nodes failed. Please try again shortly."
+
+    # ==========================================
     # CORE AGENT REASONING ENGINE
     # ==========================================
 
     async def agent_chat(self, message: str, telegram_id: int) -> str:
         """
         Primary entry point for processing conversational user prompts.
-        Applies strict Token Truncation, Contacts Context injection, and resolves
-        dynamic tool calling models natively under Gemini 2.5 Flash constraints.
+        Wrapped in Try-Except to failover to Groq seamlessly.
         """
         try:
-            # 1. Fetch saved contacts to inject as contextual mapping
             contacts_list = await contact_manager.get_contacts(telegram_id)
             contacts_context = "\n".join([
                 f"- {c.get('contact_alias')} ({c.get('contact_name')}): {c.get('email_address')}" 
                 for c in contacts_list
             ])
 
-            # 2. Token Exhaustion Management: Truncate chronological context records
             raw_summaries = await memory_manager.get_recent_summaries(telegram_id, limit=settings.MAX_CONTEXT_MESSAGES)
             recent_summaries = raw_summaries[:settings.MAX_CONTEXT_MESSAGES] if raw_summaries else []
             history_context = "\n".join([
@@ -212,10 +338,8 @@ class AIEngine:
                 for s in recent_summaries
             ])
 
-            # 3. Dynamic current datetime matrix
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            # 4. Standardized prompt system instruction with absolute identity & language locks
             system_instructions = (
                 "IDENTITY LOCK: You are the 'Smart Email Assistant', an elite agentic system running inside Telegram.\n"
                 "NEVER break character. NEVER use generic AI disclaimers like 'As a large language model' or 'As an AI'.\n"
@@ -223,12 +347,12 @@ class AIEngine:
                 "VOICE CAPABILITIES & TAG SYSTEM:\n"
                 "You are multi-lingual. You must understand and generate text in the user's preferred language (e.g., English, Punjabi, Urdu, Roman Urdu).\n"
                 "If the user asks for a voice message, audio response, or asks you to 'speak', 'suna', or 'sunao' in ANY language, you MUST append the exact tag '[VOICE]' at the very end of your response text.\n"
-                "Example response: 'Ji, mujhe umeed hai ke aap theek honge. [VOICE]'\n\n"
+                "Example response: 'Ji, main yeh check kar leta hoon. [VOICE]'\n\n"
                 "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
                 f"User's Address Book (Always search here first when names are mentioned):\n"
                 f"{contacts_context or 'No saved contacts in database yet.'}\n\n"
-                f"Recent Conversation Memory Context (Use this to follow reference pronouns):\n"
+                f"Recent Conversation Memory Context:\n"
                 f"{history_context or 'No prior conversation history recorded.'}\n\n"
                 "CRITICAL SYSTEM DIRECTIVES (STRICT COMPLIANCE REQUIRED):\n"
                 "1. SEARCHING EMAILS: When the user asks to search, find, read, or check their inbox, you MUST IMMEDIATELY call the 'search_gmail_tool'. DO NOT explain that you are an AI, DO NOT make excuses. Just call the tool.\n"
@@ -238,7 +362,6 @@ class AIEngine:
                 "5. PLAIN CHAT: Only return a normal conversational response when answering general questions that do not require email actions."
             )
 
-            # Register tools
             tools_map = {
                 "search_gmail_tool": self.search_gmail_tool,
                 "prepare_email_draft_tool": self.prepare_email_draft_tool,
@@ -246,57 +369,56 @@ class AIEngine:
                 "save_contact_tool": self.save_contact_tool
             }
 
+            # STRICT JSON RESTRICTIONS REMOVED HERE
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
                 tools=list(tools_map.values()),
-                temperature=0.2, # Low temperature for strict routing and tool call logic
+                temperature=0.2, 
             )
 
-            # 5. Native Chat Session Management setup
             if telegram_id not in self.active_chats:
                 self.active_chats[telegram_id] = []
 
-            # Truncate active chat turn list to protect token limitations
             max_turns = settings.MAX_CONTEXT_MESSAGES * 2
             if len(self.active_chats[telegram_id]) > max_turns:
                 self.active_chats[telegram_id] = self.active_chats[telegram_id][-max_turns:]
 
-            # Construct message turns structure with current state
             user_part = types.Part.from_text(text=message)
             user_content = types.Content(role="user", parts=[user_part])
             contents = self.active_chats[telegram_id] + [user_content]
 
-            logger.info(f"Triggering Gemini 2.5 Flash for user: {telegram_id} using stateful conversation tracking")
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model_name,
-                contents=contents,
-                config=config,
-            )
+            logger.info(f"Triggering Gemini 2.5 Flash for user: {telegram_id}")
+            
+            # --- FAILOVER WRAPPER ---
+            try:
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as gemini_err:
+                logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}). Triggering Groq Fallback...")
+                return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
-            # Handle and process active Function / Tool Calls
+            # --- STANDARD GEMINI PROCESSING ---
             if response.function_calls:
                 results_parts = []
                 for fc in response.function_calls:
                     fn_name = fc.name
                     args = dict(fc.args)
 
-                    # Inject contextual parameters
                     if fn_name in ["search_gmail_tool", "prepare_email_draft_tool", "schedule_email_tool", "save_contact_tool"]:
                         args["user_id"] = telegram_id
 
                     try:
                         func = tools_map[fn_name]
-                        # Execute synchronous wrapper dynamically
                         result_str = func(**args)
                         
-                        # HARD INTERCEPTOR: Stop AI Hallucinations if Token is Expired!
                         if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
 
-                        # Intercept structural layout payloads for Drafting/Scheduling
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
-                            # Append turns to history before intercepting, keeping model context perfectly aligned
                             self.active_chats[telegram_id].append(user_content)
                             self.active_chats[telegram_id].append(response.candidates[0].content)
                             return result_str
@@ -310,20 +432,20 @@ class AIEngine:
                             types.Part.from_function_response(name=fn_name, response={"error": str(tool_err)})
                         )
 
-                # Return the result back to Gemini to formulate the final conversational response
-                final_response = await asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.model_name,
-                    contents=contents + [response.candidates[0].content] + results_parts,
-                    config=config,
-                )
-                
-                # Append final message turns to history
-                self.active_chats[telegram_id].append(user_content)
-                self.active_chats[telegram_id].append(final_response.candidates[0].content)
-                return final_response.text
+                try:
+                    final_response = await asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model_name,
+                        contents=contents + [response.candidates[0].content] + results_parts,
+                        config=config,
+                    )
+                    self.active_chats[telegram_id].append(user_content)
+                    self.active_chats[telegram_id].append(final_response.candidates[0].content)
+                    return final_response.text
+                except Exception as final_err:
+                    logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
+                    return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
-            # Append plain chat responses to history
             self.active_chats[telegram_id].append(user_content)
             self.active_chats[telegram_id].append(response.candidates[0].content)
             return response.text

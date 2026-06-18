@@ -775,6 +775,13 @@ class TelegramBotManager:
         text_content = _clean_ai_text(raw)
         draft_data   = None
 
+        # ── 1. TAG INTERCEPTOR: Detect and Clean [VOICE] ──
+        is_voice_type = False
+        if "[VOICE]" in text_content:
+            is_voice_type = True
+            text_content = text_content.replace("[VOICE]", "").strip()
+
+        # Legacy direct-ID fetching logic (if AI prints ID directly instead of using tool)
         if "198306a5" in text_content or "email id is" in text_content.lower() or "here is the email" in text_content.lower():
             mid_match = re.search(r'([a-f0-9]{16})', text_content.lower())
             if mid_match:
@@ -783,18 +790,12 @@ class TelegramBotManager:
                 await self._show_email(msg_obj if update.callback_query else update.message, detected_mid, "inbox", 0, uid)
                 return
 
-        # NEW VOICE TAG LOGIC
-        is_voice_type = False
-        if "[VOICE]" in text_content:
-            is_voice_type = True
-            text_content = text_content.replace("[VOICE]", "").strip()
-
+        # ── 2. DRAFT INTERCEPTOR: Parse JSON payload if tool executed ──
         try:
             cleaned = re.sub(r'```json|```', '', raw).strip()
             m       = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if m:
                 parsed       = json.loads(m.group(0))
-                text_content = parsed.get("text", text_content).replace("[VOICE]", "").strip()
                 draft_data   = parsed.get("draft")
         except Exception:
             pass
@@ -802,6 +803,7 @@ class TelegramBotManager:
         if uid in self.ai_engine.pending_drafts:
             draft_data = self.ai_engine.pending_drafts.pop(uid)
 
+        # ── Handle Draft UI Structure ──
         if draft_data:
             to_field = (draft_data.get("to") or "").strip()
             if not to_field or "[Specify Recipient" in to_field:
@@ -828,11 +830,13 @@ class TelegramBotManager:
                 await self._edit(msg_obj, _draft_text(self.compose_states[uid]), kb_draft(bool(self.compose_states[uid].get("attachments"))))
             return
 
+        # ── 3. BYPASS USER PREFERENCE FOR VOICE ──
         voice_pref = prefs.get("voice_preference", "text")
 
-        # If the AI flagged the response type as voice explicitly via [VOICE] tag, we ALWAYS override user default preference parameters to deliver spoken summary notes!
+        # Force voice generation if the AI explicitly tagged it, overriding user settings!
         if is_voice_type or voice_pref in ("voice", "both"):
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
+            # Remove markdown syntax to prevent TTS engine from reading asterisks aloud
             clean_tts = re.sub(r'[*_#`]', '', text_content)
             audio     = await self.voice.synthesize(
                 clean_tts, telegram_id=uid,
@@ -840,22 +844,16 @@ class TelegramBotManager:
                 
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
-                    if voice_pref == "both":
-                        await self._edit(msg_obj, f"🤖 {text_content}")
-                        await context.bot.send_voice(chat_id=uid, voice=f)
-                    else:
-                        await context.bot.send_voice(chat_id=uid, voice=f, caption="🔊 AI Response")
-                        try:
-                            await msg_obj.delete()
-                        except Exception:
-                            pass
+                    # Send text alongside the voice if explicitly requested or preference is 'both'
+                    await self._edit(msg_obj, f"🤖 {text_content}")
+                    await context.bot.send_voice(chat_id=uid, voice=f)
                 try:
                     os.remove(audio)
                 except Exception:
                     pass
                 return
 
-        # Do NOT escape AI generated text formatting completely, and do NOT attach fuzool 'Go Back' inline keyboards to generic chat
+        # Standard plain text fallback if voice failed, or standard response
         await self._edit(msg_obj, f"🤖 {text_content}")
 
     # ── Button handler ─────────────────────────────────────────────────────────
@@ -1063,7 +1061,7 @@ class TelegramBotManager:
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("↩️ Undo", callback_data=_cb("untrash", mid_s, ctx, offset))],
-                        kb_back_step()
+                        kb_back_step()[0]
                     ]))
             return
 
