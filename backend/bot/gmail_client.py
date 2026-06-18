@@ -337,6 +337,12 @@ class GmailClient:
             
             body = self._extract_body(payload)
             snippet = msg.get('snippet', '')
+            
+            # Truncate body for UI/API payload efficiency — full content is still
+            # available for display, but prevents massive chain emails from
+            # flooding AI context memory or Telegram message size limits.
+            if len(body) > 4000:
+                body = body[:4000] + "\n\n[... Truncated for UI presentation]"
 
             return {
                 "id": msg_id,

@@ -245,6 +245,10 @@ class TelegramBotManager:
         self.active_voice_tasks: set = set()
         self.email_lock = asyncio.Lock()
         
+        # Stores the last user text/voice query per user to power the Retry button UX.
+        # When any AI call crashes, the user gets a [🔄 Retry] button that re-submits this.
+        self.last_user_queries: Dict[int, Dict[str, str]] = {}
+        
         # Cold start safety parameter
         self.startup_time = datetime.now(timezone.utc).timestamp()
         
@@ -606,8 +610,18 @@ class TelegramBotManager:
         msg = await update.message.reply_text("✨ *Thinking...*", parse_mode="Markdown")
         await context.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
         
-        raw = await self.ai_engine.agent_chat(text, uid)
-        await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+        # Cache query so the [🔄 Retry] button can re-submit it after a failure
+        self.last_user_queries[uid] = {"type": "text", "content": text}
+
+        try:
+            raw = await self.ai_engine.agent_chat(text, uid)
+            await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+        except Exception as e:
+            logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
+            await self._edit(msg,
+                "⚠️ *System temporarily unavailable.*\n"
+                "An unexpected error occurred. Please try again or tap Retry.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Retry", callback_data="retry_last_query")]]))
 
     async def _compose_step(self, update: Update, uid: int, text: str):
         state = self.compose_states[uid]
@@ -699,13 +713,25 @@ class TelegramBotManager:
                 InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_voice:{task_id}")
             ]]))
 
-        raw = await self.ai_engine.agent_chat(transcribed, uid)
-        
-        if task_id not in self.active_voice_tasks:
-            return
+        # Cache transcribed query so the [🔄 Retry] button can re-submit it after a failure
+        self.last_user_queries[uid] = {"type": "text", "content": transcribed}
+
+        try:
+            raw = await self.ai_engine.agent_chat(transcribed, uid)
             
-        self.active_voice_tasks.discard(task_id)
-        await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+            if task_id not in self.active_voice_tasks:
+                return
+                
+            self.active_voice_tasks.discard(task_id)
+            await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+        except Exception as e:
+            logger.error(f"Unhandled error in handle_voice for user {uid}: {e}", exc_info=True)
+            if task_id in self.active_voice_tasks:
+                self.active_voice_tasks.discard(task_id)
+            await self._edit(msg,
+                "⚠️ *System temporarily unavailable.*\n"
+                "An unexpected error occurred. Please try again or tap Retry.",
+                InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Retry", callback_data="retry_last_query")]]))
 
     # ── Attachment handler ─────────────────────────────────────────────────────
 
@@ -830,13 +856,16 @@ class TelegramBotManager:
                 await self._edit(msg_obj, _draft_text(self.compose_states[uid]), kb_draft(bool(self.compose_states[uid].get("attachments"))))
             return
 
-        # ── 3. BYPASS USER PREFERENCE FOR VOICE ──
+        # ── 3. VOICE / TEXT ROUTING ──
+        # Routing logic:
+        #   - is_voice_type (AI tagged [VOICE]) OR voice_pref='voice': send audio only, show clean placeholder.
+        #   - voice_pref='both': send full text bubble AND audio note.
+        #   - voice_pref='text' (default): send text only.
         voice_pref = prefs.get("voice_preference", "text")
 
-        # Force voice generation if the AI explicitly tagged it, overriding user settings!
         if is_voice_type or voice_pref in ("voice", "both"):
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
-            # Remove markdown syntax to prevent TTS engine from reading asterisks aloud
+            # Remove markdown symbols to prevent TTS engine from reading punctuation aloud
             clean_tts = re.sub(r'[*_#`]', '', text_content)
             audio     = await self.voice.synthesize(
                 clean_tts, telegram_id=uid,
@@ -844,16 +873,23 @@ class TelegramBotManager:
                 
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
-                    # Send text alongside the voice if explicitly requested or preference is 'both'
-                    await self._edit(msg_obj, f"🤖 {text_content}")
+                    if voice_pref == "both":
+                        # User wants both formats: show the full text and attach audio
+                        await self._edit(msg_obj, f"🤖 {text_content}")
+                    else:
+                        # Voice-only / explicit [VOICE] tag: clean placeholder, audio follows
+                        await self._edit(msg_obj, "🎙️ _Voice response sent below._")
                     await context.bot.send_voice(chat_id=uid, voice=f)
                 try:
                     os.remove(audio)
                 except Exception:
                     pass
                 return
+            else:
+                # TTS generation failed — fall through to plain text so user gets a response
+                logger.warning(f"TTS audio generation failed for user {uid}, falling back to text.")
 
-        # Standard plain text fallback if voice failed, or standard response
+        # Standard plain text response (default preference or TTS failure fallback)
         await self._edit(msg_obj, f"🤖 {text_content}")
 
     # ── Button handler ─────────────────────────────────────────────────────────
@@ -886,6 +922,33 @@ class TelegramBotManager:
             self.search_states.pop(uid, None)
             self._clear_history(uid)
             await self._send(update, "🎛️ *Main Dashboard*\n\nSelect an action:", kb_main_menu())
+            return
+
+        # ── Retry Last Query ─────────────────────────────────────────────────────
+        if action == "retry_last_query":
+            last_query = self.last_user_queries.get(uid)
+            if not last_query:
+                try:
+                    await query.answer("❌ No previous query found to retry.", show_alert=True)
+                except Exception:
+                    pass
+                return
+            
+            try:
+                msg = await query.edit_message_text("✨ *Retrying your last request...*", parse_mode="Markdown")
+            except Exception:
+                msg = await context.bot.send_message(chat_id=uid, text="✨ *Retrying your last request...*", parse_mode="Markdown")
+            
+            await context.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
+            try:
+                raw = await self.ai_engine.agent_chat(last_query["content"], uid)
+                await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+            except Exception as e:
+                logger.error(f"Error in retry_last_query for user {uid}: {e}", exc_info=True)
+                await self._edit(msg,
+                    "⚠️ *System temporarily unavailable.*\n"
+                    "The server is still overloaded. Please wait a moment and try again.",
+                    InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Retry", callback_data="retry_last_query")]]))
             return
 
         if action == "inbox":

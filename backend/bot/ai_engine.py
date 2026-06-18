@@ -95,7 +95,21 @@ class AIEngine:
         results = _run_sync(self.gmail_client.search_emails(user_id, query, max_results=5))
         if not results:
             return "No emails found matching the search query parameters."
-        return json.dumps(results)
+        
+        # Truncate email bodies before injecting into LLM context to prevent TPM limit exhaustion.
+        # Full body is still available when the user taps 'Read Full Email' in the UI.
+        optimized_results = []
+        for email in results:
+            if isinstance(email, dict):
+                body = email.get("body", "")
+                opt_email = {
+                    **email,
+                    "body": body[:1000] + ("... [Truncated for AI context]" if len(body) > 1000 else "")
+                }
+                optimized_results.append(opt_email)
+            else:
+                optimized_results.append(email)
+        return json.dumps(optimized_results)
 
     def prepare_email_draft_tool(self, to_email: str, subject: str, body: str, user_id: int) -> str:
         """
@@ -249,7 +263,7 @@ class AIEngine:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
         payload = {
-            "model": "llama3-70b-8192",
+            "model": "llama-3.3-70b-versatile",  # Updated from deprecated llama3-70b-8192
             "messages": messages,
             "tools": groq_tools,
             "tool_choice": "auto",
