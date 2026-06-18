@@ -369,11 +369,22 @@ class AIEngine:
                 "save_contact_tool": self.save_contact_tool
             }
 
-            # STRICT JSON RESTRICTIONS REMOVED HERE
+            # Safety settings set to BLOCK_NONE across all harm categories.
+            # Without this, Gemini's default filters silently block tool calls for
+            # email access and the model hallucinates "authentication error" excuses
+            # instead of calling search_gmail_tool / prepare_email_draft_tool.
+            _safety_off = [
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT",  threshold="OFF"),
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT",          threshold="OFF"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH",         threshold="OFF"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT",   threshold="OFF"),
+                types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY",     threshold="OFF"),
+            ]
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
                 tools=list(tools_map.values()),
-                temperature=0.2, 
+                temperature=0.2,
+                safety_settings=_safety_off,
             )
 
             if telegram_id not in self.active_chats:
@@ -433,10 +444,18 @@ class AIEngine:
                         )
 
                 try:
+                    # Gemini SDK requires function-response parts to be wrapped
+                    # inside a Content object (role="tool") — passing a bare List[Part]
+                    # causes the SDK to reject or silently misparse the payload, which
+                    # makes the second call fail and drops to Groq unnecessarily.
+                    tool_result_content = types.Content(
+                        role="tool",
+                        parts=results_parts,
+                    )
                     final_response = await asyncio.to_thread(
                         self.client.models.generate_content,
                         model=self.model_name,
-                        contents=contents + [response.candidates[0].content] + results_parts,
+                        contents=contents + [response.candidates[0].content, tool_result_content],
                         config=config,
                     )
                     self.active_chats[telegram_id].append(user_content)

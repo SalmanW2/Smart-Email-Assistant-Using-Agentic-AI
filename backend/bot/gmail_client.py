@@ -4,7 +4,7 @@ Gmail API Client Wrapper — Smart Email Assistant
 Handles secure interactions with the Google Gmail API using OAuth 2.0 credentials.
 
 Features:
-1. Minimal Payload Polling: Uses Google's format='minimal' to fetch background unread streams,
+1. Metadata Payload Polling: Uses Google's format='metadata' to fetch background unread streams,
    avoiding heavy body downloads, reducing latency, and blocking Render timeouts.
 2. Dynamic Token Interceptor: Resolves Google 401/403 errors and auto-refreshes tokens.
 3. Sentinel Routing: Bubbles up the structured string 'TOKEN_EXPIRED_REAUTH_REQUIRED' on auth failure.
@@ -233,7 +233,7 @@ class GmailClient:
     async def get_unread_emails(self, user_id: int, limit: int = 5) -> Any:
         """
         Polles the inbox for unread message metadata.
-        OPTIMIZED: Uses format='minimal' during background synchronization queries to completely 
+        OPTIMIZED: Uses format='metadata' during background synchronization queries to completely 
         prevent parsing heavy email payloads and protect Render CPU bottlenecks.
         """
         try:
@@ -250,10 +250,11 @@ class GmailClient:
             minimal_emails = []
             for msg in messages:
                 try:
-                    # Optimized Payload Polling via format='minimal'
+                    # Optimized Payload Polling via format='metadata' with specific headers
                     minimal_msg = await asyncio.to_thread(
                         lambda m_id=msg['id']: service.users().messages().get(
-                            userId='me', id=m_id, format='minimal'
+                            userId='me', id=m_id, format='metadata',
+                            metadataHeaders=['From', 'Subject']
                         ).execute()
                     )
                     

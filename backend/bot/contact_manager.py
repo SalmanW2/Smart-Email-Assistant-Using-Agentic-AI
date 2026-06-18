@@ -100,14 +100,14 @@ class ContactManager:
                 if name and email and "@" in email:
                     # Upsert the newly discovered contact securely into the database
                     await self.db.run(
-                        lambda: self.db.client.table("contacts").upsert({
+                        lambda _n=name, _e=email: self.db.client.table("contacts").upsert({
                             "telegram_id": telegram_id,
-                            "contact_alias": name,
-                            "email_address": email,
-                            "contact_name": name
+                            "contact_alias": _n,
+                            "email_address": _e,
+                            "contact_name": _n
                         }, on_conflict="telegram_id,email_address").execute()
                     )
-                    logger.info(f"Learned and mapped new contact for {telegram_id}: {name} -> {email}")
+                    logger.info(f"Learned and mapped new contact for {telegram_id}: {_n} -> {_e}")
                     
         except Exception as e:
             # Catch exceptions silently so the main UX remains unaffected by background extraction errors

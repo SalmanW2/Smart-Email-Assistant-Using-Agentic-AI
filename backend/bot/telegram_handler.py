@@ -751,7 +751,7 @@ class TelegramBotManager:
                 reply_markup=kb_draft(True))
             return
 
-        self.gmail.add_user_attachment(uid, fpath)
+        self.gmail.add_user_attachment(uid, fpath, fname)
         caption = update.message.caption or ""
         if caption:
             raw = await self.ai_engine.agent_chat(f"[Uploaded: {fname}] {caption}", uid)
@@ -762,7 +762,7 @@ class TelegramBotManager:
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✉️ Compose Email", callback_data="compose")],
-                    kb_back_step()[0]
+                    kb_back_step(),
                 ]))
 
     # ── AI response dispatcher ─────────────────────────────────────────────────
@@ -1124,7 +1124,7 @@ class TelegramBotManager:
                 await msg.edit_text(
                     f"✅ *Email Dispatched Successfully!*", 
                     parse_mode="Markdown", 
-                    reply_markup=InlineKeyboardMarkup([kb_back_step()[0]])
+                    reply_markup=InlineKeyboardMarkup([kb_back_step()])
                 )
             except Exception as e:
                 error_msg = str(e)
@@ -1233,7 +1233,7 @@ class TelegramBotManager:
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
-        back_kb  = InlineKeyboardMarkup([kb_back_step()[0]])
+        back_kb  = InlineKeyboardMarkup([kb_back_step()])
 
         try:
             meta = await self.gmail.get_email_metadata(uid, full_mid)
