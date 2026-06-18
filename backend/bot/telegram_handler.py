@@ -8,6 +8,7 @@ Features Implemented:
 - Dynamic Token Interceptor & Login Cleanup (Handles 401/403 gracefully).
 - Immediate Dispatch Model (Removed legacy 7-second undo delays).
 - Centralized Cleanups & Cron Resiliency Embedded.
+- Tag-Based Voice Routing: Intercepts [VOICE] tags for seamless TTS execution.
 """
 
 import logging
@@ -61,26 +62,22 @@ def _parse_cb(data: str) -> tuple:
     return parts[0], parts[1:]
 
 def _clean_ai_text(raw: str) -> str:
-    """Extract clean text from AI response — never leaks raw JSON to user."""
+    """Extract clean text from AI response — handles both text and parsed JSON."""
     if not raw:
         return ""
-    cleaned = re.sub(r'```json|```', '', raw).strip()
-    
-    m = re.search(r'\{.*\}', cleaned, re.DOTALL)
-    if m:
-        try:
+        
+    try:
+        # Check if the output is JSON
+        cleaned = re.sub(r'```json|```', '', raw).strip()
+        m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        if m:
             parsed = json.loads(m.group(0))
             text = parsed.get("text", "")
             if text:
                 return str(text).strip()
-        except Exception:
-            pass
-            
-    if cleaned.startswith("{") and "text" in cleaned:
-        t = re.search(r'"text"\s*:\s*"(.*?)"(?:,|\})', cleaned, re.DOTALL)
-        if t:
-            return t.group(1).replace("\\n", "\n").strip()
-            
+    except Exception:
+        pass
+        
     return raw.strip()
 
 def _safe_md(text: str) -> str:
@@ -104,7 +101,7 @@ def _esc_html(text: str) -> str:
 # ── Keyboard Builders ──────────────────────────────────────────────────────────
 
 def kb_main_menu() -> InlineKeyboardMarkup:
-    """Builds the main dashboard keyboard."""
+    """Builds the main dashboard keyboard with symmetrical 2x2 grid."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0)),
          InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
@@ -333,7 +330,7 @@ class TelegramBotManager:
     async def _prompt_reauth(self, msg_obj, uid: int):
         state = await self.db.create_auth_session(uid)
         url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
-        text  = "⚠️ *Connection Broken:*\nYour Google Workspace token has expired or was revoked.\nPlease reconnect your account to continue."
+        text  = "⚠️ *Connection Expired:*\nYour Google Workspace session token is expired or revoked.\nPlease reconnect your account to continue."
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
         await self._edit(msg_obj, text, markup)
 
@@ -350,6 +347,28 @@ class TelegramBotManager:
             await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=markup)
         except Exception:
             pass
+
+    async def notify_login_success(self, uid: int):
+        """Triggered on successful Google Workspace OAuth authentication."""
+        # 1. Clear stale conversational and historical context limits immediately
+        self.ai_engine.clear_chat_session(uid)
+        self._clear_history(uid)
+        
+        # 2. Retrieve verified address details
+        user = await self.db.get_user(uid)
+        email_display = user.get("email") if user else "user@gmail.com"
+        
+        # 3. Clean routing dispatch
+        text = f"✅ *Successfully Logged In!*\n\nAuthenticated successfully as `{_safe_md(email_display)}`.\nSelect an action below to manage your inbox:"
+        try:
+            await self.application.bot.send_message(
+                chat_id=uid,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=kb_main_menu()
+            )
+        except Exception as e:
+            logger.error(f"Failed delivering authentications telemetry notifier: {e}")
 
     # ── Access Guard ──────────────────────────────────────────────────────────
 
@@ -414,7 +433,7 @@ class TelegramBotManager:
             
         if settings.RENDER_WEB_SERVICE_URL and not settings.RENDER_WEB_SERVICE_URL.startswith("http://localhost"):
             await self.application.bot.set_webhook(url=f"{settings.RENDER_WEB_SERVICE_URL}/webhook/telegram")
-            logger.info("✅ Bot production webhook live.")
+            logger.info("✅ Bot webhook bound successfully.")
         else:
             logger.info("⚠️ Local development cluster context detected.")
             
@@ -550,11 +569,18 @@ class TelegramBotManager:
         if update.message and update.message.date.timestamp() < self.startup_time: return
 
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
-        if await self._gate(update, u.id, acc["status"]):
-            return
-            
+        
         uid  = u.id
         text = update.message.text
+
+        # ── Active Hotfix Token Interceptor ──
+        text_lower = text.lower()
+        if any(k in text_lower for k in ["login", "re-authenticate", "reauthenticate", "expired token", "reconnect", "auth link", "authentication"]):
+            await self._prompt_reauth(update.message, uid)
+            return
+
+        if await self._gate(update, u.id, acc["status"]):
+            return
 
         if uid in self.compose_states:
             await self._compose_step(update, uid, text)
@@ -757,12 +783,18 @@ class TelegramBotManager:
                 await self._show_email(msg_obj if update.callback_query else update.message, detected_mid, "inbox", 0, uid)
                 return
 
+        # NEW VOICE TAG LOGIC
+        is_voice_type = False
+        if "[VOICE]" in text_content:
+            is_voice_type = True
+            text_content = text_content.replace("[VOICE]", "").strip()
+
         try:
             cleaned = re.sub(r'```json|```', '', raw).strip()
             m       = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if m:
                 parsed       = json.loads(m.group(0))
-                text_content = _clean_ai_text(raw)
+                text_content = parsed.get("text", text_content).replace("[VOICE]", "").strip()
                 draft_data   = parsed.get("draft")
         except Exception:
             pass
@@ -797,13 +829,9 @@ class TelegramBotManager:
             return
 
         voice_pref = prefs.get("voice_preference", "text")
-        try:
-            parsed_full = json.loads(re.sub(r'```json|```', '', raw).strip())
-            is_voice_type = parsed_full.get("response_type") == "voice"
-        except Exception:
-            is_voice_type = False
 
-        if is_voice_type and voice_pref in ("voice", "both"):
+        # If the AI flagged the response type as voice explicitly via [VOICE] tag, we ALWAYS override user default preference parameters to deliver spoken summary notes!
+        if is_voice_type or voice_pref in ("voice", "both"):
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
             clean_tts = re.sub(r'[*_#`]', '', text_content)
             audio     = await self.voice.synthesize(
@@ -1035,7 +1063,7 @@ class TelegramBotManager:
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("↩️ Undo", callback_data=_cb("untrash", mid_s, ctx, offset))],
-                        kb_back_step()[0]
+                        kb_back_step()
                     ]))
             return
 

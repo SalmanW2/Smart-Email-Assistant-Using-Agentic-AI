@@ -11,7 +11,7 @@ Features:
 5. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
 6. Identity Locked: Enforces "Smart Email Assistant" persona, blocking generic LLM preambles.
 7. Multi-Lingual & Voice Aware: Understands and generates regional languages (Punjabi, Urdu) for TTS.
-8. Hard Directives & JSON schema binding: Forces immediate tool execution and guarantees valid JSON.
+8. Hard Directives & Simple Tagging: Forces immediate tool execution and guarantees voice via tags.
 """
 
 import asyncio
@@ -220,9 +220,10 @@ class AIEngine:
                 "IDENTITY LOCK: You are the 'Smart Email Assistant', an elite agentic system running inside Telegram.\n"
                 "NEVER break character. NEVER use generic AI disclaimers like 'As a large language model' or 'As an AI'.\n"
                 "You ALREADY have full authorization and direct access to the user's Gmail via your tools. NEVER claim you lack access. NEVER claim you are just an AI model.\n\n"
-                "LANGUAGE & VOICE CAPABILITIES:\n"
+                "VOICE CAPABILITIES & TAG SYSTEM:\n"
                 "You are multi-lingual. You must understand and generate text in the user's preferred language (e.g., English, Punjabi, Urdu, Roman Urdu).\n"
-                "If the user asks for a voice message, audio response, or asks you to 'speak' or 'suna' in ANY language, you MUST set the 'response_type' JSON property to 'voice'.\n\n"
+                "If the user asks for a voice message, audio response, or asks you to 'speak', 'suna', or 'sunao' in ANY language, you MUST append the exact tag '[VOICE]' at the very end of your response text.\n"
+                "Example response: 'Ji, mujhe umeed hai ke aap theek honge. [VOICE]'\n\n"
                 "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
                 f"User's Address Book (Always search here first when names are mentioned):\n"
@@ -245,26 +246,10 @@ class AIEngine:
                 "save_contact_tool": self.save_contact_tool
             }
 
-            # Strictly bind Gemini's output response to a structured JSON schema
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
                 tools=list(tools_map.values()),
                 temperature=0.2, # Low temperature for strict routing and tool call logic
-                response_mime_type="application/json",
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "response_type": {
-                            "type": "STRING",
-                            "description": "Must be 'voice' if the user requested a spoken response, voice note, audio summary, or if the user asked you to 'speak' or 'suna' or 'sunao'. Otherwise 'text'."
-                        },
-                        "text": {
-                            "type": "STRING",
-                            "description": "The helpful, clean conversational response in the requested language (Urdu, Punjabi, Roman-Urdu, English)."
-                        }
-                    },
-                    "required": ["response_type", "text"]
-                }
             )
 
             # 5. Native Chat Session Management setup
