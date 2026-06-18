@@ -1061,7 +1061,7 @@ class TelegramBotManager:
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("↩️ Undo", callback_data=_cb("untrash", mid_s, ctx, offset))],
-                        kb_back_step()[0]
+                        kb_back_step()
                     ]))
             return
 
