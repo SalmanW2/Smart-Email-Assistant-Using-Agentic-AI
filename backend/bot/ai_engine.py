@@ -84,6 +84,44 @@ class AIEngine:
         self.active_chats: Dict[int, List[types.Content]] = {}
 
     # ==========================================
+    # SCRIPT / LANGUAGE DETECTION
+    # ==========================================
+
+    @staticmethod
+    def _detect_user_script(text: str) -> str:
+        """
+        Detects the script/language the user is writing in.
+        Returns a human-readable instruction for the LLM to mirror.
+        """
+        # Gurmukhi (Punjabi native script)
+        if re.search(r'[\u0A00-\u0A7F]', text):
+            return "Punjabi (Gurmukhi script ਪੰਜਾਬੀ). Reply using Gurmukhi script."
+        # Arabic/Urdu script
+        if re.search(r'[\u0600-\u06FF]', text):
+            return "Urdu (Arabic/Nastaliq script اردو). Reply using Urdu Arabic script."
+        # Devanagari (Hindi)
+        if re.search(r'[\u0900-\u097F]', text):
+            return "Hindi (Devanagari script हिन्दी). Reply using Devanagari script."
+
+        # Roman Urdu / Roman Punjabi detection (Latin script but South Asian language)
+        roman_urdu_markers = [
+            'kya', 'hai', 'rha', 'rhi', 'krna', 'karo', 'mujhe', 'mujh',
+            'tumhe', 'aap', 'yeh', 'woh', 'nahi', 'haan', 'bhai', 'yar',
+            'bata', 'bhej', 'dekh', 'suna', 'sunao', 'bol', 'batao',
+            'kaise', 'kaisa', 'kaisi', 'abhi', 'pehle', 'baad', 'mein',
+            'ko', 'ka', 'ki', 'se', 'ho', 'hain', 'tha', 'thi', 'the',
+            'ga', 'gi', 'ge', 'kar', 'kr', 'hn', 'hu', 'hoon',
+            'zaroor', 'please', 'shukriya', 'theek', 'acha', 'achha',
+            'email', 'bhejo', 'likho', 'padho', 'check', 'dikhao',
+        ]
+        words = text.lower().split()
+        match_count = sum(1 for w in words if w in roman_urdu_markers)
+        if match_count >= 2 or (len(words) <= 5 and match_count >= 1):
+            return "Roman Urdu (Urdu written in Latin/English alphabet). Reply in Roman Urdu using Latin letters. Do NOT use Arabic/Nastaliq script."
+
+        return "English. Reply in English."
+
+    # ==========================================
     # GEMINI TOOL DEFINITIONS (FUNCTION CALLING)
     # ==========================================
 
@@ -293,8 +331,9 @@ class AIEngine:
                             
                         # Intercept interactive UI cards and return early
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
+                            # Store a clean user+model pair so Groq history stays valid
                             self.active_chats[telegram_id].append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
-                            self.active_chats[telegram_id].append(types.Content(role="model", parts=[types.Part.from_text(text="[Tool Execution Payload Triggered]")]))
+                            self.active_chats[telegram_id].append(types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")]))
                             return result_str
                             
                         # Complete standard tool-return execution for Groq
@@ -354,26 +393,49 @@ class AIEngine:
 
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+            # Detect the user's script/language for mirroring
+            detected_script = self._detect_user_script(message)
+
             system_instructions = (
                 "IDENTITY LOCK: You are the 'Smart Email Assistant', an elite agentic system running inside Telegram.\n"
                 "NEVER break character. NEVER use generic AI disclaimers like 'As a large language model' or 'As an AI'.\n"
                 "You ALREADY have full authorization and direct access to the user's Gmail via your tools. NEVER claim you lack access. NEVER claim you are just an AI model.\n\n"
-                "VOICE CAPABILITIES & TAG SYSTEM:\n"
-                "You are multi-lingual. You must understand and generate text in the user's preferred language (e.g., English, Punjabi, Urdu, Roman Urdu).\n"
-                "If the user asks for a voice message, audio response, or asks you to 'speak', 'suna', or 'sunao' in ANY language, you MUST append the exact tag '[VOICE]' at the very end of your response text.\n"
-                "Example response: 'Ji, main yeh check kar leta hoon. [VOICE]'\n\n"
-                "Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
+
+                f"LANGUAGE & SCRIPT MIRRORING (MANDATORY):\n"
+                f"The user is currently writing in: {detected_script}\n"
+                f"You MUST respond using the EXACT SAME language and script/alphabet as the user. "
+                f"If user writes in Roman Urdu (Latin letters), reply in Roman Urdu using Latin letters. "
+                f"If user writes in Gurmukhi, reply in Gurmukhi. If user writes in Urdu script, reply in Urdu script. "
+                f"NEVER switch to a different alphabet than what the user is using.\n\n"
+
+                "VOICE TAG RULES (STRICT):\n"
+                "Append the tag '[VOICE]' at the VERY END of your response ONLY if the user's CURRENT message "
+                "explicitly requests a voice or audio response using words like: 'voice', 'voice mein', 'audio', "
+                "'suna', 'sunao', 'bol ke batao', 'speak', 'read aloud', 'voice note'.\n"
+                "DO NOT add [VOICE] for any other reason. DO NOT add [VOICE] just because the user is speaking a regional language. "
+                "DO NOT add [VOICE] for language translation requests. DO NOT add [VOICE] for drafting or searching emails.\n\n"
+
+                "DIRECT RESPONSE RULE:\n"
+                "Answer the user's exact intent directly and concisely. Do NOT add unnecessary greetings, fillers, "
+                "or off-topic emojis. Do NOT send sticker-like responses. Keep responses focused and professional "
+                "while matching the user's conversational tone. When the user asks for information, provide it immediately.\n\n"
+
+                f"Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
                 f"User's Address Book (Always search here first when names are mentioned):\n"
                 f"{contacts_context or 'No saved contacts in database yet.'}\n\n"
                 f"Recent Conversation Memory Context:\n"
                 f"{history_context or 'No prior conversation history recorded.'}\n\n"
+
                 "CRITICAL SYSTEM DIRECTIVES (STRICT COMPLIANCE REQUIRED):\n"
                 "1. SEARCHING EMAILS: When the user asks to search, find, read, or check their inbox, you MUST IMMEDIATELY call the 'search_gmail_tool'. DO NOT explain that you are an AI, DO NOT make excuses. Just call the tool.\n"
                 "2. DRAFTING/SENDING EMAILS: When the user asks to write, draft, reply, or send an email, you MUST IMMEDIATELY call the 'prepare_email_draft_tool'. NEVER write the email draft as plain text in your response. NEVER ask 'Shall I prepare it?' or 'Shall I send it?'. Call the tool immediately so the system can render the interactive Draft UI Card.\n"
                 "3. SCHEDULING EMAILS: When the user asks to schedule an email, IMMEDIATELY call the 'schedule_email_tool'.\n"
                 "4. HITL GUARDRAIL: If calling 'prepare_email_draft_tool' or 'schedule_email_tool' and you do not know the exact recipient email address (from history or Address Book), you MUST strictly use '[Specify Recipient Email]' as the to_email parameter. NEVER make up or guess email addresses.\n"
-                "5. PLAIN CHAT: Only return a normal conversational response when answering general questions that do not require email actions."
+                "5. PLAIN CHAT: Only return a normal conversational response when answering general questions that do not require email actions.\n"
+                "6. EMAIL DISPLAY: When the user asks to show, read, check, or get a specific email from search results, "
+                "include the email's message ID in your response using this exact format: [SHOW_EMAIL:<message_id>]. "
+                "This will trigger the interactive email card UI. Only use this tag when you have a real message ID from search results."
             )
 
             tools_map = {
@@ -444,8 +506,19 @@ class AIEngine:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
 
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
+                            # Append valid 4-step history: user -> model(tool_call) -> tool(result) -> model(ack)
+                            # This prevents Gemini 400 errors on the next message due to incomplete tool loops.
                             self.active_chats[telegram_id].append(user_content)
                             self.active_chats[telegram_id].append(response.candidates[0].content)
+                            tool_ack_part = types.Part.from_function_response(
+                                name=fn_name, response={"result": result_str}
+                            )
+                            self.active_chats[telegram_id].append(
+                                types.Content(role="tool", parts=[tool_ack_part])
+                            )
+                            self.active_chats[telegram_id].append(
+                                types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")])
+                            )
                             return result_str
                             
                         results_parts.append(

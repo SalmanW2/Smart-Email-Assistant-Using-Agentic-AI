@@ -154,20 +154,29 @@ class VoiceHandler:
         Applies dynamic language mapping for precise regional accents.
         """
         from google.cloud import texttospeech
-        from google.oauth2 import service_account
         import json
 
-        # Dynamically load Google Credentials
+        # Build credentials from multiple sources with graceful fallback
+        credentials = None
         raw_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
         if raw_creds:
+            from google.oauth2 import service_account
             cred_dict = json.loads(raw_creds)
             credentials = service_account.Credentials.from_service_account_info(cred_dict)
         else:
             cred_path = os.path.join(os.path.dirname(__file__), "..", "credentials.json")
-            credentials = service_account.Credentials.from_service_account_file(cred_path)
+            if os.path.exists(cred_path):
+                from google.oauth2 import service_account
+                credentials = service_account.Credentials.from_service_account_file(cred_path)
 
+        # Build client — works with credentials OR API key alone
         client_opts = {"api_key": settings.GOOGLE_TTS_API_KEY} if settings.GOOGLE_TTS_API_KEY else None
-        client = texttospeech.TextToSpeechClient(credentials=credentials, client_options=client_opts)
+        if credentials:
+            client = texttospeech.TextToSpeechClient(credentials=credentials, client_options=client_opts)
+        elif client_opts:
+            client = texttospeech.TextToSpeechClient(client_options=client_opts)
+        else:
+            raise Exception("No Google TTS credentials or API key configured.")
         
         synthesis_input = texttospeech.SynthesisInput(text=text)
         

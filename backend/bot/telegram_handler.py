@@ -516,17 +516,31 @@ class TelegramBotManager:
 
     # ── Full email render ──────────────────────────────────────────────────────
 
-    async def _show_email(self, query, mid_short: str, ctx: str, offset: int, uid: int):
-        await query.edit_message_text("⏳ Loading email...")
+    async def _show_email(self, msg_or_query, mid_short: str, ctx: str, offset: int, uid: int):
+        """Renders the full email detail card. Accepts both Message objects and CallbackQuery objects."""
+        # Unified loading indicator — works with both object types
+        try:
+            if hasattr(msg_or_query, 'edit_message_text'):
+                await msg_or_query.edit_message_text("⏳ Loading email...")
+            elif hasattr(msg_or_query, 'edit_text'):
+                await msg_or_query.edit_text("⏳ Loading email...")
+            else:
+                await msg_or_query.reply_text("⏳ Loading email...")
+        except Exception:
+            pass
+
         full_mid = self._full_mid(mid_short)
         
         details = await self.gmail.get_email_details(uid, full_mid)
         if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-            return await self._prompt_reauth(query.message, uid)
+            # Try to get a message object for reauth prompt
+            msg_target = getattr(msg_or_query, 'message', msg_or_query)
+            return await self._prompt_reauth(msg_target, uid)
             
         meta = await self.gmail.get_email_metadata(uid, full_mid)
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-            return await self._prompt_reauth(query.message, uid)
+            msg_target = getattr(msg_or_query, 'message', msg_or_query)
+            return await self._prompt_reauth(msg_target, uid)
             
         self._store_mid(meta.get("id", full_mid))
 
@@ -545,10 +559,23 @@ class TelegramBotManager:
                 f"📝 <b>Subject:</b> {safe_subject}{att_line}\n"
                 f"{'━' * 20}\n\n{safe_body}")
 
-        await query.edit_message_text(text, parse_mode="HTML",
-                                       reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
-                                       disable_web_page_preview=True)
-                                       
+        # Use the appropriate edit method based on object type
+        try:
+            if hasattr(msg_or_query, 'edit_message_text'):
+                await msg_or_query.edit_message_text(text, parse_mode="HTML",
+                                                     reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
+                                                     disable_web_page_preview=True)
+            elif hasattr(msg_or_query, 'edit_text'):
+                await msg_or_query.edit_text(text, parse_mode="HTML",
+                                             reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
+                                             disable_web_page_preview=True)
+            else:
+                await msg_or_query.reply_text(text, parse_mode="HTML",
+                                              reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
+                                              disable_web_page_preview=True)
+        except Exception as edit_err:
+            logger.warning(f"_show_email edit failed: {edit_err}")
+                                        
         self._bg(self._save_contact(uid, meta.get("sender", "")))
 
     async def _save_contact(self, uid: int, raw_sender: str):
@@ -807,13 +834,28 @@ class TelegramBotManager:
             is_voice_type = True
             text_content = text_content.replace("[VOICE]", "").strip()
 
+        # ── 1b. SHOW_EMAIL INTERCEPTOR: Detect [SHOW_EMAIL:<id>] and render card ──
+        show_email_match = re.search(r'\[SHOW_EMAIL:([^\]]+)\]', text_content)
+        if show_email_match:
+            detected_mid = show_email_match.group(1).strip()
+            text_content = re.sub(r'\[SHOW_EMAIL:[^\]]+\]', '', text_content).strip()
+            self._store_mid(detected_mid)
+            # Show the email card UI — pass msg_obj which _show_email now handles
+            try:
+                await self._show_email(msg_obj, detected_mid[:16], "inbox", 0, uid)
+            except Exception as e:
+                logger.warning(f"SHOW_EMAIL card render failed: {e}. Falling back to text.")
+                if text_content:
+                    await self._edit(msg_obj, f"🤖 {text_content}")
+            return
+
         # Legacy direct-ID fetching logic (if AI prints ID directly instead of using tool)
         if "198306a5" in text_content or "email id is" in text_content.lower() or "here is the email" in text_content.lower():
             mid_match = re.search(r'([a-f0-9]{16})', text_content.lower())
             if mid_match:
                 detected_mid = mid_match.group(1)
                 self._store_mid(detected_mid)
-                await self._show_email(msg_obj if update.callback_query else update.message, detected_mid, "inbox", 0, uid)
+                await self._show_email(msg_obj, detected_mid, "inbox", 0, uid)
                 return
 
         # ── 2. DRAFT INTERCEPTOR: Parse JSON payload if tool executed ──
@@ -858,7 +900,7 @@ class TelegramBotManager:
 
         # ── 3. VOICE / TEXT ROUTING ──
         # Routing logic:
-        #   - is_voice_type (AI tagged [VOICE]) OR voice_pref='voice': send audio only, show clean placeholder.
+        #   - is_voice_type (AI tagged [VOICE]) OR voice_pref='voice': send audio only, delete Thinking msg.
         #   - voice_pref='both': send full text bubble AND audio note.
         #   - voice_pref='text' (default): send text only.
         voice_pref = prefs.get("voice_preference", "text")
@@ -867,19 +909,31 @@ class TelegramBotManager:
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
             # Remove markdown symbols to prevent TTS engine from reading punctuation aloud
             clean_tts = re.sub(r'[*_#`]', '', text_content)
-            audio     = await self.voice.synthesize(
-                clean_tts, telegram_id=uid,
-                preferred_method=prefs.get("preferred_tts_method", "google"))
+            try:
+                audio = await self.voice.synthesize(
+                    clean_tts, telegram_id=uid,
+                    preferred_method=prefs.get("preferred_tts_method", "google"))
+            except Exception as tts_err:
+                logger.warning(f"TTS synthesis exception for user {uid}: {tts_err}")
+                audio = None
                 
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
                     if voice_pref == "both":
                         # User wants both formats: show the full text and attach audio
                         await self._edit(msg_obj, f"🤖 {text_content}")
+                        await context.bot.send_voice(chat_id=uid, voice=f)
                     else:
-                        # Voice-only / explicit [VOICE] tag: clean placeholder, audio follows
-                        await self._edit(msg_obj, "🎙️ _Voice response sent below._")
-                    await context.bot.send_voice(chat_id=uid, voice=f)
+                        # Voice-only: delete the "Thinking..." placeholder for a clean chat
+                        await context.bot.send_voice(chat_id=uid, voice=f)
+                        try:
+                            if hasattr(msg_obj, 'delete'):
+                                await msg_obj.delete()
+                            elif hasattr(msg_obj, 'message_id'):
+                                await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
+                        except Exception:
+                            # If delete fails (e.g. message too old), update with minimal placeholder
+                            await self._edit(msg_obj, "🎙️")
                 try:
                     os.remove(audio)
                 except Exception:
