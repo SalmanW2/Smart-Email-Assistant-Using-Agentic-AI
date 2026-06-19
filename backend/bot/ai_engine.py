@@ -109,10 +109,10 @@ class AIEngine:
             'tumhe', 'aap', 'yeh', 'woh', 'nahi', 'haan', 'bhai', 'yar',
             'bata', 'bhej', 'dekh', 'suna', 'sunao', 'bol', 'batao',
             'kaise', 'kaisa', 'kaisi', 'abhi', 'pehle', 'baad', 'mein',
-            'ko', 'ka', 'ki', 'se', 'ho', 'hain', 'tha', 'thi', 'the',
+            'ko', 'ka', 'ki', 'se', 'ho', 'hain', 'tha', 'thi',
             'ga', 'gi', 'ge', 'kar', 'kr', 'hn', 'hu', 'hoon',
-            'zaroor', 'please', 'shukriya', 'theek', 'acha', 'achha',
-            'email', 'bhejo', 'likho', 'padho', 'check', 'dikhao',
+            'zaroor', 'shukriya', 'theek', 'acha', 'achha',
+            'bhejo', 'likho', 'padho', 'dikhao',
         ]
         words = text.lower().split()
         match_count = sum(1 for w in words if w in roman_urdu_markers)
@@ -406,7 +406,7 @@ class AIEngine:
                 f"You MUST respond using the EXACT SAME language and script/alphabet as the user. "
                 f"If user writes in Roman Urdu (Latin letters), reply in Roman Urdu using Latin letters. "
                 f"If user writes in Gurmukhi, reply in Gurmukhi. If user writes in Urdu script, reply in Urdu script. "
-                f"NEVER switch to a different alphabet than what the user is using.\n\n"
+                f"NEVER switch to a different alphabet than what the user is using. CRITICAL: If the user writes in Roman Urdu, you MUST write your reply in Roman Urdu (Latin alphabet). DO NOT reply in Arabic script or Devanagari script.\n\n"
 
                 "VOICE TAG RULES (STRICT):\n"
                 "Append the tag '[VOICE]' at the VERY END of your response ONLY if the user's CURRENT message "
@@ -416,9 +416,7 @@ class AIEngine:
                 "DO NOT add [VOICE] for language translation requests. DO NOT add [VOICE] for drafting or searching emails.\n\n"
 
                 "DIRECT RESPONSE RULE:\n"
-                "Answer the user's exact intent directly and concisely. Do NOT add unnecessary greetings, fillers, "
-                "or off-topic emojis. Do NOT send sticker-like responses. Keep responses focused and professional "
-                "while matching the user's conversational tone. When the user asks for information, provide it immediately.\n\n"
+                "Answer the user's exact intent directly and concisely. Do NOT send greeting messages or emojis when performing actions. NEVER output raw JSON data or function call payloads directly in the text response. Focus purely on fulfilling the user's request with minimum filler.\n\n"
 
                 f"Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
@@ -435,7 +433,12 @@ class AIEngine:
                 "5. PLAIN CHAT: Only return a normal conversational response when answering general questions that do not require email actions.\n"
                 "6. EMAIL DISPLAY: When the user asks to show, read, check, or get a specific email from search results, "
                 "include the email's message ID in your response using this exact format: [SHOW_EMAIL:<message_id>]. "
-                "This will trigger the interactive email card UI. Only use this tag when you have a real message ID from search results."
+                "This will trigger the interactive email card UI. Only use this tag when you have a real message ID from search results.\n"
+                "EXAMPLE DIALOGUE:\n"
+                "User: Show my last email.\n"
+                "AI Call: search_gmail_tool(...)\n"
+                'Tool Response: [{"id": "18f9a...", "subject": "Meeting"}]\n'
+                'AI Response: I found your last email about "Meeting". [SHOW_EMAIL:18f9a...]'
             )
 
             tools_map = {
@@ -468,7 +471,12 @@ class AIEngine:
 
             max_turns = settings.MAX_CONTEXT_MESSAGES * 2
             if len(self.active_chats[telegram_id]) > max_turns:
-                self.active_chats[telegram_id] = self.active_chats[telegram_id][-max_turns:]
+                trimmed = self.active_chats[telegram_id][-max_turns:]
+                for i in range(len(trimmed)):
+                    if getattr(trimmed[i], "role", "") == "user":
+                        trimmed = trimmed[i:]
+                        break
+                self.active_chats[telegram_id] = trimmed
 
             user_part = types.Part.from_text(text=message)
             user_content = types.Content(role="user", parts=[user_part])
@@ -546,15 +554,17 @@ class AIEngine:
                         config=config,
                     )
                     self.active_chats[telegram_id].append(user_content)
+                    self.active_chats[telegram_id].append(response.candidates[0].content)
+                    self.active_chats[telegram_id].append(tool_result_content)
                     self.active_chats[telegram_id].append(final_response.candidates[0].content)
-                    return final_response.text
+                    return final_response.text or "I completed the action successfully."
                 except Exception as final_err:
                     logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
                     return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
             self.active_chats[telegram_id].append(user_content)
             self.active_chats[telegram_id].append(response.candidates[0].content)
-            return response.text
+            return response.text or "I processed your request."
 
         except Exception as e:
             logger.error(f"AIEngine.agent_chat error: {e}")

@@ -208,6 +208,21 @@ class VoiceHandler:
         output_file = Path(tempfile.gettempdir()) / f"smart_email_voice_{uuid.uuid4().hex}.ogg"
         output_file.write_bytes(response.audio_content)
         return str(output_file)
+    def _convert_mp3_to_ogg(self, mp3_path: str) -> str:
+        import subprocess
+        ogg_path = mp3_path.replace(".mp3", ".ogg")
+        try:
+            # Check if ffmpeg is available
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            # Convert mp3 to ogg (opus)
+            subprocess.run(["ffmpeg", "-i", mp3_path, "-acodec", "libopus", "-b:a", "64k", ogg_path, "-y"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            if os.path.exists(ogg_path):
+                try: os.remove(mp3_path)
+                except Exception: pass
+                return ogg_path
+        except Exception as e:
+            logger.warning(f"FFmpeg conversion failed or ffmpeg not found: {e}")
+        return mp3_path
 
     async def _edge_synthesize(self, text: str, lang_code: str) -> str:
         """
@@ -229,8 +244,7 @@ class VoiceHandler:
         
         communicate = edge_tts.Communicate(text, target_voice)
         await communicate.save(str(output_file))
-        
-        return str(output_file)
+        return self._convert_mp3_to_ogg(str(output_file))
 
 # Singleton instance initialization
 voice_handler = VoiceHandler()

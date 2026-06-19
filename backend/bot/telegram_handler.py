@@ -299,14 +299,18 @@ class TelegramBotManager:
     async def _edit(self, obj, text: str,
                     markup: InlineKeyboardMarkup | None = None,
                     parse_mode: str = "Markdown"):
-        """Edits an explicit message object."""
+        """Edits an explicit message object or callback query."""
         try:
-            if hasattr(obj, "edit_text"):
-                await obj.edit_text(text, parse_mode=parse_mode, reply_markup=markup,
-                                    disable_web_page_preview=True)
+            if hasattr(obj, "edit_message_text"):
+                await obj.edit_message_text(text, parse_mode=parse_mode, reply_markup=markup, disable_web_page_preview=True)
+            elif hasattr(obj, "edit_text"):
+                await obj.edit_text(text, parse_mode=parse_mode, reply_markup=markup, disable_web_page_preview=True)
             else:
-                await obj.reply_text(text, parse_mode=parse_mode, reply_markup=markup,
-                                     disable_web_page_preview=True)
+                msg = getattr(obj, "message", obj)
+                if hasattr(msg, "edit_text"):
+                    await msg.edit_text(text, parse_mode=parse_mode, reply_markup=markup, disable_web_page_preview=True)
+                else:
+                    await obj.reply_text(text, parse_mode=parse_mode, reply_markup=markup, disable_web_page_preview=True)
         except Exception as e:
             logger.debug(f"_edit error execution: {e}")
 
@@ -418,9 +422,25 @@ class TelegramBotManager:
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_chat:
+            try:
+                if update.callback_query:
+                    try: await update.callback_query.answer()
+                    except Exception: pass
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="⚠️ *An unexpected error occurred.* Please retry your command or try again in a moment.",
+                    parse_mode="Markdown"
+                )
+            except Exception as send_err:
+                logger.error(f"Failed to send error notification: {send_err}")
+
     async def setup_bot(self):
         """Initializes application core routines and binds webhook mappings."""
         self.application = ApplicationBuilder().token(settings.BOT_TOKEN).build()
+        self.application.add_error_handler(self.error_handler)
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("menu",  self.cmd_menu))
         self.application.add_handler(CallbackQueryHandler(self.handle_button))
@@ -520,12 +540,7 @@ class TelegramBotManager:
         """Renders the full email detail card. Accepts both Message objects and CallbackQuery objects."""
         # Unified loading indicator — works with both object types
         try:
-            if hasattr(msg_or_query, 'edit_message_text'):
-                await msg_or_query.edit_message_text("⏳ Loading email...")
-            elif hasattr(msg_or_query, 'edit_text'):
-                await msg_or_query.edit_text("⏳ Loading email...")
-            else:
-                await msg_or_query.reply_text("⏳ Loading email...")
+            await self._edit(msg_or_query, "⏳ Loading email...", parse_mode="HTML")
         except Exception:
             pass
 
@@ -561,18 +576,7 @@ class TelegramBotManager:
 
         # Use the appropriate edit method based on object type
         try:
-            if hasattr(msg_or_query, 'edit_message_text'):
-                await msg_or_query.edit_message_text(text, parse_mode="HTML",
-                                                     reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
-                                                     disable_web_page_preview=True)
-            elif hasattr(msg_or_query, 'edit_text'):
-                await msg_or_query.edit_text(text, parse_mode="HTML",
-                                             reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
-                                             disable_web_page_preview=True)
-            else:
-                await msg_or_query.reply_text(text, parse_mode="HTML",
-                                              reply_markup=kb_email_view(full_mid, ctx, offset, bool(att_list)),
-                                              disable_web_page_preview=True)
+            await self._edit(msg_or_query, text, markup=kb_email_view(full_mid, ctx, offset, bool(att_list)), parse_mode="HTML")
         except Exception as edit_err:
             logger.warning(f"_show_email edit failed: {edit_err}")
                                         
@@ -845,8 +849,8 @@ class TelegramBotManager:
                 await self._show_email(msg_obj, detected_mid[:16], "inbox", 0, uid)
             except Exception as e:
                 logger.warning(f"SHOW_EMAIL card render failed: {e}. Falling back to text.")
-                if text_content:
-                    await self._edit(msg_obj, f"🤖 {text_content}")
+                fallback_txt = text_content if text_content else "I was unable to display the email card. Please try again."
+                await self._edit(msg_obj, f"🤖 {fallback_txt}")
             return
 
         # Legacy direct-ID fetching logic (if AI prints ID directly instead of using tool)
@@ -919,32 +923,37 @@ class TelegramBotManager:
                 
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
-                    if voice_pref == "both":
-                        # User wants both formats: show the full text and attach audio
-                        await self._edit(msg_obj, f"🤖 {text_content}")
-                        await context.bot.send_voice(chat_id=uid, voice=f)
-                    else:
-                        # Voice-only: delete the "Thinking..." placeholder for a clean chat
-                        await context.bot.send_voice(chat_id=uid, voice=f)
-                        try:
-                            if hasattr(msg_obj, 'delete'):
-                                await msg_obj.delete()
-                            elif hasattr(msg_obj, 'message_id'):
-                                await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
-                        except Exception:
-                            # If delete fails (e.g. message too old), update with minimal placeholder
-                            await self._edit(msg_obj, "🎙️")
-                try:
-                    os.remove(audio)
-                except Exception:
-                    pass
+                    try:
+                        if voice_pref == "both":
+                            await self._edit(msg_obj, f"🤖 {text_content}")
+                            await context.bot.send_voice(chat_id=uid, voice=f)
+                        else:
+                            await context.bot.send_voice(chat_id=uid, voice=f)
+                            try:
+                                if hasattr(msg_obj, 'delete'): await msg_obj.delete()
+                                elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
+                            except Exception:
+                                await self._edit(msg_obj, "🎙️")
+                    except Exception as e:
+                        logger.warning(f"send_voice failed: {e}. Falling back to send_audio.")
+                        f.seek(0)
+                        if voice_pref == "both":
+                            await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
+                        else:
+                            await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
+                            try:
+                                if hasattr(msg_obj, 'delete'): await msg_obj.delete()
+                                elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
+                            except Exception:
+                                await self._edit(msg_obj, "🎙️")
+                try: os.remove(audio)
+                except Exception: pass
                 return
             else:
-                # TTS generation failed — fall through to plain text so user gets a response
                 logger.warning(f"TTS audio generation failed for user {uid}, falling back to text.")
 
-        # Standard plain text response (default preference or TTS failure fallback)
-        await self._edit(msg_obj, f"🤖 {text_content}")
+        fallback_msg = text_content if text_content else "I processed your request, but did not generate a text response."
+        await self._edit(msg_obj, f"🤖 {fallback_msg}")
 
     # ── Button handler ─────────────────────────────────────────────────────────
 
@@ -1316,36 +1325,39 @@ class TelegramBotManager:
         clean_tts = re.sub(r'[*_#`•]', '', _clean_ai_text(raw))
 
         prefs = await self._prefs(uid)
-        audio = await self.voice.synthesize(
-            clean_tts, telegram_id=uid,
-            preferred_method=prefs.get("preferred_tts_method", "google"))
+        try:
+            audio = await self.voice.synthesize(
+                clean_tts, telegram_id=uid,
+                preferred_method=prefs.get("preferred_tts_method", "google"))
+        except Exception as e:
+            logger.error(f"TTS synthesis failed in _do_tts: {e}")
+            audio = None
 
         sender  = _safe_md(meta.get("sender",  "").replace('<', '').replace('>', ''))
         subject = _safe_md(meta.get("subject", ""))
         att_ct  = len(meta.get("attachments", []))
 
         rows = [[InlineKeyboardButton("📖 Read Full Email", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
-        if att_ct:
-            rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
+        if att_ct: rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
         rows.append(kb_back_step())
         kb = InlineKeyboardMarkup(rows)
 
-        caption = (
-            f"🔊 *Audio Summary*\n"
-            f"📧 *From:* {sender}\n"
-            f"📝 *Subject:* {subject}"
-        )
+        caption = f"🔊 *Audio Summary*\n📧 *From:* {sender}\n📝 *Subject:* {subject}"
 
         if audio and os.path.exists(audio):
             with open(audio, "rb") as f:
-                await context.bot.send_voice(chat_id=uid, voice=f, caption=caption, parse_mode="Markdown", reply_markup=kb)
+                try:
+                    await context.bot.send_voice(chat_id=uid, voice=f, caption=caption, parse_mode="Markdown", reply_markup=kb)
+                except Exception as e:
+                    logger.warning(f"send_voice failed in _do_tts: {e}. Falling back to send_audio.")
+                    f.seek(0)
+                    await context.bot.send_audio(chat_id=uid, audio=f, caption=caption, parse_mode="Markdown", reply_markup=kb, filename="voice.mp3")
             try:
                 os.remove(audio)
-                await query.message.delete()
-            except Exception:
-                pass
+                await getattr(query, "message", query).delete()
+            except Exception: pass
         else:
-            await query.edit_message_text("❌ *Audio generation failed.*", parse_mode="Markdown", reply_markup=kb)
+            await self._edit(query, "❌ *Audio generation failed.*", markup=kb)
 
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
