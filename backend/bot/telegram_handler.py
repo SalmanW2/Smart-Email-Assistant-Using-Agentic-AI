@@ -80,6 +80,45 @@ def _clean_ai_text(raw: str) -> str:
         
     return raw.strip()
 
+
+def _strip_email_footer(body: str) -> str:
+    """
+    Strips common email footer boilerplate — disclaimers, signatures, forwarding
+    headers — before displaying the body in Telegram. This prevents walls of legal
+    text from polluting the chat interface.
+    """
+    # Patterns that mark the start of footers / signatures
+    footer_markers = [
+        r'^\s*[-_]{2,}\s*$',                          # -- or __ separator lines
+        r'^\s*\*?Disclaimer[:\s]',                    # Disclaimer: ...
+        r'^\s*This (e-?mail|message) (is |contains )',# This email is confidential
+        r'^\s*CONFIDENTIALITY NOTICE',
+        r'^\s*LEGAL NOTICE',
+        r'^\s*NOTICE:.*confidential',
+        r'^\s*The information (in|contained)',
+        r'^\s*This communication',
+        r'^\s*\*Note:',
+        r'^\s*CAUTION:',
+        r'^\s*Virus-free\.',
+        r'^\s*Sent from (my|iPhone|Samsung|Android)',
+        r'^\s*Get Outlook for',
+        r'^\s*---------- Forwarded message',
+        r'^\s*-{3,} Original Message',
+        r'^\s*From:.*Sent:.*To:.*Subject:',            # Outlook reply header block
+    ]
+    lines = body.splitlines()
+    cutoff = len(lines)
+    for i, line in enumerate(lines):
+        for pattern in footer_markers:
+            if re.match(pattern, line, re.IGNORECASE):
+                cutoff = i
+                break
+        if cutoff < len(lines):
+            break
+    cleaned = "\n".join(lines[:cutoff]).strip()
+    return cleaned if cleaned else body
+
+
 def _safe_md(text: str) -> str:
     """
     Granular Text Beauty Framework:
@@ -423,7 +462,32 @@ class TelegramBotManager:
     # ── Setup ──────────────────────────────────────────────────────────────────
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+        """
+        Global error handler — logs all exceptions and notifies users ONLY for genuine
+        application-level errors. Benign Telegram API errors (MessageNotModified,
+        QueryIdInvalid, etc.) are logged quietly without spamming users.
+        """
+        err = context.error
+        err_str = str(err)
+
+        # These are routine/expected Telegram API exceptions — do NOT alert the user
+        benign_patterns = [
+            "Message is not modified",
+            "Query is too old",
+            "MESSAGE_ID_INVALID",
+            "Bad Request: message is not modified",
+            "Conflict: terminated by other getUpdates",
+            "NetworkError",
+            "TimedOut",
+        ]
+        is_benign = any(p.lower() in err_str.lower() for p in benign_patterns)
+
+        if is_benign:
+            logger.debug(f"[Benign Telegram error suppressed]: {err}")
+            return
+
+        logger.error(f"Unhandled exception in update handler: {err}", exc_info=err)
+
         if isinstance(update, Update) and update.effective_chat:
             try:
                 if update.callback_query:
@@ -431,7 +495,7 @@ class TelegramBotManager:
                     except Exception: pass
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text="⚠️ *An unexpected error occurred.* Please retry your command or try again in a moment.",
+                    text="⚠️ *An unexpected error occurred.* Please try again or restart with /start.",
                     parse_mode="Markdown"
                 )
             except Exception as send_err:
@@ -560,7 +624,9 @@ class TelegramBotManager:
         self._store_mid(meta.get("id", full_mid))
 
         body         = details.get("body", "") if details else ""
-        safe_body    = _esc_html(body[:4000] + ("\n\n[… Truncated]" if len(body) > 4000 else ""))
+        # Strip email footers (disclaimers, signatures) before display
+        body         = _strip_email_footer(body)
+        safe_body    = _esc_html(body[:3500] + ("\n\n<i>[… Truncated — tap Read Full Email for complete text]</i>" if len(body) > 3500 else ""))
         safe_sender  = _esc_html(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
         safe_subject = _esc_html(meta.get("subject", "No Subject"))
 
@@ -952,8 +1018,10 @@ class TelegramBotManager:
             else:
                 logger.warning(f"TTS audio generation failed for user {uid}, falling back to text.")
 
-        fallback_msg = text_content if text_content else "I processed your request, but did not generate a text response."
-        await self._edit(msg_obj, f"🤖 {fallback_msg}")
+        fallback_msg = text_content if text_content else None
+        if fallback_msg:
+            await self._edit(msg_obj, f"🤖 {fallback_msg}")
+        # If text_content is empty (e.g. tool completed silently), don't show any message.
 
     # ── Button handler ─────────────────────────────────────────────────────────
 

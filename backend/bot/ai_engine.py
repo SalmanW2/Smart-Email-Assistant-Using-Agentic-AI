@@ -485,12 +485,20 @@ class AIEngine:
             logger.info(f"Triggering Gemini 2.5 Flash for user: {telegram_id}")
             
             # --- FAILOVER WRAPPER ---
+            # NOTE: We use run_in_executor with a lambda closure instead of asyncio.to_thread
+            # because asyncio.to_thread passes arguments directly to the thread pool, which
+            # triggers pickling of self.client — and the Gemini SDK client contains internal
+            # _thread.lock objects that cannot be pickled. A lambda closure captures the
+            # client by reference without serialization, bypassing the pickle entirely.
+            loop = asyncio.get_event_loop()
             try:
-                response = await asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.model_name,
-                    contents=contents,
-                    config=config,
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=config,
+                    )
                 )
             except Exception as gemini_err:
                 logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}). Triggering Groq Fallback...")
@@ -547,11 +555,14 @@ class AIEngine:
                         role="tool",
                         parts=results_parts,
                     )
-                    final_response = await asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.model_name,
-                        contents=contents + [response.candidates[0].content, tool_result_content],
-                        config=config,
+                    _call_contents = contents + [response.candidates[0].content, tool_result_content]
+                    final_response = await loop.run_in_executor(
+                        None,
+                        lambda: self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=_call_contents,
+                            config=config,
+                        )
                     )
                     self.active_chats[telegram_id].append(user_content)
                     self.active_chats[telegram_id].append(response.candidates[0].content)
