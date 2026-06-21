@@ -242,25 +242,34 @@ class AIEngine:
 
     async def _groq_fallback_chat(self, message: str, telegram_id: int, system_instructions: str, tools_map: dict) -> str:
         """
-        Triggered automatically when Gemini hits API rate limits (429).
+        Triggered automatically when Gemini hits API rate limits (429) or other errors.
         Routes the existing context and tools directly to Llama-3-70b on Groq.
         """
         if not settings.GROQ_API_KEY:
             return "⚠️ Gemini LLM limits reached and Groq API Fallback is not configured. Please wait a few seconds."
 
         # Map Gemini History Schema to Groq (OpenAI) Chat Schema
-        messages = [{"role": "system", "content": system_instructions}]
-        
+        raw_messages = []
         for turn in self.active_chats.get(telegram_id, []):
             role = "user" if turn.role == "user" else "assistant"
             text_content = ""
             for part in getattr(turn, "parts", []):
                 if hasattr(part, "text") and part.text:
                     text_content += part.text
-            if text_content:
-                messages.append({"role": role, "content": text_content})
+            if text_content.strip():
+                raw_messages.append({"role": role, "content": text_content.strip()})
                 
-        messages.append({"role": "user", "content": message})
+        # Append the current user request
+        if message.strip():
+            raw_messages.append({"role": "user", "content": message.strip()})
+
+        # Alternate roles and merge consecutive roles to satisfy strict OpenAI/Groq requirements
+        messages = [{"role": "system", "content": system_instructions}]
+        for m in raw_messages:
+            if messages and messages[-1]["role"] == m["role"]:
+                messages[-1]["content"] += "\n" + m["content"]
+            else:
+                messages.append(m)
 
         # Map Custom Tools to Groq Functions
         groq_tools = [
@@ -490,15 +499,11 @@ class AIEngine:
             # triggers pickling of self.client — and the Gemini SDK client contains internal
             # _thread.lock objects that cannot be pickled. A lambda closure captures the
             # client by reference without serialization, bypassing the pickle entirely.
-            loop = asyncio.get_event_loop()
             try:
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.models.generate_content(
-                        model=self.model_name,
-                        contents=contents,
-                        config=config,
-                    )
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
                 )
             except Exception as gemini_err:
                 logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}). Triggering Groq Fallback...")
@@ -556,13 +561,10 @@ class AIEngine:
                         parts=results_parts,
                     )
                     _call_contents = contents + [response.candidates[0].content, tool_result_content]
-                    final_response = await loop.run_in_executor(
-                        None,
-                        lambda: self.client.models.generate_content(
-                            model=self.model_name,
-                            contents=_call_contents,
-                            config=config,
-                        )
+                    final_response = await self.client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=_call_contents,
+                        config=config,
                     )
                     self.active_chats[telegram_id].append(user_content)
                     self.active_chats[telegram_id].append(response.candidates[0].content)
@@ -629,13 +631,11 @@ class AIEngine:
                 method_used = "gemini_native"
                 
                 config = types.GenerateContentConfig(temperature=0.1)
-                uploaded_file = await asyncio.to_thread(
-                    self.client.files.upload,
+                uploaded_file = await self.client.aio.files.upload(
                     file=file_path
                 )
                 
-                response = await asyncio.to_thread(
-                    self.client.models.generate_content,
+                response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=[uploaded_file, "Accurately transcribe this audio. Return ONLY the transcription with no preambles."],
                     config=config
@@ -677,8 +677,7 @@ class AIEngine:
                 "Focus strictly on core dates, metrics, and actionable deliverables. Be extremely brief.\n\n"
                 f"Email Body Content:\n{email_body[:5000]}"
             )
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
+            response = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=prompt
             )
@@ -693,9 +692,8 @@ class AIEngine:
         """
         try:
             config = types.GenerateContentConfig(temperature=0.2)
-            sample_file = await asyncio.to_thread(self.client.files.upload, file=file_path)
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
+            sample_file = await self.client.aio.files.upload(file=file_path)
+            response = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=[sample_file, prompt],
                 config=config,
@@ -717,8 +715,7 @@ class AIEngine:
                 f"Email Body:\n{email_body[:2000]}"
             )
             config = types.GenerateContentConfig(response_mime_type="application/json")
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
+            response = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
                 config=config,
