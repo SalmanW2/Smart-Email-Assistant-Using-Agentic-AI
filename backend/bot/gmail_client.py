@@ -86,13 +86,30 @@ class GmailClient:
                 raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
 
             token_data = user["auth_token"]
+            
+            # Safely parse expires_at to a timezone-naive UTC datetime object for the Credentials helper
+            from datetime import datetime, timezone
+            expiry = None
+            expires_at = token_data.get("expires_at")
+            if expires_at:
+                try:
+                    if expires_at.endswith("Z"):
+                        expires_at = expires_at[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(expires_at)
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                    expiry = dt
+                except Exception as parse_err:
+                    logger.warning(f"Failed to parse expires_at timestamp '{expires_at}' for user {user_id}: {parse_err}")
+
             credentials = Credentials(
                 token=token_data.get("token"),
                 refresh_token=token_data.get("refresh_token"),
                 token_uri=token_data.get("token_uri"),
                 client_id=token_data.get("client_id"),
                 client_secret=token_data.get("client_secret"),
-                scopes=token_data.get("scopes")
+                scopes=token_data.get("scopes"),
+                expiry=expiry
             )
 
             # Proactively refresh the access token if expired
@@ -101,8 +118,12 @@ class GmailClient:
                     logger.info(f"Proactively refreshing Google OAuth token for user {user_id}")
                     await asyncio.to_thread(credentials.refresh, GoogleRequest())
                     
-                    # Persist the refreshed token back to the Supabase database
-                    updated_token_data = {**token_data, "token": credentials.token}
+                    # Persist the refreshed token and new expiry back to the Supabase database
+                    updated_token_data = {
+                        **token_data, 
+                        "token": credentials.token,
+                        "expires_at": credentials.expiry.isoformat() if credentials.expiry else None
+                    }
                     await db_manager.db.run(
                         lambda: db_manager.db.client.table("users")
                         .update({"auth_token": updated_token_data})
