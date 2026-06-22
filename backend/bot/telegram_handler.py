@@ -149,8 +149,11 @@ def kb_main_menu() -> InlineKeyboardMarkup:
     ])
 
 def kb_back_step() -> list:
-    """Returns the dynamic history back button component mapping."""
-    return [InlineKeyboardButton("🔙 Go Back", callback_data="history_back")]
+    """Returns two side-by-side nav buttons: Go Back (history) + Main Menu (shortcut)."""
+    return [
+        InlineKeyboardButton("🔙 Go Back", callback_data="history_back"),
+        InlineKeyboardButton("🏠 Main Menu", callback_data="menu_main"),
+    ]
 
 def kb_cancel() -> InlineKeyboardMarkup:
     """Generic cancel keyboard."""
@@ -363,10 +366,18 @@ class TelegramBotManager:
             self.navigation_history[uid].append(state)
 
     def _pop_history(self, uid: int) -> Optional[str]:
-        """Pops active state layout and reverts to the explicitly tracked prior screen."""
+        """Pops the current screen and returns the previous screen state.
+        
+        Bug fix: After popping, we push the target state back so it is tracked
+        as the new active screen. Without this, a second 'Go Back' tap finds an
+        empty stack and returns the user to Main Menu instead of the next screen.
+        """
         if uid in self.navigation_history and len(self.navigation_history[uid]) > 1:
-            self.navigation_history[uid].pop() # Discard current
-            return self.navigation_history[uid].pop() # Return target previous
+            self.navigation_history[uid].pop()  # Discard current (the screen we are leaving)
+            target = self.navigation_history[uid].pop()  # Retrieve target screen
+            # Re-push the target so it becomes the tracked active screen
+            self.navigation_history[uid].append(target)
+            return target
         return None
 
     def _clear_history(self, uid: int):
@@ -706,13 +717,20 @@ class TelegramBotManager:
 
         msg = await update.message.reply_text("✨ *Thinking...*", parse_mode="Markdown")
         await context.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
-        
+
         # Cache query so the [🔄 Retry] button can re-submit it after a failure
         self.last_user_queries[uid] = {"type": "text", "content": text}
 
         try:
             raw = await self.ai_engine.agent_chat(text, uid)
             await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+            # Log conversation asynchronously in the background — does NOT block the response
+            self._bg(self.memory.log_conversation(
+                telegram_id=uid,
+                user_message=text[:500],
+                bot_response=raw[:500] if raw else "",
+                interaction_type="chat",
+            ))
         except Exception as e:
             logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
             await self._edit(msg,
@@ -815,12 +833,19 @@ class TelegramBotManager:
 
         try:
             raw = await self.ai_engine.agent_chat(transcribed, uid)
-            
+
             if task_id not in self.active_voice_tasks:
                 return
-                
+
             self.active_voice_tasks.discard(task_id)
             await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
+            # Log voice interaction asynchronously in the background
+            self._bg(self.memory.log_conversation(
+                telegram_id=uid,
+                user_message=transcribed[:500],
+                bot_response=raw[:500] if raw else "",
+                interaction_type="voice",
+            ))
         except Exception as e:
             logger.error(f"Unhandled error in handle_voice for user {uid}: {e}", exc_info=True)
             if task_id in self.active_voice_tasks:
@@ -1345,26 +1370,26 @@ class TelegramBotManager:
     async def _do_summary(self, query, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
-        
+
         details = await self.gmail.get_email_details(uid, full_mid)
         if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
-            
+
         meta = await self.gmail.get_email_metadata(uid, full_mid)
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
 
         body = details.get("body", "") if details else ""
-        raw_sum = await self.ai_engine.agent_chat("Summarize this email professionally in 3-4 concise bullet points:\n\n" + body[:3000], uid)
-
-        sum_text = _clean_ai_text(raw_sum)
+        # Use the token-efficient direct summarize call — avoids polluting chat history
+        # and skips expensive tool-setup tokens of agent_chat.
+        sum_text = await self.ai_engine.summarize_email(body)
 
         sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
         subject = _safe_md(meta.get("subject", "No Subject"))
         att_ct  = len(meta.get("attachments", []))
 
         text = (
-            f"📩 *New Email Summary*\n"
+            f"📩 *Email Summary*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 *From:* {sender}\n"
             f"📝 *Subject:* {subject}\n"
@@ -1389,9 +1414,9 @@ class TelegramBotManager:
             return await self._prompt_reauth(query.message, uid)
 
         body = details.get("body", "") if details else ""
-        raw = await self.ai_engine.agent_chat("In exactly 2-3 sentences, give a spoken summary for text-to-speech:\n\n" + body[:3000], uid)
-            
-        clean_tts = re.sub(r'[*_#`•]', '', _clean_ai_text(raw))
+        # Use the token-efficient TTS summary call — avoids polluting chat history
+        # and skips tool-setup tokens. Returns clean text ready for TTS with no markdown.
+        clean_tts = await self.ai_engine.generate_tts_summary(body)
 
         prefs = await self._prefs(uid)
         try:
