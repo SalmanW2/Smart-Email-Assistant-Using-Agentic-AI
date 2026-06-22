@@ -118,11 +118,17 @@ class GmailClient:
                     logger.info(f"Proactively refreshing Google OAuth token for user {user_id}")
                     await asyncio.to_thread(credentials.refresh, GoogleRequest())
                     
-                    # Persist the refreshed token and new expiry back to the Supabase database
+                    # Persist the refreshed token and new expiry back to the Supabase database.
+                    # credentials.expiry is a timezone-naive UTC datetime — attach UTC offset before
+                    # storing so the next isoformat() parse round-trips correctly.
+                    new_expiry_str = None
+                    if credentials.expiry:
+                        expiry_aware = credentials.expiry.replace(tzinfo=timezone.utc)
+                        new_expiry_str = expiry_aware.isoformat()  # e.g. "2026-06-22T19:30:00+00:00"
                     updated_token_data = {
                         **token_data, 
                         "token": credentials.token,
-                        "expires_at": credentials.expiry.isoformat() if credentials.expiry else None
+                        "expires_at": new_expiry_str
                     }
                     await db_manager.db.run(
                         lambda: db_manager.db.client.table("users")

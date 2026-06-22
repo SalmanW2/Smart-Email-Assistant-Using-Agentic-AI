@@ -1042,11 +1042,12 @@ class TelegramBotManager:
 
         if action == "history_back":
             prev_state = self._pop_history(uid)
-            if prev_state:
-                query.data = prev_state
-                return await self.handle_button(update, context)
-            else:
+            if not prev_state:
                 return await self.cmd_menu(update, context)
+            # python-telegram-bot v22 forbids mutating query.data (it's immutable).
+            # Instead we re-dispatch by re-parsing the previous state directly.
+            data   = prev_state
+            action, args = _parse_cb(data)
 
         if action == "menu_main":
             self.compose_states.pop(uid, None)

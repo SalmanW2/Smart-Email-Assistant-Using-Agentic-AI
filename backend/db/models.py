@@ -215,7 +215,7 @@ class DBManager:
             await self.db.run(lambda: self.db.client.table("user_preferences").upsert({
                 "telegram_id": telegram_id,
                 **prefs
-            }).execute())
+            }, on_conflict="telegram_id").execute())
             self._invalidate_cache(["active_auto_check_users"])
             return True
         except Exception as e:
