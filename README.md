@@ -76,6 +76,7 @@ Background Jobs: Managed queue for pinging, email checking, and schedule dispatc
 
 📂 Project Structure
 
+```
 Smart-Email-Assistant-Using-Agentic-AI/
 ├── backend/
 │   ├── main.py # FastAPI application ka entry point (Server engine)
@@ -120,7 +121,7 @@ Smart-Email-Assistant-Using-Agentic-AI/
 ├── LICENSE # MIT License structural validation file
 ├── .gitignore
 └── README.md # Production grade comprehensive documentation text manual
-
+```
 
 🚀 Setup Instructions
 
