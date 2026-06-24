@@ -27,10 +27,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 import threading
-from contextvars import ContextVar
-
-# ContextVar for dynamically injecting the active user context into standalone tools
-active_user_id: ContextVar[int] = ContextVar('active_user_id', default=0)
+import inspect
+import functools
 
 from google import genai
 from google.genai import types
@@ -42,32 +40,7 @@ from db.models import db_manager
 
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# THREAD-SAFE CONCURRENT EXECUTION MANAGER
-# ==========================================
-_tool_loop: asyncio.AbstractEventLoop | None = None
-_tool_loop_lock = threading.Lock()
 
-def _get_tool_loop() -> asyncio.AbstractEventLoop:
-    """
-    Retrieves or initializes a thread-safe, dedicated background event loop.
-    Prevents the blocking of the main thread pool during concurrent user sessions.
-    """
-    global _tool_loop
-    with _tool_loop_lock:
-        if _tool_loop is None or _tool_loop.is_closed():
-            _tool_loop = asyncio.new_event_loop()
-            t = threading.Thread(target=_tool_loop.run_forever, daemon=True)
-            t.start()
-        return _tool_loop
-
-def _run_sync(coro) -> Any:
-    """
-    Safely executes an asynchronous coroutine inside Gemini's synchronous tool execution loops.
-    """
-    loop = _get_tool_loop()
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
 
 
 # ==========================================
@@ -99,14 +72,13 @@ def _get_gmail_client():
 # These functions are module-level to prevent deep-copy pickling errors
 # when passed to types.GenerateContentConfig(tools=[...]).
 
-def search_gmail_tool(query: str) -> str:
+async def search_gmail_tool(query: str, *, user_id: int) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
     """
-    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with query: {query}")
     gmail = _get_gmail_client()
-    results = _run_sync(gmail.search_emails(user_id, query, max_results=5))
+    results = await gmail.search_emails(user_id, query, max_results=5)
     if not results:
         return "No emails found matching the search query parameters."
 
@@ -126,12 +98,11 @@ def search_gmail_tool(query: str) -> str:
     return json.dumps(optimized_results)
 
 
-def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
+async def prepare_email_draft_tool(to_email: str, subject: str, body: str, *, user_id: int) -> str:
     """
     Tool: Prepares and stages an immediate email draft.
     HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
-    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
 
     # Perform dynamic validation for missing address constraints
@@ -151,12 +122,11 @@ def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
     return json.dumps({"status": "success", "draft": draft})
 
 
-def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str) -> str:
+async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str, *, user_id: int) -> str:
     """
     Tool: Schedules an email for future automated dispatch.
     HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
-    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
 
     to_clean = to_email.strip() if to_email else ""
@@ -173,14 +143,14 @@ def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: 
 
     # Persist immediately to the scheduled_emails schema using Supabase DB Manager
     try:
-        _run_sync(db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
+        await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
             "telegram_id": user_id,
             "to_email": to_clean,
             "subject": subject or "No Subject",
             "body": body or "",
             "scheduled_time": scheduled_time,
             "status": "pending"
-        }).execute()))
+        }).execute())
         logger.info("Successfully registered scheduled email in database")
     except Exception as db_err:
         logger.error(f"Database error writing scheduled task: {db_err}")
@@ -192,11 +162,10 @@ def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: 
     })
 
 
-def save_contact_tool(name: str, email: str) -> str:
+async def save_contact_tool(name: str, email: str, *, user_id: int) -> str:
     """
     Tool: Saves or updates an address book contact in the user's Supabase contacts table.
     """
-    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
 
     clean_email = str(email).strip().lower()
@@ -209,12 +178,12 @@ def save_contact_tool(name: str, email: str) -> str:
         return "Error: Invalid email format provided. Contact not saved."
 
     try:
-        _run_sync(db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
+        await db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
             "telegram_id": safe_uid,
             "contact_alias": clean_name,
             "email_address": clean_email,
             "contact_name": clean_name
-        }, on_conflict="telegram_id,email_address").execute()))
+        }, on_conflict="telegram_id,email_address").execute())
         return f"Contact '{clean_name}' with email '{clean_email}' saved successfully."
     except Exception as e:
         logger.error(f"Failed to upsert contact via Tool call: {e}")
@@ -380,7 +349,10 @@ class AIEngine:
 
                     try:
                         func = tools_map[fn_name]
-                        result_str = func(**args)
+                        if inspect.iscoroutinefunction(func):
+                            result_str = await func(**args)
+                        else:
+                            result_str = func(**args)
 
                         if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
@@ -449,9 +421,6 @@ class AIEngine:
         """
         Main Conversational AI loop for interacting with the Smart Email Assistant.
         """
-        # Inject context for standalone tools
-        active_user_id.set(telegram_id)
-
         try:
             contacts_list = await contact_manager.get_contacts(telegram_id)
             contacts_context = "\n".join([
@@ -519,12 +488,20 @@ class AIEngine:
             # Build the tools map referencing standalone module-level functions.
             # CRITICAL: These MUST be module-level functions (not self.method) to avoid
             # the `cannot pickle '_thread.lock'` error caused by SDK deep-copying the config.
-            tools_map = {
+            tools_map = {}
+            for name, func in {
                 "search_gmail_tool": search_gmail_tool,
                 "prepare_email_draft_tool": prepare_email_draft_tool,
                 "schedule_email_tool": schedule_email_tool,
                 "save_contact_tool": save_contact_tool,
-            }
+            }.items():
+                p_func = functools.partial(func, user_id=telegram_id)
+                p_func.__name__ = name
+                p_func.__doc__ = func.__doc__
+                sig = inspect.signature(p_func)
+                new_params = [p for pname, p in sig.parameters.items() if pname != 'user_id']
+                p_func.__signature__ = sig.replace(parameters=new_params)
+                tools_map[name] = p_func
 
             # Safety settings set to BLOCK_NONE across all harm categories.
             # Without this, Gemini's default filters silently block tool calls for
@@ -583,7 +560,10 @@ class AIEngine:
 
                     try:
                         func = tools_map[fn_name]
-                        result_str = func(**args)
+                        if inspect.iscoroutinefunction(func):
+                            result_str = await func(**args)
+                        else:
+                            result_str = func(**args)
 
                         if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
