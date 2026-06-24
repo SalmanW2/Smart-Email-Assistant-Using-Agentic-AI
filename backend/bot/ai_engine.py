@@ -22,11 +22,8 @@ import logging
 import httpx
 import re
 import os
-import tempfile
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
-import threading
 import inspect
 import functools
 
@@ -714,15 +711,16 @@ class AIEngine:
 
     async def summarize_email(self, email_body: str) -> str:
         """
-        Generates a concise, actionable 3-bullet point email summary.
+        Generates a concise, 2-sentence summary of the email objective.
         Uses a direct single-turn call — does NOT update active_chats history.
         """
         try:
             prompt = (
-                "You are an executive email processing assistant. "
-                "Analyze the email content below and extract exactly 3 short, actionable bullet points.\n"
-                "Focus strictly on core dates, metrics, and actionable deliverables. Be extremely brief.\n\n"
-                f"Email Body Content:\n{email_body[:5000]}"
+                "Analyze the email content below and write a summary of exactly 2 sentences. "
+                "The summary must strictly explain what the sender wants to say and what their primary objective or purpose is. "
+                "Do NOT mention who is sending the email (do not include any names, sender email addresses, or phrases like 'The sender is'). "
+                "Do NOT use bullet points, numbering, or conversational fillers. Return exactly 2 sentences.\n\n"
+                f"Email:\n{email_body[:5000]}"
             )
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
@@ -754,47 +752,7 @@ class AIEngine:
             logger.error(f"TTS summary generation error: {e}")
             return "Audio summary generation failed."
 
-    async def analyze_attachment(self, file_path: str, prompt: str) -> str:
-        """
-        Analyzes locally downloaded document or image attachments using Gemini file uploader.
-        Uses a direct single-turn call — does NOT update active_chats history.
-        """
-        try:
-            config = types.GenerateContentConfig(temperature=0.2)
-            sample_file = await self.client.aio.files.upload(file=file_path)
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=[sample_file, prompt],
-                config=config,
-            )
-            return response.text
-        except Exception as e:
-            return f"Error processing attachment: {e}"
 
-    async def generate_smart_replies(self, email_body: str) -> List[str]:
-        """
-        Generates exactly 3 professional, short quick reply options.
-        Uses a direct single-turn call — does NOT update active_chats history.
-        """
-        try:
-            prompt = (
-                "Read the following email and generate exactly 3 short, professional, distinct "
-                "quick reply options (maximum 5 words each). "
-                "Return ONLY a valid JSON array of strings. "
-                "Example: [\"Received, thank you.\", \"I will check and revert.\", \"Noted.\"]\n\n"
-                f"Email Body:\n{email_body[:2000]}"
-            )
-            config = types.GenerateContentConfig(response_mime_type="application/json")
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=config,
-            )
-            replies = json.loads(response.text.strip())
-            return replies if isinstance(replies, list) and replies else ["Thanks!", "Noted.", "I'll reply soon."]
-        except Exception as e:
-            logger.error(f"Smart reply error: {e}")
-            return ["Acknowledge.", "Will review.", "Thanks."]
 
 # Singleton instance initialization
 ai_engine = AIEngine()
