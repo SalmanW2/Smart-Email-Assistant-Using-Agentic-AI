@@ -78,52 +78,48 @@ Background Jobs: Managed queue for pinging, email checking, and schedule dispatc
 
 Smart-Email-Assistant-Using-Agentic-AI/
 ├── backend/
-│   ├── main.py                 # FastAPI application ka entry point (Server engine)
-│   ├── config.py               # Settings aur Environment configuration management
-│   ├── requirements.txt         # Python backend dependencies (FastAPI, PyJWT, etc.)
+│   ├── main.py # FastAPI application ka entry point (Server engine)
+│   ├── config.py # Settings aur Environment configuration management
+│   ├── requirements.txt # Python backend dependencies (FastAPI, PyJWT, etc.)
 │   ├── bot/
-│   │   ├── __init__.py
+│   │   ├── init.py
 │   │   ├── telegram_handler.py # Core Telegram bot logic, layouts, aur 100% clean UI code
-│   │   ├── ai_engine.py        # Gemini Agentic AI processing engine (with HITL loops)
-│   │   ├── gmail_client.py     # Google OAuth 2.0 aur Gmail API backend wrapper
-│   │   ├── voice_handler.py    # Text-to-Speech (TTS) aur Speech-to-Text (STT) handler
-│   │   └── contact_manager.py  # Contact list mapping aur intelligent extraction logic
+│   │   ├── ai_engine.py # Gemini Agentic AI processing engine (with HITL loops)
+│   │   ├── gmail_client.py # Google OAuth 2.0 aur Gmail API backend wrapper
+│   │   ├── voice_handler.py # Text-to-Speech (TTS) aur Speech-to-Text (STT) handler
+│   │   └── contact_manager.py # Contact list mapping aur intelligent extraction logic
 │   ├── api/
-│   │   ├── __init__.py
-│   │   ├── auth.py             # User authentication endpoints (Telegram login logs)
-│   │   ├── admin.py            # Admin router (Supabase password change + async bypass check)
-│   │   └── user.py             # User profile preferences aur dynamic contacts CRUD endpoints
+│   │   ├── init.py
+│   │   ├── auth.py # User authentication endpoints (Telegram login logs)
+│   │   ├── admin.py # Admin router (Supabase password change + async bypass check)
+│   │   └── user.py # User profile preferences aur dynamic contacts CRUD endpoints
 │   └── db/
-│       ├── __init__.py
-│       ├── models.py           # Supabase async database thread operations (db_manager logic)
-│       └── memory.py           # AI agent conversation memory aur context storage handlers
-│
-├── frontend/                   # React + Vite + Tailwind Admin Dashboard cluster
-│   ├── package.json            # Node.js dependencies aur scripts compilation framework
-│   ├── vite.config.ts          # Vite asset pipeline aur proxy definitions configuration
-│   ├── tsconfig.json           # TypeScript strict type compiler matching parameters
-│   ├── tailwind.config.js      # Tailwind UI design colors aur transition criteria grid
+│       ├── init.py
+│       ├── models.py # Supabase async database thread operations (db_manager logic)
+│       └── memory.py # AI agent conversation memory aur context storage handlers
+├── frontend/ # React + Vite + Tailwind Admin Dashboard cluster
+│   ├── package.json # Node.js dependencies aur scripts compilation framework
+│   ├── vite.config.ts # Vite asset pipeline aur proxy definitions configuration
+│   ├── tsconfig.json # TypeScript strict type compiler matching parameters
+│   ├── tailwind.config.js # Tailwind UI design colors aur transition criteria grid
 │   └── src/
-│       ├── main.tsx            # Application DOM mounting entry pivot
-│       ├── App.tsx             # Main routing registry, Google auth interception, & route locks
-│       ├── index.css           # Global core styles allocation matrix
+│       ├── main.tsx # Application DOM mounting entry pivot
+│       ├── App.tsx # Main routing registry, Google auth interception, & route locks
+│       ├── index.css # Global core styles allocation matrix
 │       ├── components/
-│       │   └── Navbar.tsx      # Multi-mode clean responsive navigation layout matrix
+│       │   └── Navbar.tsx # Multi-mode clean responsive navigation layout matrix
 │       └── pages/
-│           ├── Landing.tsx     # Public promotional landing frame screen
-│           ├── About.tsx       # System description matrix info window
-│           ├── AdminLogin.tsx  # Admin access gateway validation layout portal
-│           ├── Dashboard.tsx   # Core stats view, accordions layout, & auto inactivity timeout hook
-│           └── Settings.tsx    # Secure change password component (Google login layout conditional bypass)
-│
-├── database/                   # Cloud persistence schema scripts
-│   ├── schema.sql              # Supabase PostgreSQL structural tables setup guidelines
-│   └── seed.sql                # Core initialization data setup scripts (Default Super Admin entry)
-│
-├── LICENSE                     # MIT License structural validation file
+│           ├── Landing.tsx # Public promotional landing frame screen
+│           ├── About.tsx # System description matrix info window
+│           ├── AdminLogin.tsx # Admin access gateway validation layout portal
+│           ├── Dashboard.tsx # Core stats view, accordions layout, & auto inactivity timeout hook
+│           └── Settings.tsx # Secure change password component (Google login layout conditional bypass)
+├── database/ # Cloud persistence schema scripts
+│   ├── schema.sql # Supabase PostgreSQL structural tables setup guidelines
+│   └── seed.sql # Core initialization data setup scripts (Default Super Admin entry)
+├── LICENSE # MIT License structural validation file
 ├── .gitignore
-└── README.md                   # Production grade comprehensive documentation text manual
-
+└── README.md # Production grade comprehensive documentation text manual
 
 
 🚀 Setup Instructions
