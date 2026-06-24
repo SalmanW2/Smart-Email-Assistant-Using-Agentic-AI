@@ -87,20 +87,33 @@ class GmailClient:
 
             token_data = user["auth_token"]
             
-            # Safely parse expires_at to a timezone-naive UTC datetime object for the Credentials helper
-            from datetime import datetime, timezone
+            # Safely parse expires_at to a timezone-aware UTC datetime object
+            from datetime import datetime, timezone, timedelta
             expiry = None
             expires_at = token_data.get("expires_at")
+            needs_refresh = False
+
             if expires_at:
                 try:
                     if expires_at.endswith("Z"):
                         expires_at = expires_at[:-1] + "+00:00"
                     dt = datetime.fromisoformat(expires_at)
-                    if dt.tzinfo is not None:
-                        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-                    expiry = dt
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                    
+                    # Convert to naive for google-auth compatibility
+                    expiry = dt.replace(tzinfo=None)
+                    
+                    # Implement strict 5-minute safety buffer
+                    if datetime.now(timezone.utc) + timedelta(seconds=300) >= dt:
+                        needs_refresh = True
                 except Exception as parse_err:
                     logger.warning(f"Failed to parse expires_at timestamp '{expires_at}' for user {user_id}: {parse_err}")
+                    needs_refresh = True
+            else:
+                needs_refresh = True
 
             credentials = Credentials(
                 token=token_data.get("token"),
@@ -112,30 +125,30 @@ class GmailClient:
                 expiry=expiry
             )
 
-            # Proactively refresh the access token if expired
-            if credentials.expired and credentials.refresh_token:
+            # Proactively refresh the access token if expired or within 5-min buffer
+            if (credentials.expired or needs_refresh) and credentials.refresh_token:
                 try:
                     logger.info(f"Proactively refreshing Google OAuth token for user {user_id}")
                     await asyncio.to_thread(credentials.refresh, GoogleRequest())
                     
-                    # Persist the refreshed token and new expiry back to the Supabase database.
-                    # credentials.expiry is a timezone-naive UTC datetime — attach UTC offset before
-                    # storing so the next isoformat() parse round-trips correctly.
-                    new_expiry_str = None
-                    if credentials.expiry:
-                        expiry_aware = credentials.expiry.replace(tzinfo=timezone.utc)
-                        new_expiry_str = expiry_aware.isoformat()  # e.g. "2026-06-22T19:30:00+00:00"
-                    updated_token_data = {
-                        **token_data, 
-                        "token": credentials.token,
-                        "expires_at": new_expiry_str
-                    }
-                    await db_manager.db.run(
-                        lambda: db_manager.db.client.table("users")
-                        .update({"auth_token": updated_token_data})
-                        .eq("telegram_id", user_id).execute()
-                    )
-                    logger.info(f"Refreshed token successfully saved to Supabase for user {user_id}")
+                    # Persist only if the token actually changed to prevent needless DB loops
+                    if credentials.token and credentials.token != token_data.get("token"):
+                        new_expiry_str = None
+                        if credentials.expiry:
+                            expiry_aware = credentials.expiry.replace(tzinfo=timezone.utc)
+                            new_expiry_str = expiry_aware.isoformat()
+                        
+                        updated_token_data = {
+                            **token_data, 
+                            "token": credentials.token,
+                            "expires_at": new_expiry_str
+                        }
+                        await db_manager.db.run(
+                            lambda: db_manager.db.client.table("users")
+                            .update({"auth_token": updated_token_data})
+                            .eq("telegram_id", user_id).execute()
+                        )
+                        logger.info(f"Refreshed token successfully saved to Supabase for user {user_id}")
                 except Exception as refresh_err:
                     logger.error(f"Failed auto-refreshing OAuth token for user {user_id}: {refresh_err}")
                     raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
@@ -520,7 +533,7 @@ class GmailClient:
                     with open(file_path, 'wb') as f:
                         f.write(file_data)
                         
-                    paths.append(file_path)
+                    paths.append({"path": file_path, "original_filename": filename})
                     logger.info(f"Downloaded attachment: {filename} to {file_path}")
                 except Exception as err:
                     logger.error(f"Failed to download specific attachment {filename}: {err}")

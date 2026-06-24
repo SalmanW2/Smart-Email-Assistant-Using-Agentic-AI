@@ -27,6 +27,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 import threading
+from contextvars import ContextVar
+
+# ContextVar for dynamically injecting the active user context into standalone tools
+active_user_id: ContextVar[int] = ContextVar('active_user_id', default=0)
 
 from google import genai
 from google.genai import types
@@ -95,10 +99,11 @@ def _get_gmail_client():
 # These functions are module-level to prevent deep-copy pickling errors
 # when passed to types.GenerateContentConfig(tools=[...]).
 
-def search_gmail_tool(query: str, user_id: int) -> str:
+def search_gmail_tool(query: str) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
     """
+    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with query: {query}")
     gmail = _get_gmail_client()
     results = _run_sync(gmail.search_emails(user_id, query, max_results=5))
@@ -121,11 +126,12 @@ def search_gmail_tool(query: str, user_id: int) -> str:
     return json.dumps(optimized_results)
 
 
-def prepare_email_draft_tool(to_email: str, subject: str, body: str, user_id: int) -> str:
+def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
     """
     Tool: Prepares and stages an immediate email draft.
     HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
+    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
 
     # Perform dynamic validation for missing address constraints
@@ -145,11 +151,12 @@ def prepare_email_draft_tool(to_email: str, subject: str, body: str, user_id: in
     return json.dumps({"status": "success", "draft": draft})
 
 
-def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str, user_id: int) -> str:
+def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str) -> str:
     """
     Tool: Schedules an email for future automated dispatch.
     HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
+    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
 
     to_clean = to_email.strip() if to_email else ""
@@ -185,17 +192,20 @@ def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: 
     })
 
 
-def save_contact_tool(name: str, email: str, user_id: int) -> str:
+def save_contact_tool(name: str, email: str) -> str:
     """
     Tool: Saves or updates an address book contact in the user's Supabase contacts table.
     """
+    user_id = active_user_id.get()
     logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
 
     clean_email = str(email).strip().lower()
     clean_name = str(name).strip()[:200]
     safe_uid = int(user_id)
 
-    if not clean_email or "@" not in clean_email:
+    # Allow valid complex subdomains e.g. test@sub.domain.com
+    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not clean_email or not re.match(email_regex, clean_email):
         return "Error: Invalid email format provided. Contact not saved."
 
     try:
@@ -367,7 +377,6 @@ class AIEngine:
                     tool_call = choice["tool_calls"][0]
                     fn_name = tool_call["function"]["name"]
                     args = json.loads(tool_call["function"]["arguments"])
-                    args["user_id"] = telegram_id
 
                     try:
                         func = tools_map[fn_name]
@@ -438,9 +447,11 @@ class AIEngine:
 
     async def agent_chat(self, message: str, telegram_id: int) -> str:
         """
-        Primary entry point for processing conversational user prompts.
-        Wrapped in Try-Except to failover to Groq seamlessly.
+        Main Conversational AI loop for interacting with the Smart Email Assistant.
         """
+        # Inject context for standalone tools
+        active_user_id.set(telegram_id)
+
         try:
             contacts_list = await contact_manager.get_contacts(telegram_id)
             contacts_context = "\n".join([
@@ -569,9 +580,6 @@ class AIEngine:
                 for fc in response.function_calls:
                     fn_name = fc.name
                     args = dict(fc.args)
-
-                    if fn_name in ["search_gmail_tool", "prepare_email_draft_tool", "schedule_email_tool", "save_contact_tool"]:
-                        args["user_id"] = telegram_id
 
                     try:
                         func = tools_map[fn_name]

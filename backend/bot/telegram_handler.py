@@ -151,7 +151,7 @@ def kb_main_menu() -> InlineKeyboardMarkup:
 def kb_back_step() -> list:
     """Returns two side-by-side nav buttons: Go Back (history) + Main Menu (shortcut)."""
     return [
-        InlineKeyboardButton("🔙 Go Back", callback_data="history_back"),
+        InlineKeyboardButton("🔙 Back to Message", callback_data="history_back"),
         InlineKeyboardButton("🏠 Main Menu", callback_data="menu_main"),
     ]
 
@@ -190,10 +190,10 @@ def kb_email_view(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKe
     """Builds inline actions for full email viewing."""
     mid = msg_id[:16]
     rows = [
-        [InlineKeyboardButton("↩️ Reply",      callback_data=_cb("reply", mid, ctx, offset)),
-         InlineKeyboardButton("🗑️ Trash",       callback_data=_cb("del",   mid, ctx, offset))],
-        [InlineKeyboardButton("🤖 AI Summary", callback_data=_cb("sum",   mid, ctx, offset)),
-         InlineKeyboardButton("🔊 Listen",      callback_data=_cb("tts",   mid, ctx, offset))],
+        [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
+         InlineKeyboardButton("📝 Summarize", callback_data=_cb("sum",   mid, ctx, offset))],
+        [InlineKeyboardButton("✉️ Quick Reply", callback_data=_cb("reply", mid, ctx, offset)),
+         InlineKeyboardButton("🗑️ Move to Trash", callback_data=_cb("del",   mid, ctx, offset))],
     ]
     if has_att:
         rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", mid, ctx, offset))])
@@ -691,6 +691,11 @@ class TelegramBotManager:
             await self._prompt_reauth(update.message, uid)
             return
 
+        # Fast-track bypass for menu commands
+        if text_lower.strip() in ["/menu", "/start", "menu", "dashboard"]:
+            await self.cmd_menu(update, context)
+            return
+
         if await self._gate(update, u.id, acc["status"]):
             return
 
@@ -743,7 +748,22 @@ class TelegramBotManager:
         step  = state.get("step")
 
         if step == "AWAIT_TO":
-            state["to"] = text
+            # Add strict email regex check
+            email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+            if not re.match(email_regex, text.strip()):
+                state["to"] = text.strip()
+                await update.message.reply_text(
+                    "⚠️ *Validation Warning:* The email address format seems unusual or invalid.\n\n"
+                    "Do you want to proceed anyway or type a new one?",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_to_email")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+                    ])
+                )
+                return
+
+            state["to"] = text.strip()
             if state.get("body") and state.get("subj"):
                 state["step"] = "AWAIT_ATT"
                 await update.message.reply_text(
@@ -752,7 +772,7 @@ class TelegramBotManager:
             else:
                 state["step"] = "AWAIT_SUBJ"
                 await update.message.reply_text(
-                    f"✅ *To:* `{_safe_md(text)}`\n\n📝 *Enter Subject:*",
+                    f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
                     parse_mode="Markdown", reply_markup=kb_cancel())
 
         elif step == "AWAIT_SUBJ":
@@ -1209,6 +1229,30 @@ class TelegramBotManager:
             await self._do_send_draft(query, uid, context)
             return
 
+        if action == "force_send_draft":
+            state = self.compose_states.get(uid)
+            if state:
+                state["skip_validation"] = True
+            await self._do_send_draft(query, uid, context)
+            return
+
+        if action == "force_to_email":
+            state = self.compose_states.get(uid)
+            if not state or state.get("step") != "AWAIT_TO":
+                return
+            
+            if state.get("body") and state.get("subj"):
+                state["step"] = "AWAIT_ATT"
+                await query.edit_message_text(
+                    _draft_text(state), parse_mode="Markdown",
+                    reply_markup=kb_draft(bool(state.get("attachments"))))
+            else:
+                state["step"] = "AWAIT_SUBJ"
+                await query.edit_message_text(
+                    f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
+                    parse_mode="Markdown", reply_markup=kb_cancel())
+            return
+
         if action == "settings":
             prefs = await self._prefs(uid)
             await query.edit_message_text(
@@ -1319,14 +1363,26 @@ class TelegramBotManager:
 
     async def _do_send_draft(self, query, uid: int, context):
         """Immediately dispatches payload configuration. Removed legacy 7-second undo limits."""
-        state = self.compose_states.pop(uid, None)
-        if not state or not state.get("to") or "[Specify Recipient Email]" in state.get("to", ""):
+        state = self.compose_states.get(uid)
+        if not state:
+            return
+
+        to_email = state.get("to", "").strip()
+        skip_validation = state.get("skip_validation", False)
+        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+
+        if not skip_validation and (not to_email or "[Specify" in to_email or not re.match(email_regex, to_email)):
             await query.edit_message_text(
                 "⚠️ *Validation Error:* Cannot process outbound data streams. Recipient address is invalid.", 
                 parse_mode="Markdown", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Re-evaluate", callback_data="compose")]])
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_send_draft")],
+                    [InlineKeyboardButton("🔙 Fix Parameters", callback_data="compose")]
+                ])
             )
             return
+
+        self.compose_states.pop(uid, None)
 
         msg = await query.edit_message_text("⏳ *Sending Email...*", parse_mode="Markdown")
 
@@ -1479,16 +1535,29 @@ class TelegramBotManager:
         await query.edit_message_text(f"📤 *Sending {len(paths)} attachment(s)...*", parse_mode="Markdown")
 
         sent = 0
-        for fp in paths:
+        for att_info in paths:
             try:
+                if isinstance(att_info, dict):
+                    fp = att_info["path"]
+                    orig_name = att_info["original_filename"]
+                else:
+                    fp = att_info
+                    orig_name = None
+                
                 with open(fp, "rb") as f:
-                    await context.bot.send_document(chat_id=uid, document=f)
+                    if orig_name:
+                        await context.bot.send_document(chat_id=uid, document=f, filename=orig_name)
+                    else:
+                        await context.bot.send_document(chat_id=uid, document=f)
                 sent += 1
             except Exception as e:
                 logger.error(f"Attachment send error: {e}")
             finally:
                 try:
-                    os.remove(fp)
+                    if isinstance(att_info, dict):
+                        os.remove(att_info["path"])
+                    else:
+                        os.remove(att_info)
                 except Exception:
                     pass
 
