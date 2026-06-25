@@ -21,6 +21,20 @@ import json
 import logging
 import re
 
+# ── Quota / Rate-Limit Exception Imports ──────────────────────────────────────
+# The Gemini SDK can surface HTTP 429 / quota exhaustion via multiple exception
+# classes depending on transport and SDK version. We import all of them and use
+# a single normalizer helper so every call site stays clean and consistent.
+try:
+    from google.api_core.exceptions import ResourceExhausted, TooManyRequests as _GAPITooMany
+except ImportError:
+    ResourceExhausted = None  # type: ignore
+    _GAPITooMany = None       # type: ignore
+try:
+    from google.genai.errors import ClientError as _GenAIClientError
+except ImportError:
+    _GenAIClientError = None  # type: ignore
+
 def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
     """
     Surgical output sanitizer: ONLY intercepts actual raw tool call syntax leaks.
@@ -65,6 +79,31 @@ def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
         pass
 
     return final_text
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """
+    Returns True if the exception represents an API quota / rate-limit error
+    (HTTP 429 or gRPC RESOURCE_EXHAUSTED). Normalizes across both legacy
+    google.api_core and new google.genai SDK error namespaces.
+    """
+    # Check class hierarchy first (fastest)
+    if ResourceExhausted is not None and isinstance(exc, ResourceExhausted):
+        return True
+    if _GAPITooMany is not None and isinstance(exc, _GAPITooMany):
+        return True
+    if _GenAIClientError is not None and isinstance(exc, _GenAIClientError):
+        # New genai SDK wraps HTTP errors inside ClientError; check status code
+        code = getattr(exc, 'status_code', None) or getattr(exc, 'code', None)
+        if code == 429:
+            return True
+    # Final fallback: inspect the string representation
+    err_str = str(exc).lower()
+    return (
+        "resource has been exhausted" in err_str
+        or "quota" in err_str and ("429" in err_str or "exhausted" in err_str)
+        or "429" in err_str and "rate" in err_str
+    )
 
 import httpx
 import re
@@ -590,6 +629,12 @@ class AIEngine:
                     config=config,
                 )
             except Exception as gemini_err:
+                if _is_quota_error(gemini_err):
+                    # Return the quota sentinel immediately. Do NOT forward to Groq here
+                    # because the user's request requires tools that Groq may misfire on.
+                    # The dispatcher will show a clean, actionable user-facing message.
+                    logger.warning(f"Gemini API quota exhausted (429) for user {telegram_id}. Returning quota sentinel.")
+                    return "__API_QUOTA_EXCEEDED__"
                 logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}). Triggering Groq Fallback...")
                 return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
@@ -651,10 +696,13 @@ class AIEngine:
                     self.active_chats[telegram_id].append(tool_result_content)
                     if final_response.candidates and len(final_response.candidates) > 0 and final_response.candidates[0].content:
                         self.active_chats[telegram_id].append(final_response.candidates[0].content)
-                        
+
                     final_text = final_response.text or "I completed the action successfully."
                     return _sanitize_final_text(final_text, telegram_id)
                 except Exception as final_err:
+                    if _is_quota_error(final_err):
+                        logger.warning(f"Gemini API quota exhausted (429) on secondary call for user {telegram_id}.")
+                        return "__API_QUOTA_EXCEEDED__"
                     logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
                     return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
  
@@ -816,6 +864,27 @@ class AIEngine:
             "Do NOT use bullet points, numbering, or conversational fillers. Return exactly 2 sentences.\n\n"
             f"Email:\n{email_body[:5000]}"
         )
+        # ── Attempt via Groq first to save Gemini quota ─────────────────────────
+        if settings.GROQ_API_KEY:
+            try:
+                url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 150,
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+                    resp.raise_for_status()
+                    text = resp.json()["choices"][0]["message"].get("content", "").strip()
+                    if text:
+                        return text
+            except Exception as groq_err:
+                logger.warning(f"Groq summarize_email failed, falling back to Gemini: {groq_err}")
+
+        # ── Gemini fallback (only if Groq is not configured or failed) ────────────
         for attempt in range(2):
             try:
                 response = await self.client.aio.models.generate_content(
@@ -824,6 +893,9 @@ class AIEngine:
                 )
                 return response.text.strip() if response.text else "Summary unavailable."
             except Exception as e:
+                if _is_quota_error(e):
+                    logger.warning(f"Gemini quota exhausted on summarize_email for attempt {attempt + 1}.")
+                    return "Summary unavailable — AI quota is temporarily exhausted. Please try again in a moment."
                 err_str = str(e)
                 if "503" in err_str or "UNAVAILABLE" in err_str:
                     logger.warning(f"Gemini 503 UNAVAILABLE on summarize_email attempt {attempt + 1}. Retrying...")
@@ -845,6 +917,27 @@ class AIEngine:
             "Do not use bullet points, markdown symbols, or special characters.\n\n"
             f"Email:\n{email_body[:3000]}"
         )
+        # ── Attempt via Groq first to save Gemini quota ─────────────────────────
+        if settings.GROQ_API_KEY:
+            try:
+                url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 120,
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+                    resp.raise_for_status()
+                    text = resp.json()["choices"][0]["message"].get("content", "").strip()
+                    if text:
+                        return text
+            except Exception as groq_err:
+                logger.warning(f"Groq generate_tts_summary failed, falling back to Gemini: {groq_err}")
+
+        # ── Gemini fallback (only if Groq is not configured or failed) ────────────
         for attempt in range(2):
             try:
                 response = await self.client.aio.models.generate_content(
@@ -853,6 +946,9 @@ class AIEngine:
                 )
                 return response.text.strip() if response.text else "Unable to generate audio summary."
             except Exception as e:
+                if _is_quota_error(e):
+                    logger.warning(f"Gemini quota exhausted on generate_tts_summary for attempt {attempt + 1}.")
+                    return "Audio summary temporarily unavailable. Please try again in a moment."
                 err_str = str(e)
                 if "503" in err_str or "UNAVAILABLE" in err_str:
                     logger.warning(f"Gemini 503 UNAVAILABLE on generate_tts_summary attempt {attempt + 1}. Retrying...")

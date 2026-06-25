@@ -1003,6 +1003,18 @@ class TelegramBotManager:
         if raw == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "TOKEN_EXPIRED_REAUTH_REQUIRED" in raw:
             return await self._prompt_reauth(msg_obj, uid)
 
+        # ── QUOTA EXCEEDED INTERCEPTOR ───────────────────────────────────────────────
+        # Returned by ai_engine when Gemini raises HTTP 429 / ResourceExhausted.
+        # We surface a clear, actionable user message instead of breaking silently.
+        if raw == "__API_QUOTA_EXCEEDED__":
+            await self._edit(
+                msg_obj,
+                "⚠️ *AI Processing Limit Reached*\n\n"
+                "Our AI system is experiencing high demand right now and has temporarily reached its processing limit.\n\n"
+                "⏳ Please wait *30–60 seconds* and send your request again — it will work right away."
+            )
+            return
+
         # ── SEARCH INTERCEPTOR (AFC + Manual path) ──────────────────────────────────
         # AFC path: ai_engine returns the sentinel string "__SHOW_SEARCH_LIST__" when
         # AFC resolved search_gmail_tool internally and pending_searches was populated.
