@@ -137,6 +137,28 @@ def _esc_html(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _parse_sender_header(raw_sender: str) -> tuple:
+    """Parses a sender header (e.g. 'Name <email>') into (name, email) tuple."""
+    if not raw_sender:
+        return "Unknown", "Unknown"
+    
+    # Check for name <email> format
+    match = re.search(r'^(.*?)\s*<([^>]+)>', raw_sender)
+    if match:
+        name = match.group(1).strip().strip('"').strip("'").strip()
+        email = match.group(2).strip()
+        if not name:
+            name = email.split("@")[0] if "@" in email else email
+        return name, email
+    
+    raw_sender = raw_sender.strip()
+    if "@" in raw_sender:
+        name = raw_sender.split("@")[0]
+        return name, raw_sender
+        
+    return raw_sender, "Unknown"
+
+
 # ── Keyboard Builders ──────────────────────────────────────────────────────────
 
 def kb_main_menu() -> InlineKeyboardMarkup:
@@ -206,7 +228,7 @@ def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeybo
     mid = msg_id[:16]
     rows = [
         [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
-         InlineKeyboardButton("🔊 Listen",           callback_data=_cb("tts",  mid, ctx, offset))],
+         InlineKeyboardButton("🔊 Listen", callback_data=_cb("tts",  mid, ctx, offset))],
         [InlineKeyboardButton("↩️ Reply", callback_data=_cb("reply", mid, ctx, offset))]
     ]
     if has_att:
@@ -249,7 +271,7 @@ def kb_settings(ai_on: bool, voice: str, auto_on: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'✅' if ai_on   else '❌'} AI Mode",          callback_data="toggle_ai")],
         [InlineKeyboardButton(v_map.get(voice, "📝 Text Only"),                callback_data="cycle_voice")],
-        [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Email Check", callback_data="toggle_auto")],
+        [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Check", callback_data="toggle_auto")],
         [InlineKeyboardButton("🚪 Logout",                             callback_data="logout")],
         kb_back_step(),
     ])
@@ -288,7 +310,6 @@ class TelegramBotManager:
         self._mid_cache:        dict = {}   # short_id[:16] -> full Gmail message ID
         self.notified_emails:    set = set()
         self.active_voice_tasks: set = set()
-        self.email_lock = asyncio.Lock()
         self.ram_semaphore = asyncio.BoundedSemaphore(value=3)
         
         # Stores the last user text/voice query per user to power the Retry button UX.
@@ -393,7 +414,7 @@ class TelegramBotManager:
         state = await self.db.create_auth_session(uid)
         url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
         text  = "⚠️ *Google Connection Lost*\n\nYour session has expired. Please reconnect your Google Workspace account using the link below to restore access."
-        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         await self._edit(msg_obj, text, markup)
 
     async def _send_reauth_direct(self, context, uid: int):
@@ -404,7 +425,7 @@ class TelegramBotManager:
                  "Your Google Workspace token has expired or been revoked.\n\n"
                  "Please reconnect your account to restore inbox syncing.\n"
                  "_(Background polling has been temporarily paused to prevent spam)._")
-        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         try:
             await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=markup)
         except Exception:
@@ -469,7 +490,7 @@ class TelegramBotManager:
                      f"?state={state}&telegram_id={uid}")
             await self._send(update,
                 "⚠️ *Gmail Not Connected*\nLink your Google account to start:",
-                InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Connect Google Workspace", url=url)]]))
+                InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Connect", url=url)]]))
             return True
             
         return False
@@ -606,9 +627,11 @@ class TelegramBotManager:
             if not meta or "error" in meta:
                 continue
                 
-            sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+            raw_sender = meta.get("sender", "Unknown")
+            name, email = _parse_sender_header(raw_sender)
+            sender_formatted = f"👤 *{_safe_md(name)}* `({_safe_md(email)})`"
             subject = _safe_md(meta.get("subject", "No Subject"))
-            lines.append(f"*{offset + i + 1}.* {sender}\n   _{subject}_\n")
+            lines.append(f"*{offset + i + 1}.* {sender_formatted}\n   📝 *Subject:* _{subject}_\n")
 
         await self._edit(msg_obj, "\n".join(lines),
                          kb_email_list(display, offset, is_search, has_next))
@@ -635,7 +658,7 @@ class TelegramBotManager:
             msg_target = getattr(msg_or_query, 'message', msg_or_query)
             return await self._prompt_reauth(msg_target, uid)
 
-        if not details or not meta:
+        if not details or not meta or (isinstance(meta, dict) and "error" in meta):
             await self._edit(msg_or_query, "❌ *Email not found.* It may have been deleted.", markup=InlineKeyboardMarkup([kb_back_step()]))
             return
             
@@ -645,7 +668,10 @@ class TelegramBotManager:
         # Strip email footers (disclaimers, signatures) before display
         body         = _strip_email_footer(body)
         safe_body    = _esc_html(body[:3500] + ("\n\n<i>[… Truncated — tap Read Full Email for complete text]</i>" if len(body) > 3500 else ""))
-        safe_sender  = _esc_html(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+        raw_sender   = meta.get("sender", "Unknown")
+        name, email  = _parse_sender_header(raw_sender)
+        safe_name    = _esc_html(name)
+        safe_email   = _esc_html(email)
         safe_subject = _esc_html(meta.get("subject", "No Subject"))
 
         safe_body = re.sub(r'(https?://[^\s<>"]+)',
@@ -654,7 +680,7 @@ class TelegramBotManager:
         att_list = meta.get("attachments", [])
         att_line = f"\n📎 <b>{len(att_list)} Attachment(s)</b>" if att_list else ""
 
-        text = (f"📧 <b>From:</b> {safe_sender}\n"
+        text = (f"📧 <b>From:</b> 👤 <b>{safe_name}</b> <code>({safe_email})</code>\n"
                 f"📝 <b>Subject:</b> {safe_subject}{att_line}\n"
                 f"{'━' * 20}\n\n{safe_body}")
 
@@ -998,7 +1024,7 @@ class TelegramBotManager:
             except Exception as e:
                 logger.warning(f"SHOW_EMAIL card render failed: {e}. Falling back to text.")
                 fallback_txt = text_content if text_content else "I was unable to display the email card. Please try again."
-                await self._edit(msg_obj, f"🤖 {fallback_txt}")
+                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{fallback_txt}")
             return
 
 
@@ -1053,44 +1079,50 @@ class TelegramBotManager:
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
             # Remove markdown symbols to prevent TTS engine from reading punctuation aloud
             clean_tts = re.sub(r'[*_#`]', '', text_content)
+            audio = None
             try:
-                audio = await self.voice.synthesize(
-                    clean_tts, telegram_id=uid,
-                    preferred_method=prefs.get("preferred_tts_method", "google"))
-            except Exception as tts_err:
-                logger.warning(f"TTS synthesis exception for user {uid}: {tts_err}")
-                audio = None
-                
-            if audio and os.path.exists(audio):
-                with open(audio, "rb") as f:
+                try:
+                    audio = await self.voice.synthesize(
+                        clean_tts, telegram_id=uid,
+                        preferred_method=prefs.get("preferred_tts_method", "google"))
+                except Exception as tts_err:
+                    logger.warning(f"TTS synthesis exception for user {uid}: {tts_err}")
+                    audio = None
+                    
+                if audio and os.path.exists(audio):
+                    with open(audio, "rb") as f:
+                        try:
+                            if voice_pref == "both":
+                                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{text_content}")
+                                await context.bot.send_voice(chat_id=uid, voice=f)
+                            else:
+                                await context.bot.send_voice(chat_id=uid, voice=f)
+                                try:
+                                    if hasattr(msg_obj, 'delete'): await msg_obj.delete()
+                                    elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
+                                except Exception:
+                                    await self._edit(msg_obj, "🎙️")
+                        except Exception as e:
+                            logger.warning(f"send_voice failed: {e}. Falling back to send_audio.")
+                            f.seek(0)
+                            if voice_pref == "both":
+                                await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
+                            else:
+                                await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
+                                try:
+                                    if hasattr(msg_obj, 'delete'): await msg_obj.delete()
+                                    elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
+                                except Exception:
+                                    await self._edit(msg_obj, "🎙️")
+                    return
+                else:
+                    logger.warning(f"TTS audio generation failed for user {uid}, falling back to text.")
+            finally:
+                if audio and os.path.exists(audio):
                     try:
-                        if voice_pref == "both":
-                            await self._edit(msg_obj, f"🤖 {text_content}")
-                            await context.bot.send_voice(chat_id=uid, voice=f)
-                        else:
-                            await context.bot.send_voice(chat_id=uid, voice=f)
-                            try:
-                                if hasattr(msg_obj, 'delete'): await msg_obj.delete()
-                                elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
-                            except Exception:
-                                await self._edit(msg_obj, "🎙️")
-                    except Exception as e:
-                        logger.warning(f"send_voice failed: {e}. Falling back to send_audio.")
-                        f.seek(0)
-                        if voice_pref == "both":
-                            await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
-                        else:
-                            await context.bot.send_audio(chat_id=uid, audio=f, filename="voice.mp3")
-                            try:
-                                if hasattr(msg_obj, 'delete'): await msg_obj.delete()
-                                elif hasattr(msg_obj, 'message_id'): await context.bot.delete_message(chat_id=uid, message_id=msg_obj.message_id)
-                            except Exception:
-                                await self._edit(msg_obj, "🎙️")
-                try: os.remove(audio)
-                except Exception: pass
-                return
-            else:
-                logger.warning(f"TTS audio generation failed for user {uid}, falling back to text.")
+                        os.remove(audio)
+                    except Exception:
+                        pass
 
         fallback_msg = text_content if text_content else None
         if fallback_msg:
@@ -1104,9 +1136,9 @@ class TelegramBotManager:
                 clean_msg = fallback_msg.strip()
                 if "saved successfully" in clean_msg.lower() and not clean_msg.startswith("✅"):
                     clean_msg = f"✅ {clean_msg}"
-                await self._edit(msg_obj, clean_msg, markup=markup)
+                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{clean_msg}", markup=markup)
             else:
-                await self._edit(msg_obj, f"🤖 {fallback_msg}")
+                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{fallback_msg}")
         # If text_content is empty (e.g. tool completed silently), don't show any message.
 
     # ── Button handler ─────────────────────────────────────────────────────────
@@ -1219,8 +1251,8 @@ class TelegramBotManager:
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("👤 Recipient", callback_data="edit_field_to")],
                     [InlineKeyboardButton("📝 Subject",     callback_data="edit_field_subj")],
-                    [InlineKeyboardButton("✉️ Message Body Content",     callback_data="edit_field_body")],
-                    [InlineKeyboardButton("🔙 Back to Draft Preview",   callback_data="restore_draft_view")]
+                    [InlineKeyboardButton("✉️ Body",        callback_data="edit_field_body")],
+                    [InlineKeyboardButton("🔙 Back",        callback_data="restore_draft_view")]
                 ])
             )
             return
@@ -1520,7 +1552,7 @@ class TelegramBotManager:
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
 
-        if not details or not meta:
+        if not details or not meta or (isinstance(meta, dict) and "error" in meta):
             await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
 
@@ -1558,7 +1590,7 @@ class TelegramBotManager:
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
 
-        if not details or not meta:
+        if not details or not meta or (isinstance(meta, dict) and "error" in meta):
             await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
 
@@ -1568,39 +1600,46 @@ class TelegramBotManager:
         clean_tts = await self.ai_engine.generate_tts_summary(body)
 
         prefs = await self._prefs(uid)
+        audio = None
         try:
-            audio = await self.voice.synthesize(
-                clean_tts, telegram_id=uid,
-                preferred_method=prefs.get("preferred_tts_method", "google"))
-        except Exception as e:
-            logger.error(f"TTS synthesis failed in _do_tts: {e}")
-            audio = None
-
-        sender  = _safe_md(meta.get("sender",  "").replace('<', '').replace('>', ''))
-        subject = _safe_md(meta.get("subject", ""))
-        att_ct  = len(meta.get("attachments", []))
-
-        rows = [[InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
-        if att_ct: rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
-        rows.append(kb_back_step())
-        kb = InlineKeyboardMarkup(rows)
-
-        caption = f"🔊 *Audio Summary*\n📧 *From:* {sender}\n📝 *Subject:* {subject}"
-
-        if audio and os.path.exists(audio):
-            with open(audio, "rb") as f:
-                try:
-                    await context.bot.send_voice(chat_id=uid, voice=f, caption=caption, parse_mode="Markdown", reply_markup=kb)
-                except Exception as e:
-                    logger.warning(f"send_voice failed in _do_tts: {e}. Falling back to send_audio.")
-                    f.seek(0)
-                    await context.bot.send_audio(chat_id=uid, audio=f, caption=caption, parse_mode="Markdown", reply_markup=kb, filename="voice.mp3")
             try:
-                os.remove(audio)
-                await getattr(query, "message", query).delete()
-            except Exception: pass
-        else:
-            await self._edit(query, "❌ *Audio generation failed.*", markup=kb)
+                audio = await self.voice.synthesize(
+                    clean_tts, telegram_id=uid,
+                    preferred_method=prefs.get("preferred_tts_method", "google"))
+            except Exception as e:
+                logger.error(f"TTS synthesis failed in _do_tts: {e}")
+                audio = None
+
+            sender  = _safe_md(meta.get("sender",  "").replace('<', '').replace('>', ''))
+            subject = _safe_md(meta.get("subject", ""))
+            att_ct  = len(meta.get("attachments", []))
+
+            rows = [[InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
+            if att_ct: rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
+            rows.append(kb_back_step())
+            kb = InlineKeyboardMarkup(rows)
+
+            caption = f"🔊 *Audio Summary*\n📧 *From:* {sender}\n📝 *Subject:* {subject}"
+
+            if audio and os.path.exists(audio):
+                with open(audio, "rb") as f:
+                    try:
+                        await context.bot.send_voice(chat_id=uid, voice=f, caption=caption, parse_mode="Markdown", reply_markup=kb)
+                    except Exception as e:
+                        logger.warning(f"send_voice failed in _do_tts: {e}. Falling back to send_audio.")
+                        f.seek(0)
+                        await context.bot.send_audio(chat_id=uid, audio=f, caption=caption, parse_mode="Markdown", reply_markup=kb, filename="voice.mp3")
+                try:
+                    await getattr(query, "message", query).delete()
+                except Exception: pass
+            else:
+                await self._edit(query, "❌ *Audio generation failed.*", markup=kb)
+        finally:
+            if audio and os.path.exists(audio):
+                try:
+                    os.remove(audio)
+                except Exception:
+                    pass
 
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
@@ -1667,78 +1706,83 @@ class TelegramBotManager:
             pass
 
     async def job_emails(self, context: ContextTypes.DEFAULT_TYPE):
-        async with self.email_lock:
-            async with self.ram_semaphore:
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        users = await self.db.get_active_auto_check_users()
-                        for user in users:
-                            uid = user["telegram_id"]
-                            emails = await self.gmail.get_unread_emails(uid, limit=10)
+        async with self.ram_semaphore:
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    users = await self.db.get_active_auto_check_users()
+                    for user in users:
+                        uid = user["telegram_id"]
+                        emails = await self.gmail.get_unread_emails(uid, limit=10)
+                        
+                        if emails == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                            await self._send_reauth_direct(context, uid)
+                            continue
                             
-                            if emails == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-                                await self._send_reauth_direct(context, uid)
+                        if not isinstance(emails, list):
+                            continue
+
+                        for email_item in emails:
+                            mid = email_item["id"]
+                            if mid in self.notified_emails:
                                 continue
-                                
-                            if not isinstance(emails, list):
+                            self.notified_emails.add(mid)
+                            self._store_mid(mid)
+
+                            meta = await self.gmail.get_email_metadata(uid, mid)
+                            if not meta or meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
                                 continue
 
-                            for email_item in emails:
-                                mid = email_item["id"]
-                                if mid in self.notified_emails:
-                                    continue
-                                self.notified_emails.add(mid)
-                                self._store_mid(mid)
+                            sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+                            subject = _safe_md(meta.get("subject", "No Subject"))
+                            att_ct  = len(meta.get("attachments", []))
+                            att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
 
-                                meta = await self.gmail.get_email_metadata(uid, mid)
-                                if not meta or meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
-                                    continue
+                            text = (
+                                f"📩 *New Email Received*\n"
+                                f"━━━━━━━━━━━━━━━━━━\n"
+                                f"👤 *From:* {sender}\n"
+                                f"📝 *Subject:* {subject}"
+                                f"{att_line}"
+                            )
 
-                                sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
-                                subject = _safe_md(meta.get("subject", "No Subject"))
-                                att_ct  = len(meta.get("attachments", []))
-                                att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
-
-                                text = (
-                                    f"📩 *New Email Received*\n"
-                                    f"━━━━━━━━━━━━━━━━━━\n"
-                                    f"👤 *From:* {sender}\n"
-                                    f"📝 *Subject:* {subject}"
-                                    f"{att_line}"
+                            try:
+                                await self.db.db.run(
+                                    lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
+                                    self.db.db.client.table("email_cache").upsert(
+                                        {"telegram_id": u, "gmail_message_id": m,
+                                         "sender": s, "subject": sub, "preview": "new"},
+                                        on_conflict="telegram_id,gmail_message_id"
+                                    ).execute()
                                 )
+                            except Exception:
+                                pass
 
-                                try:
-                                    await self.db.db.run(
-                                        lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
-                                        self.db.db.client.table("email_cache").upsert(
-                                            {"telegram_id": u, "gmail_message_id": m,
-                                             "sender": s, "subject": sub, "preview": "new"},
-                                            on_conflict="telegram_id,gmail_message_id"
-                                        ).execute()
-                                    )
-                                except Exception:
-                                    pass
-
-                                await context.bot.send_message(
-                                    chat_id=uid, text=text, parse_mode="Markdown",
-                                    reply_markup=kb_notification(mid, bool(att_ct)))
-                        
-                        # Explicit memory purge
-                        try:
-                            del emails
-                            del meta
-                            del users
-                        except NameError:
-                            pass
-                        import gc
-                        gc.collect()
-                        
-                        break 
-                    except Exception as e:
-                        logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(3 ** attempt)
+                            await context.bot.send_message(
+                                chat_id=uid, text=text, parse_mode="Markdown",
+                                reply_markup=kb_notification(mid, bool(att_ct)))
+                    
+                    # Explicit memory purge
+                    try:
+                        del emails
+                    except NameError:
+                        pass
+                    try:
+                        del meta
+                    except NameError:
+                        pass
+                    try:
+                        del users
+                    except NameError:
+                        pass
+                    import gc
+                    gc.collect()
+                    
+                    break 
+                except Exception as e:
+                    logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(3 ** attempt)
 
 
     async def job_scheduled(self, context: ContextTypes.DEFAULT_TYPE):
