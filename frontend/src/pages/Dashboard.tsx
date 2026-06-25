@@ -139,6 +139,7 @@ const Dashboard = () => {
   const [sttUsage, setSttUsage] = useState<STTUsage[]>([]);
   const [scheduledEmails, setScheduledEmails] = useState<ScheduledEmail[]>([]);
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
+  const [cacheStats, setCacheStats] = useState<{ hits: number; misses: number; user_count: number } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [role, setRole] = useState<string>('');
@@ -229,7 +230,7 @@ const Dashboard = () => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [usersRes, adminsRes, blocksRes, statsRes, sttRes, schedRes, contactRes] = await Promise.all([
+      const [usersRes, adminsRes, blocksRes, statsRes, sttRes, schedRes, contactRes, cacheRes] = await Promise.all([
         fetch(`${backendUrl}/api/admin/users`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/admins`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/blocks`, { headers: getHeaders() }),
@@ -237,6 +238,7 @@ const Dashboard = () => {
         fetch(`${backendUrl}/api/admin/stt_usage`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/scheduled_emails`, { headers: getHeaders() }),
         fetch(`${backendUrl}/api/admin/contact_messages`, { headers: getHeaders() }),
+        fetch(`${backendUrl}/api/admin/cache-stats`, { headers: getHeaders() }),
       ]);
       if (usersRes.ok) setUsers(await usersRes.json() || []);
       if (adminsRes.ok) setAdmins(await adminsRes.json() || []);
@@ -245,6 +247,7 @@ const Dashboard = () => {
       if (sttRes.ok) { const d = await sttRes.json(); setSttUsage(d.stt_usage || []); }
       if (schedRes.ok) { const d = await schedRes.json(); setScheduledEmails(d.scheduled_emails || []); }
       if (contactRes.ok) { setContactMessages(await contactRes.json() || []); }
+      if (cacheRes.ok) setCacheStats(await cacheRes.json() || null);
     } catch (err) { console.error('Data fetch failed', err); }
     finally { setIsLoading(false); }
   };
@@ -376,7 +379,7 @@ const Dashboard = () => {
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm">
                   <div className="flex items-center justify-between mb-6">
                     <div>
@@ -419,6 +422,53 @@ const Dashboard = () => {
                     <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Sent ({sentEmails})</span>
                     <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-amber-400" /> Pending ({pendingEmails})</span>
                     <span className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-rose-500" /> Failed ({failedEmails})</span>
+                  </div>
+                </div>
+
+                <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl border border-slate-200/50 dark:border-slate-800/50 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2"><Zap className="w-5 h-5 text-amber-500" /> RAM Cache Telemetry</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Live hit-rates & active token caching</p>
+                      </div>
+                    </div>
+                    {cacheStats ? (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="p-3 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-slate-100 dark:border-slate-800/50">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Users</span>
+                            <p className="text-2xl font-black text-slate-800 dark:text-white">{cacheStats.user_count}</p>
+                          </div>
+                          <div className="p-3 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-slate-100 dark:border-slate-800/50">
+                            <span className="text-[10px] font-black text-emerald-500 uppercase tracking-wider block mb-1">Hits</span>
+                            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{cacheStats.hits}</p>
+                          </div>
+                          <div className="p-3 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-slate-100 dark:border-slate-800/50">
+                            <span className="text-[10px] font-black text-rose-500 uppercase tracking-wider block mb-1">Misses</span>
+                            <p className="text-2xl font-black text-rose-600 dark:text-rose-400">{cacheStats.misses}</p>
+                          </div>
+                        </div>
+                        
+                        {(() => {
+                          const total = cacheStats.hits + cacheStats.misses;
+                          const ratio = total > 0 ? Math.round((cacheStats.hits / total) * 100) : 0;
+                          return (
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
+                                <span>Optimization Hit-Rate</span>
+                                <span>{ratio}%</span>
+                              </div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-4 overflow-hidden border border-slate-200/20">
+                                <div className="bg-gradient-to-r from-emerald-400 to-teal-500 h-full rounded-full transition-all duration-500" style={{ width: `${ratio}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-xs text-slate-400 font-bold">No Cache Telemetry Available</div>
+                    )}
                   </div>
                 </div>
               </div>

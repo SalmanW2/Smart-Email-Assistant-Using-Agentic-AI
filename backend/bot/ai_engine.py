@@ -19,6 +19,37 @@ Features:
 import asyncio
 import json
 import logging
+import re
+
+async def _resolve_placeholder_response(text: str, message: str, telegram_id: int) -> str:
+    text_lower = (text or "").lower()
+    placeholders = ["i processed your request", "i completed the action", "action completed successfully", "processed your request"]
+    is_placeholder = not text or any(p in text_lower for p in placeholders)
+    
+    if is_placeholder:
+        intent_words = {"check", "search", "show", "open", "get", "inbox", "email", "emails", "mail", "read", "last", "suna", "sunao", "dikhao", "dekho", "received"}
+        msg_words = set(re.findall(r'\b\w+\b', message.lower()))
+        if msg_words & intent_words:
+            logger.info(f"Placeholder detected. Dynamically searching Gmail for user: {telegram_id}")
+            res_str = await search_gmail_tool(query="label:INBOX", user_id=telegram_id)
+            if "TOKEN_EXPIRED_REAUTH_REQUIRED" in res_str:
+                return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+            try:
+                import json
+                emails_list = json.loads(res_str)
+                if isinstance(emails_list, list) and len(emails_list) > 0:
+                    lines = ["📧 Here are your emails:"]
+                    for item in emails_list[:5]:
+                        subj = item.get("subject", "No Subject")
+                        mid = item.get("id")
+                        lines.append(f"- {subj} [SHOW_EMAIL:{mid}]")
+                    return "\n".join(lines)
+                else:
+                    return "I couldn't find any emails in your inbox."
+            except Exception:
+                pass
+    return text or "I completed the action successfully."
+
 import httpx
 import re
 import os
@@ -197,7 +228,7 @@ class AIEngine:
         and provisions the Gmail API backend client wrapper.
         """
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = settings.GEMINI_MODEL
 
         # Reference to the module-level pending_drafts for Telegram handler retrieval.
         # This lets TelegramBotManager pop drafts via ai_engine.pending_drafts (backward compat).
@@ -386,10 +417,11 @@ class AIEngine:
                         self.active_chats.setdefault(telegram_id, []).append(
                             types.Content(role="user", parts=[types.Part.from_text(text=message)])
                         )
+                        resolved_text = await _resolve_placeholder_response(final_text, message, telegram_id)
                         self.active_chats[telegram_id].append(
-                            types.Content(role="model", parts=[types.Part.from_text(text=final_text)])
+                            types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
                         )
-                        return final_text
+                        return resolved_text
 
                     except Exception as tool_err:
                         logger.error(f"Groq tool error: {tool_err}")
@@ -397,13 +429,14 @@ class AIEngine:
                 else:
                     # Plain chat response
                     content = choice.get("content", "")
+                    resolved_text = await _resolve_placeholder_response(content, message, telegram_id)
                     self.active_chats.setdefault(telegram_id, []).append(
                         types.Content(role="user", parts=[types.Part.from_text(text=message)])
                     )
                     self.active_chats[telegram_id].append(
-                        types.Content(role="model", parts=[types.Part.from_text(text=content)])
+                        types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
                     )
-                    return content
+                    return resolved_text
 
         except httpx.HTTPStatusError as e:
             logger.error(f"Groq HTTP error {e.response.status_code}: {e.response.text}")
@@ -460,7 +493,7 @@ class AIEngine:
                 "DO NOT add [VOICE] for language translation requests. DO NOT add [VOICE] for drafting or searching emails.\n\n"
 
                 "DIRECT RESPONSE RULE:\n"
-                "Answer the user's exact intent directly and concisely. Do NOT send greeting messages or emojis when performing actions. NEVER output raw JSON data or function call payloads directly in the text response. Focus purely on fulfilling the user's request with minimum filler.\n\n"
+                "Answer the user's exact intent directly and concisely. Do NOT send greeting messages or emojis when performing actions. NEVER output raw JSON data or function call payloads directly in the text response. Focus purely on fulfilling the user's request with minimum filler. You must immediately call the appropriate tool without any preambles, greetings, or descriptions of your actions.\n\n"
 
                 f"Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
                 f"Current Date and Time: {utc_now}\n\n"
@@ -546,7 +579,10 @@ class AIEngine:
 
             user_part = types.Part.from_text(text=message)
             user_content = types.Content(role="user", parts=[user_part])
-            contents = self.active_chats[telegram_id] + [user_content]
+            
+            # Apply Jaccard history scoping filter (Zero-Token History Model)
+            scoped_history = self._get_scoped_history(message, self.active_chats[telegram_id])
+            contents = scoped_history + [user_content]
 
             logger.info(f"Triggering Gemini 2.5 Flash for user: {telegram_id}")
 
@@ -624,7 +660,15 @@ class AIEngine:
                     self.active_chats[telegram_id].append(tool_result_content)
                     if final_response.candidates and len(final_response.candidates) > 0 and final_response.candidates[0].content:
                         self.active_chats[telegram_id].append(final_response.candidates[0].content)
-                    return final_response.text or "I completed the action successfully."
+                    final_text = final_response.text or "I completed the action successfully."
+                    resolved_text = await _resolve_placeholder_response(final_text, message, telegram_id)
+                    if resolved_text != final_text:
+                        if self.active_chats[telegram_id]:
+                            self.active_chats[telegram_id].pop()
+                        self.active_chats[telegram_id].append(
+                            types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
+                        )
+                    return resolved_text
                 except Exception as final_err:
                     logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
                     return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
@@ -632,11 +676,79 @@ class AIEngine:
             self.active_chats[telegram_id].append(user_content)
             if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
                 self.active_chats[telegram_id].append(response.candidates[0].content)
-            return response.text or "I processed your request."
+            final_text = response.text or "I processed your request."
+            resolved_text = await _resolve_placeholder_response(final_text, message, telegram_id)
+            if resolved_text != final_text:
+                if self.active_chats[telegram_id]:
+                    self.active_chats[telegram_id].pop()
+                self.active_chats[telegram_id].append(
+                    types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
+                )
+            return resolved_text
 
         except Exception as e:
             logger.error(f"AIEngine.agent_chat error: {e}", exc_info=True)
             return "I encountered an internal tracking error while processing your request. Please try again shortly."
+
+    def _get_scoped_history(self, current_prompt: str, history_list: List[Any]) -> List[Any]:
+        """
+        Filters conversation history using Jaccard keyword similarity.
+        If prompt contains coreference pronouns or actions, keeps history turns with score > 0.15.
+        Otherwise, omits older history completely.
+        """
+        if not history_list:
+            return []
+
+        coreference_pronouns = {
+            'it', 'that', 'this', 'them', 'these', 'those', 'him', 'her', 
+            'usme', 'usko', 'use', 'woh', 'yeh', 'unhe', 'reply', 'jawab', 'suna', 
+            'summarize', 'summary', 'check', 'read', 'open', 'show', 'delete', 'trash',
+            'change', 'modify'
+        }
+        
+        words = re.findall(r'\b\w+\b', current_prompt.lower())
+        has_coreference = any(w in coreference_pronouns for w in words)
+        
+        if not has_coreference:
+            return []
+
+        prompt_keywords = self._extract_keywords(current_prompt)
+        if not prompt_keywords:
+            return []
+
+        scoped_history = []
+        for turn in history_list:
+            turn_text = ""
+            if hasattr(turn, "parts") and turn.parts:
+                for part in turn.parts:
+                    if hasattr(part, "text") and part.text:
+                        turn_text += " " + part.text
+            elif isinstance(turn, dict):
+                turn_text = turn.get("text", "")
+            
+            turn_keywords = self._extract_keywords(turn_text)
+            if not turn_keywords:
+                continue
+                
+            intersection = prompt_keywords.intersection(turn_keywords)
+            union = prompt_keywords.union(turn_keywords)
+            score = len(intersection) / len(union) if union else 0.0
+            
+            if score > 0.15:
+                scoped_history.append(turn)
+                
+        return scoped_history
+
+    @staticmethod
+    def _extract_keywords(text: str) -> set:
+        words = re.findall(r'\b\w+\b', text.lower())
+        stop_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were',
+            'to', 'of', 'for', 'with', 'in', 'on', 'at', 'by', 'from', 'this',
+            'these', 'those', 'please', 'can', 'you', 'i', 'my', 'me', 'your',
+            'se', 'ko', 'ka', 'ki', 'main', 'tum', 'hum', 'aur', 'hi'
+        }
+        return {w for w in words if w not in stop_words}
 
     def clear_chat_session(self, telegram_id: int) -> None:
         """Clears the dynamic chat session history for a specific user."""
@@ -658,64 +770,77 @@ class AIEngine:
         method_used = "groq_whisper"
         transcription_text = ""
 
-        # Attempt Groq Whisper Large V3 transcription
-        if settings.GROQ_API_KEY:
-            try:
-                logger.info(f"Attempting STT transcription via Groq Whisper for user: {telegram_id}")
-                url = "https://api.groq.com/openai/v1/audio/transcriptions"
-                headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
+        try:
+            # Attempt Groq Whisper Large V3 transcription
+            if settings.GROQ_API_KEY:
+                try:
+                    logger.info(f"Attempting STT transcription via Groq Whisper for user: {telegram_id}")
+                    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+                    headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
 
-                with open(file_path, "rb") as f:
-                    files = {"file": (os.path.basename(file_path), f, "audio/ogg")}
-                    data = {"model": "whisper-large-v3", "response_format": "json"}
+                    with open(file_path, "rb") as f:
+                        files = {"file": (os.path.basename(file_path), f, "audio/ogg")}
+                        data = {"model": "whisper-large-v3", "response_format": "json"}
 
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        response = await client.post(url, headers=headers, files=files, data=data)
-                        if response.status_code != 200:
-                            logger.error(f"Groq Whisper error {response.status_code}: {response.text}")
-                        response.raise_for_status()
-                        result = response.json()
-                        transcription_text = result.get("text", "").strip()
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            response = await client.post(url, headers=headers, files=files, data=data)
+                            if response.status_code != 200:
+                                logger.error(f"Groq Whisper error {response.status_code}: {response.text}")
+                            response.raise_for_status()
+                            result = response.json()
+                            transcription_text = result.get("text", "").strip()
 
-                logger.info("Successfully transcribed voice note via Groq Whisper Large V3.")
-            except Exception as whisper_err:
-                logger.warning(f"Groq Whisper transcription failed, starting fallback: {whisper_err}")
+                    logger.info("Successfully transcribed voice note via Groq Whisper Large V3.")
+                except Exception as whisper_err:
+                    logger.warning(f"Groq Whisper transcription failed, starting fallback: {whisper_err}")
 
-        # Fallback to Gemini's native file model uploader if Whisper was bypassed or failed
-        if not transcription_text:
-            try:
-                logger.info("Triggering Gemini file upload STT fallback pipeline")
-                method_used = "gemini_native"
+            # Fallback to Gemini's native file model uploader if Whisper was bypassed or failed
+            if not transcription_text:
+                try:
+                    logger.info("Triggering Gemini file upload STT fallback pipeline")
+                    method_used = "gemini_native"
 
-                config = types.GenerateContentConfig(temperature=0.1)
-                uploaded_file = await self.client.aio.files.upload(
-                    file=file_path
-                )
+                    config = types.GenerateContentConfig(temperature=0.1)
+                    uploaded_file = await self.client.aio.files.upload(
+                        file=file_path
+                    )
 
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=[uploaded_file, "Accurately transcribe this audio. Return ONLY the transcription with no preambles."],
-                    config=config
-                )
-                transcription_text = response.text.strip() if response.text else ""
-            except Exception as gemini_err:
-                logger.error(f"Fallback Gemini STT also failed: {gemini_err}")
-                return "System Error: Speech-to-Text translation engine failed. Please type your message."
+                    response = await self.client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=[uploaded_file, "Accurately transcribe this audio. Return ONLY the transcription with no preambles."],
+                        config=config
+                    )
+                    transcription_text = response.text.strip() if response.text else ""
+                    try:
+                        await self.client.aio.files.delete(name=uploaded_file.name)
+                    except Exception as del_err:
+                        logger.warning(f"Failed deleting remote Gemini file: {del_err}")
+                except Exception as gemini_err:
+                    logger.error(f"Fallback Gemini STT also failed: {gemini_err}")
+                    return "System Error: Speech-to-Text translation engine failed. Please type your message."
 
-        # Compute voice note duration and persist telemetry metrics to Supabase
-        if transcription_text:
-            duration = int((datetime.now() - start_time).total_seconds())
-            try:
-                await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").insert({
-                    "telegram_id": telegram_id,
-                    "method": method_used,
-                    "duration_seconds": max(duration, 1)
-                }).execute())
-                logger.info(f"Successfully logged STT metrics for user {telegram_id}")
-            except Exception as db_err:
-                logger.error(f"Failed logging STT usage parameters to DB: {db_err}")
+            # Compute voice note duration and persist telemetry metrics to Supabase
+            if transcription_text:
+                duration = int((datetime.now() - start_time).total_seconds())
+                try:
+                    await db_manager.db.run(lambda: db_manager.db.client.table("stt_usage").insert({
+                        "telegram_id": telegram_id,
+                        "method": method_used,
+                        "duration_seconds": max(duration, 1)
+                    }).execute())
+                    logger.info(f"Successfully logged STT metrics for user {telegram_id}")
+                except Exception as db_err:
+                    logger.error(f"Failed logging STT usage parameters to DB: {db_err}")
 
-            return transcription_text
+                return transcription_text
+        finally:
+            for fp in [file_path, file_path.replace(".ogg", ".oga"), file_path.replace(".ogg", ".wav"), file_path.replace(".oga", ".wav")]:
+                if fp and os.path.exists(fp):
+                    try:
+                        os.remove(fp)
+                        logger.info(f"Disk Cleanup: Evicted temporary file {fp}")
+                    except Exception as err:
+                        logger.warning(f"Failed deleting temp file {fp}: {err}")
 
         return "[Audio Unclear: Failed to extract written text context]"
 

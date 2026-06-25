@@ -144,15 +144,15 @@ def kb_main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0)),
          InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
-        [InlineKeyboardButton("🔍 Search Emails", callback_data="search_prompt"),
+        [InlineKeyboardButton("🔍 Search", callback_data="search_prompt"),
          InlineKeyboardButton("⚙️ Settings",       callback_data="settings")],
     ])
 
 def kb_back_step() -> list:
     """Returns two side-by-side nav buttons: Go Back (history) + Main Menu (shortcut)."""
     return [
-        InlineKeyboardButton("🔙 Back to Message", callback_data="history_back"),
-        InlineKeyboardButton("🏠 Main Menu", callback_data="menu_main"),
+        InlineKeyboardButton("🔙 Back", callback_data="history_back"),
+        InlineKeyboardButton("🏠 Menu", callback_data="menu_main"),
     ]
 
 def kb_cancel() -> InlineKeyboardMarkup:
@@ -168,14 +168,14 @@ def kb_email_list(msgs: list, offset: int, is_search: bool, has_next: bool) -> I
     
     for i, m in enumerate(msgs):
         rows.append([InlineKeyboardButton(
-            f"📖 Open Email {offset + i + 1}",
+            f"📖 Email {offset + i + 1}",
             callback_data=_cb("read", m["id"][:16], ctx, offset)
         )])
         
     nav = []
     if offset > 0:
         cb = _cb("srpage", offset - 2) if is_search else _cb("inbox", offset - 2)
-        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=cb))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=cb))
     if has_next:
         cb = _cb("srpage", offset + 2) if is_search else _cb("inbox", offset + 2)
         nav.append(InlineKeyboardButton("Next ➡️", callback_data=cb))
@@ -192,11 +192,11 @@ def kb_email_view(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKe
     rows = [
         [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
          InlineKeyboardButton("📝 Summarize", callback_data=_cb("sum",   mid, ctx, offset))],
-        [InlineKeyboardButton("✉️ Quick Reply", callback_data=_cb("reply", mid, ctx, offset)),
-         InlineKeyboardButton("🗑️ Move to Trash", callback_data=_cb("del",   mid, ctx, offset))],
+        [InlineKeyboardButton("✉️ Reply", callback_data=_cb("reply", mid, ctx, offset)),
+         InlineKeyboardButton("🗑️ Trash", callback_data=_cb("del",   mid, ctx, offset))],
     ]
     if has_att:
-        rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", mid, ctx, offset))])
+        rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, ctx, offset))])
         
     rows.append(kb_back_step())
     return InlineKeyboardMarkup(rows)
@@ -205,12 +205,12 @@ def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeybo
     """Summary view — Core actions only."""
     mid = msg_id[:16]
     rows = [
-        [InlineKeyboardButton("📖 Read Full Email", callback_data=_cb("read", mid, ctx, offset)),
+        [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
          InlineKeyboardButton("🔊 Listen",           callback_data=_cb("tts",  mid, ctx, offset))],
-        [InlineKeyboardButton("↩️ Reply to Email", callback_data=_cb("reply", mid, ctx, offset))]
+        [InlineKeyboardButton("↩️ Reply", callback_data=_cb("reply", mid, ctx, offset))]
     ]
     if has_att:
-        rows.insert(1, [InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", mid, ctx, offset))])
+        rows.insert(1, [InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, ctx, offset))])
         
     rows.append(kb_back_step())
     return InlineKeyboardMarkup(rows)
@@ -226,20 +226,20 @@ def kb_notification(msg_id: str, has_att: bool) -> InlineKeyboardMarkup:
         ]
     ]
     if has_att:
-        rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", mid, "inbox", 0))])
+        rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, "inbox", 0))])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu_main")])
     return InlineKeyboardMarkup(rows)
 
 def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
     """Enhanced Draft UI with Dynamic Edit capabilities."""
     rows = [
-        [InlineKeyboardButton("🚀 Send Now",       callback_data="send_draft"),
-         InlineKeyboardButton("✏️ Edit Fields",    callback_data="edit_draft_hub")],
-        [InlineKeyboardButton("📎 Add Attachment", callback_data="attach_hint"),
+        [InlineKeyboardButton("🚀 Send",       callback_data="send_draft"),
+         InlineKeyboardButton("✏️ Edit",    callback_data="edit_draft_hub")],
+        [InlineKeyboardButton("📎 Attach", callback_data="attach_hint"),
          InlineKeyboardButton("❌ Cancel",          callback_data="cancel")]
     ]
     if has_files:
-        rows.insert(2, [InlineKeyboardButton("🗑️ Clear Attachments", callback_data="clear_att")])
+        rows.insert(2, [InlineKeyboardButton("🗑️ Clear", callback_data="clear_att")])
         
     return InlineKeyboardMarkup(rows)
 
@@ -250,7 +250,7 @@ def kb_settings(ai_on: bool, voice: str, auto_on: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(f"{'✅' if ai_on   else '❌'} AI Mode",          callback_data="toggle_ai")],
         [InlineKeyboardButton(v_map.get(voice, "📝 Text Only"),                callback_data="cycle_voice")],
         [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Email Check", callback_data="toggle_auto")],
-        [InlineKeyboardButton("🚪 Logout Account",                             callback_data="logout")],
+        [InlineKeyboardButton("🚪 Logout",                             callback_data="logout")],
         kb_back_step(),
     ])
 
@@ -289,6 +289,7 @@ class TelegramBotManager:
         self.notified_emails:    set = set()
         self.active_voice_tasks: set = set()
         self.email_lock = asyncio.Lock()
+        self.ram_semaphore = asyncio.BoundedSemaphore(value=3)
         
         # Stores the last user text/voice query per user to power the Retry button UX.
         # When any AI call crashes, the user gets a [🔄 Retry] button that re-submits this.
@@ -602,7 +603,7 @@ class TelegramBotManager:
             meta = await self.gmail.get_email_metadata(uid, m["id"])
             if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
                 return await self._prompt_reauth(msg_obj, uid)
-            if "error" in meta:
+            if not meta or "error" in meta:
                 continue
                 
             sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
@@ -626,7 +627,6 @@ class TelegramBotManager:
         
         details = await self.gmail.get_email_details(uid, full_mid)
         if details == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-            # Try to get a message object for reauth prompt
             msg_target = getattr(msg_or_query, 'message', msg_or_query)
             return await self._prompt_reauth(msg_target, uid)
             
@@ -634,6 +634,10 @@ class TelegramBotManager:
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             msg_target = getattr(msg_or_query, 'message', msg_or_query)
             return await self._prompt_reauth(msg_target, uid)
+
+        if not details or not meta:
+            await self._edit(msg_or_query, "❌ *Email not found.* It may have been deleted.", markup=InlineKeyboardMarkup([kb_back_step()]))
+            return
             
         self._store_mid(meta.get("id", full_mid))
 
@@ -763,7 +767,7 @@ class TelegramBotManager:
                         "Do you want to proceed anyway or type a new one?",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_to_email")],
+                            [InlineKeyboardButton("✅ Proceed", callback_data="force_to_email")],
                             [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
                         ])
                     )
@@ -962,7 +966,7 @@ class TelegramBotManager:
                 f"✅ *Saved:* `{_safe_md(fname)}`\nTell me what to do with it or compose an email.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✉️ Compose Email", callback_data="compose")],
+                    [InlineKeyboardButton("✍️ Compose", callback_data="compose")],
                     kb_back_step(),
                 ]))
 
@@ -1096,7 +1100,7 @@ class TelegramBotManager:
             
             if is_contact_related and email_match:
                 email = email_match.group(0)
-                markup = InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Compose to this Contact", callback_data=f"compose_to:{email}")]])
+                markup = InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Compose", callback_data=f"compose_to:{email}")]])
                 clean_msg = fallback_msg.strip()
                 if "saved successfully" in clean_msg.lower() and not clean_msg.startswith("✅"):
                     clean_msg = f"✅ {clean_msg}"
@@ -1204,7 +1208,7 @@ class TelegramBotManager:
             await query.edit_message_text(
                 "🚫 *Canceled.*\n\nReturning to dashboard.",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Dashboard", callback_data="menu_main")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]]))
             return
 
         # ── Edit Draft Hub Integration ──
@@ -1213,8 +1217,8 @@ class TelegramBotManager:
                 "✏️ *Modify Draft Structure Parameters*\nSelect the attribute component boundary grid to update directly:",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("👤 Recipient Email Address", callback_data="edit_field_to")],
-                    [InlineKeyboardButton("📝 Subject Header Text",     callback_data="edit_field_subj")],
+                    [InlineKeyboardButton("👤 Recipient", callback_data="edit_field_to")],
+                    [InlineKeyboardButton("📝 Subject",     callback_data="edit_field_subj")],
                     [InlineKeyboardButton("✉️ Message Body Content",     callback_data="edit_field_body")],
                     [InlineKeyboardButton("🔙 Back to Draft Preview",   callback_data="restore_draft_view")]
                 ])
@@ -1457,7 +1461,7 @@ class TelegramBotManager:
                 "⚠️ *Validation Error:* Cannot process outbound data streams. Recipient address is invalid.", 
                 parse_mode="Markdown", 
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_send_draft")],
+                    [InlineKeyboardButton("✅ Proceed", callback_data="force_send_draft")],
                     [InlineKeyboardButton("🔙 Fix Parameters", callback_data="compose")]
                 ])
             )
@@ -1516,6 +1520,10 @@ class TelegramBotManager:
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
 
+        if not details or not meta:
+            await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            return
+
         body = details.get("body", "") if details else ""
         # Use the token-efficient direct summarize call — avoids polluting chat history
         # and skips expensive tool-setup tokens of agent_chat.
@@ -1550,6 +1558,10 @@ class TelegramBotManager:
         if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
             return await self._prompt_reauth(query.message, uid)
 
+        if not details or not meta:
+            await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            return
+
         body = details.get("body", "") if details else ""
         # Use the token-efficient TTS summary call — avoids polluting chat history
         # and skips tool-setup tokens. Returns clean text ready for TTS with no markdown.
@@ -1568,8 +1580,8 @@ class TelegramBotManager:
         subject = _safe_md(meta.get("subject", ""))
         att_ct  = len(meta.get("attachments", []))
 
-        rows = [[InlineKeyboardButton("📖 Read Full Email", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
-        if att_ct: rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
+        rows = [[InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
+        if att_ct: rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
         rows.append(kb_back_step())
         kb = InlineKeyboardMarkup(rows)
 
@@ -1656,124 +1668,146 @@ class TelegramBotManager:
 
     async def job_emails(self, context: ContextTypes.DEFAULT_TYPE):
         async with self.email_lock:
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    users = await self.db.get_active_auto_check_users()
-                    for user in users:
-                        uid = user["telegram_id"]
-                        emails = await self.gmail.get_unread_emails(uid, limit=10)
-                        
-                        if emails == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-                            await self._send_reauth_direct(context, uid)
-                            continue
-                            
-                        if not isinstance(emails, list):
-                            continue
-
-                        for email_item in emails:
-                            mid = email_item["id"]
-                            if mid in self.notified_emails:
-                                continue
-                            self.notified_emails.add(mid)
-                            self._store_mid(mid)
-
-                            meta = await self.gmail.get_email_metadata(uid, mid)
-                            if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
-                                continue
-
-                            sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
-                            subject = _safe_md(meta.get("subject", "No Subject"))
-                            att_ct  = len(meta.get("attachments", []))
-                            att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
-
-                            text = (
-                                f"📩 *New Email Received*\n"
-                                f"━━━━━━━━━━━━━━━━━━\n"
-                                f"👤 *From:* {sender}\n"
-                                f"📝 *Subject:* {subject}"
-                                f"{att_line}"
-                            )
-
-                            try:
-                                await self.db.db.run(
-                                    lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
-                                    self.db.db.client.table("email_cache").upsert(
-                                        {"telegram_id": u, "gmail_message_id": m,
-                                         "sender": s, "subject": sub, "preview": "new"},
-                                        on_conflict="telegram_id,gmail_message_id"
-                                    ).execute()
-                                )
-                            except Exception:
-                                pass
-
-                            await context.bot.send_message(
-                                chat_id=uid, text=text, parse_mode="Markdown",
-                                reply_markup=kb_notification(mid, bool(att_ct)))
-                    break 
-                except Exception as e:
-                    logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(3 ** attempt)
-
-
-    async def job_scheduled(self, context: ContextTypes.DEFAULT_TYPE):
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                res = await self.db.db.run(
-                    lambda: self.db.db.client.table("scheduled_emails")
-                            .select("*").eq("status", "pending")
-                            .lte("scheduled_time", now).execute())
-                
-                for task in (getattr(res, "data", []) or []):
-                    uid   = task["telegram_id"]
-                    paths = []
+            async with self.ram_semaphore:
+                max_retries = 3
+                for attempt in range(max_retries):
                     try:
-                        for att in (task.get("attachments") or []):
-                            if isinstance(att, dict) and "file_id" in att:
+                        users = await self.db.get_active_auto_check_users()
+                        for user in users:
+                            uid = user["telegram_id"]
+                            emails = await self.gmail.get_unread_emails(uid, limit=10)
+                            
+                            if emails == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                                await self._send_reauth_direct(context, uid)
+                                continue
+                                
+                            if not isinstance(emails, list):
+                                continue
+
+                            for email_item in emails:
+                                mid = email_item["id"]
+                                if mid in self.notified_emails:
+                                    continue
+                                self.notified_emails.add(mid)
+                                self._store_mid(mid)
+
+                                meta = await self.gmail.get_email_metadata(uid, mid)
+                                if not meta or meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
+                                    continue
+
+                                sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+                                subject = _safe_md(meta.get("subject", "No Subject"))
+                                att_ct  = len(meta.get("attachments", []))
+                                att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
+
+                                text = (
+                                    f"📩 *New Email Received*\n"
+                                    f"━━━━━━━━━━━━━━━━━━\n"
+                                    f"👤 *From:* {sender}\n"
+                                    f"📝 *Subject:* {subject}"
+                                    f"{att_line}"
+                                )
+
                                 try:
-                                    fo   = await context.bot.get_file(att["file_id"])
-                                    path = os.path.join(
-                                        tempfile.gettempdir(),
-                                        att.get("file_name", f"att_{uuid.uuid4().hex[:6]}"))
-                                    await fo.download_to_drive(path)
-                                    paths.append(path)
+                                    await self.db.db.run(
+                                        lambda u=uid, m=mid, s=meta.get("sender", ""), sub=meta.get("subject", ""):
+                                        self.db.db.client.table("email_cache").upsert(
+                                            {"telegram_id": u, "gmail_message_id": m,
+                                             "sender": s, "subject": sub, "preview": "new"},
+                                            on_conflict="telegram_id,gmail_message_id"
+                                        ).execute()
+                                    )
                                 except Exception:
                                     pass
 
-                        result = await self.gmail.send_email(uid, task["to_email"], task["subject"], task["body"], paths)
-                            
-                        if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
-                            await self._send_reauth_direct(context, uid)
+                                await context.bot.send_message(
+                                    chat_id=uid, text=text, parse_mode="Markdown",
+                                    reply_markup=kb_notification(mid, bool(att_ct)))
+                        
+                        # Explicit memory purge
+                        try:
+                            del emails
+                            del meta
+                            del users
+                        except NameError:
+                            pass
+                        import gc
+                        gc.collect()
+                        
+                        break 
+                    except Exception as e:
+                        logger.error(f"job_emails connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(3 ** attempt)
+
+
+    async def job_scheduled(self, context: ContextTypes.DEFAULT_TYPE):
+        async with self.ram_semaphore:
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    res = await self.db.db.run(
+                        lambda: self.db.db.client.table("scheduled_emails")
+                                .select("*").eq("status", "pending")
+                                .lte("scheduled_time", now).execute())
+                    
+                    for task in (getattr(res, "data", []) or []):
+                        uid   = task["telegram_id"]
+                        paths = []
+                        try:
+                            for att in (task.get("attachments") or []):
+                                if isinstance(att, dict) and "file_id" in att:
+                                    try:
+                                        fo   = await context.bot.get_file(att["file_id"])
+                                        path = os.path.join(
+                                            tempfile.gettempdir(),
+                                            att.get("file_name", f"att_{uuid.uuid4().hex[:6]}"))
+                                        await fo.download_to_drive(path)
+                                        paths.append(path)
+                                    except Exception:
+                                        pass
+
+                            result = await self.gmail.send_email(uid, task["to_email"], task["subject"], task["body"], paths)
+                                
+                            if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+                                await self._send_reauth_direct(context, uid)
+                                await self.db.db.run(
+                                    lambda t=task: self.db.db.client.table("scheduled_emails")
+                                    .update({"status": "failed"}).eq("id", t["id"]).execute())
+                                continue
+                                
+                            status = "sent" if "successfully" in result.lower() else "failed"
+
                             await self.db.db.run(
-                                lambda t=task: self.db.db.client.table("scheduled_emails")
-                                .update({"status": "failed"}).eq("id", t["id"]).execute())
-                            continue
-                            
-                        status = "sent" if "successfully" in result.lower() else "failed"
+                                lambda t=task, s=status: self.db.db.client.table("scheduled_emails")
+                                .update({"status": s}).eq("id", t["id"]).execute())
 
-                        await self.db.db.run(
-                            lambda t=task, s=status: self.db.db.client.table("scheduled_emails")
-                            .update({"status": s}).eq("id", t["id"]).execute())
-
-                        note = (f"✅ *Scheduled Email Sent!*\n*To:* `{_safe_md(task['to_email'])}`"
-                                if status == "sent"
-                                else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
-                        await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")
-                    finally:
-                        for fp in paths:
-                            if os.path.exists(fp):
-                                try:
-                                    os.remove(fp)
-                                except Exception as e:
-                                    logger.error(f"Failed cleaning up scheduled attachment {fp}: {e}")
-                break 
-            except Exception as e:
-                logger.error(f"job_scheduled connection error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(3 ** attempt) 
+                            note = (f"✅ *Scheduled Email Sent!*\n*To:* `{_safe_md(task['to_email'])}`"
+                                    if status == "sent"
+                                    else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
+                            await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")
+                        finally:
+                            for fp in paths:
+                                if os.path.exists(fp):
+                                    try:
+                                        os.remove(fp)
+                                    except Exception as e:
+                                        logger.error(f"Failed cleaning up scheduled attachment {fp}: {e}")
+                    
+                    # Explicit memory purge
+                    try:
+                        del res
+                    except NameError:
+                        pass
+                    import gc
+                    gc.collect()
+                    
+                    break 
+                except Exception as e:
+                    logger.error(f"job_scheduled connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(3 ** attempt) 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 telegram_handler = TelegramBotManager()

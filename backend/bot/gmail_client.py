@@ -41,17 +41,20 @@ class GmailAuthException(Exception):
 
 
 class GmailClient:
+    _token_cache: Dict[int, dict] = {}
+    cache_hits: int = 0
+    cache_misses: int = 0
+
     def __init__(self) -> None:
         """
         Initializes the Gmail Client.
         Tracks temporary in-memory attachments staged by the user before dispatch.
         """
         self.user_attachments: Dict[int, List[Dict[str, str]]] = {}
-        self._token_cache: Dict[int, dict] = {}
 
     def clear_cache(self, user_id: int) -> None:
         """Evicts a user's cached Google OAuth credentials."""
-        self._token_cache.pop(user_id, None)
+        self.__class__._token_cache.pop(user_id, None)
 
     def _is_auth_error(self, e: Exception) -> bool:
         """
@@ -88,7 +91,7 @@ class GmailClient:
             from datetime import datetime, timezone, timedelta
             
             # Check RAM cache first
-            token_data = self._token_cache.get(user_id)
+            token_data = self.__class__._token_cache.get(user_id)
             cached_valid = False
             
             if token_data:
@@ -109,7 +112,10 @@ class GmailClient:
                     except Exception:
                         pass
 
-            if not cached_valid:
+            if cached_valid:
+                self.__class__.cache_hits += 1
+            else:
+                self.__class__.cache_misses += 1
                 # Fetch from Supabase (DB) on cache miss or expiration
                 user = await db_manager.get_user(user_id)
                 if not user or not user.get("auth_token"):
@@ -181,21 +187,21 @@ class GmailClient:
                         token_data = updated_token_data
                 except Exception as refresh_err:
                     logger.error(f"Failed auto-refreshing OAuth token for user {user_id}: {refresh_err}")
-                    self._token_cache.pop(user_id, None)
+                    self.clear_cache(user_id)
                     raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
 
             # Update/populate the RAM cache
-            self._token_cache[user_id] = token_data
+            self.__class__._token_cache[user_id] = token_data
 
             # Build the discovery service
             service = await asyncio.to_thread(build, 'gmail', 'v1', credentials=credentials, cache_discovery=False)
             return service
         except GmailAuthException as auth_e:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             raise auth_e
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
             logger.error(f"Failed to build Gmail service for user {user_id}: {e}")
             return None
@@ -276,7 +282,7 @@ class GmailClient:
             
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Failed to dispatch email for user {user_id}: {e}")
             return self._handle_auth_error(e)
@@ -300,11 +306,11 @@ class GmailClient:
             )
             return response.get('messages', [])
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error fetching emails list for user {user_id}: {e}")
             return []
@@ -351,17 +357,17 @@ class GmailClient:
                     })
                 except Exception as parse_err:
                     if self._is_auth_error(parse_err):
-                        self._token_cache.pop(user_id, None)
+                        self.clear_cache(user_id)
                         return "TOKEN_EXPIRED_REAUTH_REQUIRED"
                     logger.warning(f"Failed to fetch minimal schema for email {msg['id']}: {parse_err}")
 
             return minimal_emails
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error fetching unread emails for user {user_id}: {e}")
             return []
@@ -390,11 +396,11 @@ class GmailClient:
                     results.append(details)
             return results
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error executing email search query '{query}' for user {user_id}: {e}")
             return []
@@ -436,11 +442,17 @@ class GmailClient:
                 "body": body
             }
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+        except HttpError as e:
+            if e.resp.status == 404:
+                logger.warning(f"Email details not found (404) for message {msg_id}.")
+                return None
+            logger.error(f"Error retrieving email details for message {msg_id}: {e}")
+            return None
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error retrieving email details for message {msg_id}: {e}")
             return None
@@ -478,11 +490,17 @@ class GmailClient:
                 "attachments": attachments
             }
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+        except HttpError as e:
+            if e.resp.status == 404:
+                logger.warning(f"Email metadata not found (404) for message {msg_id}.")
+                return None
+            logger.error(f"Error fetching email metadata for {msg_id}: {e}")
+            return {"error": str(e)}
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error fetching email metadata for {msg_id}: {e}")
             return {"error": str(e)}
@@ -548,11 +566,11 @@ class GmailClient:
             await self._download_parts_attachments(user_id, service, msg_id, payload, attachments_paths)
             return attachments_paths
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Failed to fetch attachments for message {msg_id}: {e}")
             return []
@@ -603,11 +621,11 @@ class GmailClient:
             )
             return True
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error trashing email {msg_id}: {e}")
             return False
@@ -623,11 +641,11 @@ class GmailClient:
             )
             return True
         except GmailAuthException:
-            self._token_cache.pop(user_id, None)
+            self.clear_cache(user_id)
             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
         except Exception as e:
             if self._is_auth_error(e):
-                self._token_cache.pop(user_id, None)
+                self.clear_cache(user_id)
                 return "TOKEN_EXPIRED_REAUTH_REQUIRED"
             logger.error(f"Error untrashing email {msg_id}: {e}")
             return False

@@ -125,6 +125,15 @@ async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(
 async def get_role(admin: Dict = Depends(get_current_admin)):
     return {"role": admin.get("role", "admin")}
 
+@router.get("/cache-stats")
+async def get_cache_stats(admin: Dict = Depends(get_current_admin)):
+    from bot.gmail_client import GmailClient
+    return {
+        "hits": GmailClient.cache_hits,
+        "misses": GmailClient.cache_misses,
+        "user_count": len(GmailClient._token_cache)
+    }
+
 @router.get("/stats")
 async def get_stats(admin: Dict = Depends(get_current_admin)):
     try:

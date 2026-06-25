@@ -105,6 +105,14 @@ class VoiceHandler:
         except Exception as e:
             logger.error(f"Groq Whisper transcription failed: {str(e)}")
             raise Exception("Failed to process voice audio. Please try again.")
+        finally:
+            for fp in [file_path, file_path.replace(".ogg", ".oga"), file_path.replace(".ogg", ".wav"), file_path.replace(".oga", ".wav")]:
+                if fp and os.path.exists(fp):
+                    try:
+                        os.remove(fp)
+                        logger.info(f"Disk Cleanup: Evicted temporary file {fp}")
+                    except Exception as err:
+                        logger.warning(f"Failed deleting temp file {fp}: {err}")
 
     # ==========================================
     # TEXT-TO-SPEECH (TTS) ENGINE
@@ -242,9 +250,15 @@ class VoiceHandler:
         }
         target_voice = edge_voice_map.get(lang_code, 'en-IN-NeerjaNeural')
         
-        communicate = edge_tts.Communicate(text, target_voice)
-        await communicate.save(str(output_file))
-        return self._convert_mp3_to_ogg(str(output_file))
+        try:
+            communicate = edge_tts.Communicate(text, target_voice)
+            await communicate.save(str(output_file))
+            return self._convert_mp3_to_ogg(str(output_file))
+        except Exception as e:
+            if os.path.exists(str(output_file)):
+                try: os.remove(str(output_file))
+                except Exception: pass
+            raise e
 
 # Singleton instance initialization
 voice_handler = VoiceHandler()

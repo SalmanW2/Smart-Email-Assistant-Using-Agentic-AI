@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # --- MISSING VARIABLES ADDED HERE ---
     MAX_CONTEXT_MESSAGES: int = 5
     SUMMARY_GENERATION_THRESHOLD: int = 10
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
