@@ -1003,17 +1003,16 @@ class TelegramBotManager:
         if raw == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "TOKEN_EXPIRED_REAUTH_REQUIRED" in raw:
             return await self._prompt_reauth(msg_obj, uid)
 
-        # ── 1a. SEARCH INTERCEPTOR ──
-        if uid in self.ai_engine.pending_searches:
-            search_data = self.ai_engine.pending_searches.pop(uid)
-            query_str = search_data.get("query", "label:INBOX")
+        # ── SEARCH INTERCEPTOR (AFC + Manual path) ──────────────────────────────────
+        # AFC path: ai_engine returns the sentinel string "__SHOW_SEARCH_LIST__" when
+        # AFC resolved search_gmail_tool internally and pending_searches was populated.
+        # Manual path: response.function_calls was non-empty; pending_searches was set
+        # inside the tool but before _dispatch_ai was called.
+        if raw == "__SHOW_SEARCH_LIST__" or uid in self.ai_engine.pending_searches:
+            search_data = self.ai_engine.pending_searches.pop(uid, {})
+            query_str = search_data.get("query", self.current_queries.get(uid, "label:INBOX"))
             self.current_queries[uid] = query_str
             await self._show_list(msg_obj, uid, offset=0, is_search=True)
-            return
-
-        # ── 1c. SCHEDULE INTERCEPTOR ──
-        if raw and "schedule_email" in raw:
-            await self._edit(msg_obj, "I have scheduled the email for automated dispatch.")
             return
 
         text_content = _clean_ai_text(raw)

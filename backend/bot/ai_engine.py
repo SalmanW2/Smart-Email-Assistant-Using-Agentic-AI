@@ -22,49 +22,48 @@ import logging
 import re
 
 def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
+    """
+    Surgical output sanitizer: ONLY intercepts actual raw tool call syntax leaks.
+    
+    CRITICAL DESIGN RULE: This function must NEVER use broad keyword matching
+    (e.g. checking if "schedule" and "email" both appear) because Gemini's natural
+    language responses routinely contain these words. Such matching causes every
+    real response to be silently replaced with a generic string, breaking the entire
+    conversational and functional flow of the bot.
+    
+    Only intercept text that is structurally a raw tool call signature, not text
+    that happens to mention a tool-related word in natural language.
+    """
     if not final_text:
         return "I completed the action successfully."
-        
-    text_lower = final_text.lower()
-    
-    # 1. Clean up raw function calls leaked in text (e.g. prepareemaildrafttool(...) or prepare_email_draft_tool(...))
-    if "prepare" in text_lower and "draft" in text_lower:
-        return "I have prepared the email draft as requested. You can review, edit, or send it below."
-        
-    if "schedule" in text_lower and "email" in text_lower:
-        return "I have scheduled the email for automated dispatch."
-        
-    if "save" in text_lower and "contact" in text_lower:
-        return "I have saved the contact details in your address book."
-        
-    # Generic match for raw tool call signatures (e.g. tool_name(param=val))
-    if re.search(r'\w+tool\s*\(', text_lower) or re.search(r'\w+_\w+_\w+\s*\(', text_lower):
+
+    # ONLY intercept actual raw function call syntax patterns leaking into text output.
+    # Pattern: word characters directly followed by opening paren (e.g. search_gmail_tool(...))
+    # This precisely matches function call syntax — NOT natural language.
+    if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
+        # The model leaked a raw tool invocation as text
         if telegram_id in _module_pending_drafts:
             return "I have prepared the email draft as requested. You can review, edit, or send it below."
         return "I have completed the action successfully."
-        
-    # 2. Check if final_text contains raw JSON or brackets and extract clean text if possible
+
+    # Secondary guard: catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
+    # Must have at least 3 segments (word_word_word) AND a following open paren
+    if re.search(r'\b[a-z]+_[a-z]+_[a-z]+\s*\(', final_text):
+        if telegram_id in _module_pending_drafts:
+            return "I have prepared the email draft as requested. You can review, edit, or send it below."
+        return "I have completed the action successfully."
+
+    # Attempt to extract clean text from raw JSON objects if somehow leaked
     try:
         cleaned = re.sub(r'```json|```', '', final_text).strip()
-        # If it's a JSON array
-        if cleaned.startswith("[") and cleaned.endswith("]"):
-            emails = json.loads(cleaned)
-            if isinstance(emails, list) and emails:
-                lines = ["📧 *Here are your search results:*"]
-                for item in emails[:5]:
-                    subj = item.get("subject", "No Subject")
-                    mid = item.get("id")
-                    lines.append(f"- {subj} [SHOW_EMAIL:{mid}]")
-                return "\n".join(lines)
-        # If it's a JSON object
-        elif cleaned.startswith("{") and cleaned.endswith("}"):
+        if cleaned.startswith("{") and cleaned.endswith("}"):
             parsed = json.loads(cleaned)
             text = parsed.get("text", "")
             if text:
                 return str(text).strip()
     except Exception:
         pass
-        
+
     return final_text
 
 import httpx
@@ -662,6 +661,22 @@ class AIEngine:
             self.active_chats[telegram_id].append(user_content)
             if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
                 self.active_chats[telegram_id].append(response.candidates[0].content)
+
+            # ── AFC TOOL RESULT DETECTION ──────────────────────────────────────────────
+            # When AFC is enabled, the SDK resolves tool calls internally and returns a
+            # plain text response — response.function_calls is empty. The tool functions
+            # still ran and populated _module_pending_searches / _module_pending_drafts.
+            # We must detect this here before falling through to plain text output.
+            if telegram_id in _module_pending_searches:
+                # A search was executed via AFC. Signal the dispatcher to render the list card.
+                return "__SHOW_SEARCH_LIST__"
+
+            if telegram_id in _module_pending_drafts:
+                # A draft was prepared via AFC. Return the draft JSON payload directly.
+                draft_payload = _module_pending_drafts[telegram_id]
+                import json as _json
+                return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
+
             final_text = response.text or "I processed your request."
             return _sanitize_final_text(final_text, telegram_id)
 
