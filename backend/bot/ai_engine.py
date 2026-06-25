@@ -167,15 +167,21 @@ async def search_gmail_tool(query: str, *, user_id: int) -> str:
     if not results:
         return "No emails found matching the search query parameters."
 
-    # Truncate email bodies before injecting into LLM context to prevent TPM limit exhaustion.
-    # Full body is still available when the user taps 'Read Full Email' in the UI.
+    # Truncate email bodies aggressively to prevent TPM exhaustion.
+    # 300 chars is enough for the model to understand the email topic.
+    # Full body is fetched separately when user taps 'Read Full Email'.
     optimized_results = []
     for email in results:
         if isinstance(email, dict):
             body = email.get("body", "")
+            # Strip all whitespace/newlines from body before truncating to maximize signal density
+            compact_body = " ".join(body.split())
             opt_email = {
-                **email,
-                "body": body[:1000] + ("... [Truncated for AI context]" if len(body) > 1000 else "")
+                "id":      email.get("id", ""),
+                "subject": email.get("subject", ""),
+                "sender":  email.get("sender", ""),
+                "date":    email.get("date", ""),
+                "body":    compact_body[:300] + ("..." if len(compact_body) > 300 else ""),
             }
             optimized_results.append(opt_email)
         else:
@@ -531,49 +537,24 @@ class AIEngine:
             detected_script = self._detect_user_script(message)
 
             system_instructions = (
-                "IDENTITY LOCK: You are the 'Smart Email Assistant', an elite agentic system running inside Telegram.\n"
-                "NEVER break character. NEVER use generic AI disclaimers like 'As a large language model' or 'As an AI'.\n"
-                "You ALREADY have full authorization and direct access to the user's Gmail via your tools. NEVER claim you lack access. NEVER claim you are just an AI model.\n\n"
+                "You are the Smart Email Assistant — an agentic AI inside Telegram with direct Gmail access.\n"
+                "NEVER say 'As an AI' or 'I cannot access'. You already have full Gmail access via tools. Act immediately.\n\n"
 
-                f"LANGUAGE & SCRIPT MIRRORING (MANDATORY):\n"
-                f"The user is currently writing in: {detected_script}\n"
-                f"You MUST respond using the EXACT SAME language and script/alphabet as the user. "
-                f"If user writes in Roman Urdu (Latin letters), reply in Roman Urdu using Latin letters. "
-                f"If user writes in Gurmukhi, reply in Gurmukhi. If user writes in Urdu script, reply in Urdu script. "
-                f"NEVER switch to a different alphabet than what the user is using. "
-                f"CRITICAL: You MUST detect the exact language and script the user is typing in (e.g., English, Urdu, or Roman Urdu) and strictly mirror it. If the user speaks Roman Urdu, you must reply in natural, conversational Roman Urdu. NEVER truncate or leave responses incomplete. Always finish your thoughts.\n\n"
+                f"LANGUAGE: The user writes in {detected_script}. Mirror their exact language and script. Never switch alphabets.\n"
+                f"VOICE TAG: Append '[VOICE]' at the very end ONLY if the user explicitly asks for audio (e.g. 'voice', 'sunao', 'speak'). Never add it otherwise.\n\n"
 
-                "VOICE TAG RULES (STRICT):\n"
-                "Append the tag '[VOICE]' at the VERY END of your response ONLY if the user's CURRENT message "
-                "explicitly requests a voice or audio response using words like: 'voice', 'voice mein', 'audio', "
-                "'suna', 'sunao', 'bol ke batao', 'speak', 'read aloud', 'voice note'.\n"
-                "DO NOT add [VOICE] for any other reason. DO NOT add [VOICE] just because the user is speaking a regional language. "
-                "DO NOT add [VOICE] for language translation requests. DO NOT add [VOICE] for drafting or searching emails.\n\n"
+                f"UTC Time: {utc_now}\n"
+                f"Address Book:{chr(10) + contacts_context if contacts_context else ' (empty)'}\n"
+                f"Memory:{chr(10) + history_context if history_context else ' (none)'}\n\n"
 
-                "DIRECT RESPONSE RULE:\n"
-                "Answer the user's exact intent directly and concisely. Do NOT send greeting messages or emojis when performing actions. NEVER output raw JSON data or function call payloads directly in the text response. Do NOT print the function call name (e.g. 'prepare_email_draft_tool(...)') in your text response. Focus purely on fulfilling the user's request with minimum filler. You must immediately call the appropriate tool without any preambles, greetings, or descriptions of your actions.\n\n"
-
-                f"Your goal is to assist the user in reading, searching, summarizing, drafting, and scheduling emails.\n"
-                f"Current Date and Time: {utc_now}\n\n"
-                f"User's Address Book (Always search here first when names are mentioned):\n"
-                f"{contacts_context or 'No saved contacts in database yet.'}\n\n"
-                f"Recent Conversation Memory Context:\n"
-                f"{history_context or 'No prior conversation history recorded.'}\n\n"
-
-                "CRITICAL SYSTEM DIRECTIVES (STRICT COMPLIANCE REQUIRED):\n"
-                "1. SEARCHING EMAILS: When the user asks to search, find, read, or check their inbox, you MUST IMMEDIATELY call the 'search_gmail_tool'. DO NOT explain that you are an AI, DO NOT make excuses. Just call the tool.\n"
-                "2. DRAFTING/SENDING EMAILS: When the user asks to write, draft, reply, or send an email, you MUST IMMEDIATELY call the 'prepare_email_draft_tool'. NEVER write the email draft as plain text in your response. NEVER ask 'Shall I prepare it?' or 'Shall I send it?'. Call the tool immediately so the system can render the interactive Draft UI Card.\n"
-                "3. SCHEDULING EMAILS: When the user asks to schedule an email, IMMEDIATELY call the 'schedule_email_tool'.\n"
-                "4. HITL GUARDRAIL: If calling 'prepare_email_draft_tool' or 'schedule_email_tool' and you do not know the exact recipient email address (from history or Address Book), you MUST strictly use '[Specify Recipient Email]' as the to_email parameter. NEVER make up or guess email addresses.\n"
-                "5. PLAIN CHAT: Only return a normal conversational response when answering general questions that do not require email actions.\n"
-                "6. EMAIL DISPLAY: When the user asks to show, read, check, or get a specific email from search results, "
-                "include the email's message ID in your response using this exact format: [SHOW_EMAIL:<message_id>]. "
-                "This will trigger the interactive email card UI. Only use this tag when you have a real message ID from search results.\n"
-                "EXAMPLE DIALOGUE:\n"
-                "User: Show my last email.\n"
-                "AI Call: search_gmail_tool(...)\n"
-                'Tool Response: [{"id": "18f9a...", "subject": "Meeting"}]\n'
-                'AI Response: I found your last email about "Meeting". [SHOW_EMAIL:18f9a...]'
+                "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
+                "1. SEARCH: User asks to find/read/check/list emails → call search_gmail_tool immediately.\n"
+                "2. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
+                "3. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
+                "4. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
+                "5. PLAIN CHAT: Only respond conversationally for general questions not requiring email actions.\n"
+                "6. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
+                "Never output raw JSON, function names, or code in your text response."
             )
 
             # Build the tools map referencing standalone module-level functions.
@@ -592,7 +573,7 @@ class AIEngine:
                 p_func.__signature__ = sig.replace(parameters=new_params)
                 tools_map[name] = p_func
 
-            # Safety settings set to BLOCK_NONE
+            # Safety settings — OFF for email content (may contain flagged words)
             _safety_off = [
                 types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT",  threshold="OFF"),
                 types.SafetySetting(category="HARM_CATEGORY_HARASSMENT",          threshold="OFF"),
@@ -600,9 +581,32 @@ class AIEngine:
                 types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT",   threshold="OFF"),
                 types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY",     threshold="OFF"),
             ]
+
+            # ── AFC THROTTLE: maximum_remote_calls=1 ───────────────────────────────────
+            # Default AFC allows up to 10 internal tool-call iterations. On each iteration
+            # the SDK resends the FULL payload (system prompt + history + tool results),
+            # multiplying token consumption by up to 10x per message. This instantly
+            # exhausts free-tier TPM quotas. We cap at 1 to allow exactly one tool call
+            # per user message — sufficient for all email operations (search OR draft).
+            # Multi-step flows (search + draft in one message) are handled by the system
+            # prompt's instruction to call tools sequentially in separate user turns.
+            afc_config = types.AutomaticFunctionCallingConfig(
+                disable=False,
+                maximum_remote_calls=1,
+            )
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
                 tools=list(tools_map.values()),
+                automatic_function_calling=afc_config,
+                temperature=0.2,
+                safety_settings=_safety_off,
+            )
+
+            # Lean config for the secondary formulation call (after manual tool execution).
+            # Tool definitions are not needed here — we're only asking the model to write
+            # a natural-language response based on already-executed tool results.
+            _lean_config = types.GenerateContentConfig(
+                system_instruction=system_instructions,
                 temperature=0.2,
                 safety_settings=_safety_off,
             )
@@ -610,15 +614,17 @@ class AIEngine:
             if telegram_id not in self.active_chats:
                 self.active_chats[telegram_id] = []
 
-            # Prune history: keep within token budget
+            # Prune history: hard cap at MAX_CONTEXT_MESSAGES * 2 content objects
             max_turns = settings.MAX_CONTEXT_MESSAGES * 2
             if len(self.active_chats[telegram_id]) > max_turns:
                 self.active_chats[telegram_id] = self.active_chats[telegram_id][-max_turns:]
 
             user_part = types.Part.from_text(text=message)
             user_content = types.Content(role="user", parts=[user_part])
-            
-            # Apply rolling 8-turn history window
+
+            # Apply rolling 6-turn history window, stripping tool/function-call content.
+            # Tool call objects carry massive token weight (full tool results embedded)
+            # but contribute zero conversational value in follow-up turns.
             scoped_history = self._get_scoped_history(message, self.active_chats[telegram_id])
             contents = scoped_history + [user_content]
 
@@ -685,10 +691,12 @@ class AIEngine:
                         parts=results_parts,
                     )
                     _call_contents = contents + [response.candidates[0].content, tool_result_content]
+                    # Use lean config (no tool definitions) for the formulation call.
+                    # Tool routing is already done; we only need a natural-language response.
                     final_response = await self.client.aio.models.generate_content(
                         model=self.model_name,
                         contents=_call_contents,
-                        config=config,
+                        config=_lean_config,
                     )
                     self.active_chats[telegram_id].append(user_content)
                     if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
@@ -734,12 +742,39 @@ class AIEngine:
 
     def _get_scoped_history(self, current_prompt: str, history_list: List[Any]) -> List[Any]:
         """
-        Returns a balanced rolling window of the last 8 turns of conversation history
-        to optimize token usage and cost efficiency while preserving multi-turn context.
+        Returns a filtered rolling window of the last 6 user/model turns.
+
+        TOKEN OPTIMIZATION:
+        - Capped at 6 content objects (3 user+model pairs) instead of 8.
+        - Tool role and function-call-only model content objects are EXCLUDED.
+          They carry the full tool result JSON in their parts, which is extremely
+          heavy (5 emails * 300 chars each) but provides zero value in follow-up
+          turns since the model already acted on that data.
+        - Only user text turns and model text response turns are preserved.
         """
         if not history_list:
             return []
-        return history_list[-8:]
+
+        # Filter: keep only user and model turns that have actual text parts
+        text_only_turns = []
+        for turn in history_list:
+            if not hasattr(turn, 'role'):
+                continue
+            role = getattr(turn, 'role', None)
+            if role not in ('user', 'model'):
+                # Skip 'tool' role turns entirely — these contain raw tool results
+                continue
+            parts = getattr(turn, 'parts', [])
+            has_text = any(hasattr(p, 'text') and p.text for p in parts)
+            has_only_fn_call = all(
+                (hasattr(p, 'function_call') and p.function_call and not (hasattr(p, 'text') and p.text))
+                for p in parts
+            ) if parts else False
+            if has_text and not has_only_fn_call:
+                text_only_turns.append(turn)
+
+        # Return the 6 most recent qualifying turns
+        return text_only_turns[-6:]
 
     @staticmethod
     def _extract_keywords(text: str) -> set:
