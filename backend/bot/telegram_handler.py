@@ -216,16 +216,18 @@ def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeybo
     return InlineKeyboardMarkup(rows)
 
 def kb_notification(msg_id: str, has_att: bool) -> InlineKeyboardMarkup:
-    """Push notification — Read, AI Summary, Listen, Get Attachments."""
+    """Push notification — AI Summary, Read Email, Listen, Attachments, and Back."""
     mid = msg_id[:16]
     rows = [
-        [InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "inbox", 0))],
-        [InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "inbox", 0)),
-         InlineKeyboardButton("🔊 Listen",        callback_data=_cb("tts",  mid, "inbox", 0))],
+        [
+            InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "inbox", 0)),
+            InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "inbox", 0)),
+            InlineKeyboardButton("🔊 Listen",        callback_data=_cb("tts",  mid, "inbox", 0))
+        ]
     ]
     if has_att:
         rows.append([InlineKeyboardButton("📥 Get Attachments", callback_data=_cb("att", mid, "inbox", 0))])
-        
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu_main")])
     return InlineKeyboardMarkup(rows)
 
 def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
@@ -263,7 +265,8 @@ def _draft_text(state: dict) -> str:
         f"📝 *Subject:* `{_safe_md(state.get('subj', '—'))}`\n"
         f"✉️ *Body:*\n_{_safe_md(state.get('body', '—'))}_\n"
         f"{att_ln}\n\n"
-        f"Review your draft. Tap *Send Now* or *Edit Fields* to modify."
+        f"Review your draft. Tap *Send Now* or *Edit Fields* to modify.\n\n"
+        f"💡 Tip: Agar aap is email ke sath koi file attach karna chahte hain, toh direct is chat mein document upload/send kar dein. Bot use automatic is draft mein stage kar dega."
     )
 
 
@@ -388,7 +391,7 @@ class TelegramBotManager:
     async def _prompt_reauth(self, msg_obj, uid: int):
         state = await self.db.create_auth_session(uid)
         url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
-        text  = "⚠️ *Connection Expired:*\nYour Google Workspace session token is expired or revoked.\nPlease reconnect your account to continue."
+        text  = "⚠️ *Google Connection Lost*\n\nYour session has expired. Please reconnect your Google Workspace account using the link below to restore access."
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect Google Workspace", url=url)]])
         await self._edit(msg_obj, text, markup)
 
@@ -748,22 +751,52 @@ class TelegramBotManager:
         step  = state.get("step")
 
         if step == "AWAIT_TO":
-            # Add strict email regex check
             email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-            if not re.match(email_regex, text.strip()):
-                state["to"] = text.strip()
-                await update.message.reply_text(
-                    "⚠️ *Validation Warning:* The email address format seems unusual or invalid.\n\n"
-                    "Do you want to proceed anyway or type a new one?",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_to_email")],
-                        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-                    ])
-                )
-                return
+            clean_text = text.strip()
+            if not re.match(email_regex, clean_text):
+                # Search contacts for potential name matches
+                found = await self.contacts.find_contacts_by_name(uid, clean_text)
+                if not found:
+                    state["to"] = clean_text
+                    await update.message.reply_text(
+                        "⚠️ *Validation Warning:* The email address format seems unusual or invalid.\n\n"
+                        "Do you want to proceed anyway or type a new one?",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("✅ Confirm Email, Proceed", callback_data="force_to_email")],
+                            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+                        ])
+                    )
+                    return
+                elif len(found) == 1:
+                    state["to"] = found[0]["email_address"]
+                    if state.get("body") and state.get("subj"):
+                        state["step"] = "AWAIT_ATT"
+                        await update.message.reply_text(
+                            _draft_text(state), parse_mode="Markdown",
+                            reply_markup=kb_draft(bool(state.get("attachments"))))
+                    else:
+                        state["step"] = "AWAIT_SUBJ"
+                        await update.message.reply_text(
+                            f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
+                            parse_mode="Markdown", reply_markup=kb_cancel())
+                    return
+                else:
+                    # Multiple matches found: present ambiguity selection inline keyboard
+                    rows = []
+                    for c in found:
+                        lbl = f"{c.get('contact_name')} ({c.get('email_address')})"
+                        rows.append([InlineKeyboardButton(lbl, callback_data=f"select_contact:{c.get('email_address')}")])
+                    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+                    
+                    await update.message.reply_text(
+                        "🔍 *Multiple Contacts Found:*\nSelect the correct recipient:",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(rows)
+                    )
+                    return
 
-            state["to"] = text.strip()
+            state["to"] = clean_text
             if state.get("body") and state.get("subj"):
                 state["step"] = "AWAIT_ATT"
                 await update.message.reply_text(
@@ -964,14 +997,6 @@ class TelegramBotManager:
                 await self._edit(msg_obj, f"🤖 {fallback_txt}")
             return
 
-        # Legacy direct-ID fetching logic (if AI prints ID directly instead of using tool)
-        if "198306a5" in text_content or "email id is" in text_content.lower() or "here is the email" in text_content.lower():
-            mid_match = re.search(r'([a-f0-9]{16})', text_content.lower())
-            if mid_match:
-                detected_mid = mid_match.group(1)
-                self._store_mid(detected_mid)
-                await self._show_email(msg_obj, detected_mid, "inbox", 0, uid)
-                return
 
         # ── 2. DRAFT INTERCEPTOR: Parse JSON payload if tool executed ──
         try:
@@ -1065,7 +1090,19 @@ class TelegramBotManager:
 
         fallback_msg = text_content if text_content else None
         if fallback_msg:
-            await self._edit(msg_obj, f"🤖 {fallback_msg}")
+            # Check if this is a contact save/query response
+            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', fallback_msg)
+            is_contact_related = any(k in fallback_msg.lower() for k in ["contact", "saved", "email is", "address is", "successfully saved"])
+            
+            if is_contact_related and email_match:
+                email = email_match.group(0)
+                markup = InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Compose to this Contact", callback_data=f"compose_to:{email}")]])
+                clean_msg = fallback_msg.strip()
+                if "saved successfully" in clean_msg.lower() and not clean_msg.startswith("✅"):
+                    clean_msg = f"✅ {clean_msg}"
+                await self._edit(msg_obj, clean_msg, markup=markup)
+            else:
+                await self._edit(msg_obj, f"🤖 {fallback_msg}")
         # If text_content is empty (e.g. tool completed silently), don't show any message.
 
     # ── Button handler ─────────────────────────────────────────────────────────
@@ -1080,7 +1117,7 @@ class TelegramBotManager:
             pass
 
         # Intercept and append to deep navigation history array
-        if not data.startswith("history_back") and data not in ["cancel", "menu_main", "logout"]:
+        if not data.startswith("history_back") and data not in ["cancel", "menu_main", "logout", "retry_last_query", "attach_hint", "clear_att"]:
             self._push_history(uid, data)
 
         action, args = _parse_cb(data)
@@ -1253,6 +1290,49 @@ class TelegramBotManager:
                     parse_mode="Markdown", reply_markup=kb_cancel())
             return
 
+        if action == "select_contact":
+            email = args[0] if args else ""
+            state = self.compose_states.get(uid)
+            if not state:
+                self.compose_states[uid] = {
+                    "step": "AWAIT_SUBJ",
+                    "to": email,
+                    "subj": "",
+                    "body": "",
+                    "attachments": []
+                }
+                state = self.compose_states[uid]
+            else:
+                state["to"] = email
+                
+            if state.get("body") and state.get("subj"):
+                state["step"] = "AWAIT_ATT"
+                await query.edit_message_text(
+                    _draft_text(state), parse_mode="Markdown",
+                    reply_markup=kb_draft(bool(state.get("attachments"))))
+            else:
+                state["step"] = "AWAIT_SUBJ"
+                await query.edit_message_text(
+                    f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
+                    parse_mode="Markdown", reply_markup=kb_cancel()
+                )
+            return
+
+        if action == "compose_to":
+            email = args[0] if args else ""
+            self.compose_states[uid] = {
+                "step": "AWAIT_SUBJ",
+                "to": email,
+                "subj": "",
+                "body": "",
+                "attachments": []
+            }
+            await query.edit_message_text(
+                f"✅ *To:* `{_safe_md(email)}`\n\n📝 *Enter Subject:*",
+                parse_mode="Markdown", reply_markup=kb_cancel()
+            )
+            return
+
         if action == "settings":
             prefs = await self._prefs(uid)
             await query.edit_message_text(
@@ -1284,6 +1364,7 @@ class TelegramBotManager:
             await self.db.db.run(lambda: self.db.db.client.table("users")
                                   .update({"auth_token": None})
                                   .eq("telegram_id", uid).execute())
+            self.gmail.clear_cache(uid)
             self.gmail.clear_user_attachments(uid)
             self.compose_states.pop(uid, None)
             await query.edit_message_text(

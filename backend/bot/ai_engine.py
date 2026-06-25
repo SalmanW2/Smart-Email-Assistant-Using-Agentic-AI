@@ -262,6 +262,8 @@ class AIEngine:
         # Map Gemini History Schema to Groq (OpenAI) Chat Schema
         raw_messages = []
         for turn in self.active_chats.get(telegram_id, []):
+            if turn is None or not hasattr(turn, 'role') or turn.role is None:
+                continue
             role = "user" if turn.role == "user" else "assistant"
             text_content = ""
             for part in getattr(turn, "parts", []):
@@ -447,7 +449,8 @@ class AIEngine:
                 f"You MUST respond using the EXACT SAME language and script/alphabet as the user. "
                 f"If user writes in Roman Urdu (Latin letters), reply in Roman Urdu using Latin letters. "
                 f"If user writes in Gurmukhi, reply in Gurmukhi. If user writes in Urdu script, reply in Urdu script. "
-                f"NEVER switch to a different alphabet than what the user is using. CRITICAL: If the user writes in Roman Urdu, you MUST write your reply in Roman Urdu (Latin alphabet). DO NOT reply in Arabic script or Devanagari script.\n\n"
+                f"NEVER switch to a different alphabet than what the user is using. "
+                f"CRITICAL: You MUST detect the exact language and script the user is typing in (e.g., English, Urdu, or Roman Urdu) and strictly mirror it. If the user speaks Roman Urdu, you must reply in natural, conversational Roman Urdu. NEVER truncate or leave responses incomplete. Always finish your thoughts.\n\n"
 
                 "VOICE TAG RULES (STRICT):\n"
                 "Append the tag '[VOICE]' at the VERY END of your response ONLY if the user's CURRENT message "
@@ -521,6 +524,15 @@ class AIEngine:
             if telegram_id not in self.active_chats:
                 self.active_chats[telegram_id] = []
 
+            # Strict sanitizer: filter out None or invalid elements from active_chats
+            clean_turns = []
+            for turn in self.active_chats.get(telegram_id, []):
+                if turn is None:
+                    continue
+                if isinstance(turn, types.Content) and getattr(turn, "role", None) is not None and getattr(turn, "parts", None) is not None:
+                    clean_turns.append(turn)
+            self.active_chats[telegram_id] = clean_turns
+
             # Prune history: keep within token budget, always starting with a user turn
             max_turns = settings.MAX_CONTEXT_MESSAGES * 2
             if len(self.active_chats[telegram_id]) > max_turns:
@@ -569,7 +581,8 @@ class AIEngine:
                             # Append valid 4-step history: user -> model(tool_call) -> tool(result) -> model(ack)
                             # This prevents Gemini 400 errors on the next message due to incomplete tool loops.
                             self.active_chats[telegram_id].append(user_content)
-                            self.active_chats[telegram_id].append(response.candidates[0].content)
+                            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
+                                self.active_chats[telegram_id].append(response.candidates[0].content)
                             tool_ack_part = types.Part.from_function_response(
                                 name=fn_name, response={"result": result_str}
                             )
@@ -606,16 +619,19 @@ class AIEngine:
                         config=config,
                     )
                     self.active_chats[telegram_id].append(user_content)
-                    self.active_chats[telegram_id].append(response.candidates[0].content)
+                    if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
+                        self.active_chats[telegram_id].append(response.candidates[0].content)
                     self.active_chats[telegram_id].append(tool_result_content)
-                    self.active_chats[telegram_id].append(final_response.candidates[0].content)
+                    if final_response.candidates and len(final_response.candidates) > 0 and final_response.candidates[0].content:
+                        self.active_chats[telegram_id].append(final_response.candidates[0].content)
                     return final_response.text or "I completed the action successfully."
                 except Exception as final_err:
                     logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
                     return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
             self.active_chats[telegram_id].append(user_content)
-            self.active_chats[telegram_id].append(response.candidates[0].content)
+            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
+                self.active_chats[telegram_id].append(response.candidates[0].content)
             return response.text or "I processed your request."
 
         except Exception as e:
@@ -714,43 +730,59 @@ class AIEngine:
         Generates a concise, 2-sentence summary of the email objective.
         Uses a direct single-turn call — does NOT update active_chats history.
         """
-        try:
-            prompt = (
-                "Analyze the email content below and write a summary of exactly 2 sentences. "
-                "The summary must strictly explain what the sender wants to say and what their primary objective or purpose is. "
-                "Do NOT mention who is sending the email (do not include any names, sender email addresses, or phrases like 'The sender is'). "
-                "Do NOT use bullet points, numbering, or conversational fillers. Return exactly 2 sentences.\n\n"
-                f"Email:\n{email_body[:5000]}"
-            )
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text.strip() if response.text else "Summary unavailable."
-        except Exception as e:
-            logger.error(f"Summarize email error: {e}")
-            return "Email abstractive summary failed due to internal analytical errors."
+        prompt = (
+            "Analyze the email content below and write a summary of exactly 2 sentences. "
+            "The summary must strictly explain what the sender wants to say and what their primary objective or purpose is. "
+            "Do NOT mention who is sending the email (do not include any names, sender email addresses, or phrases like 'The sender is'). "
+            "Do NOT use bullet points, numbering, or conversational fillers. Return exactly 2 sentences.\n\n"
+            f"Email:\n{email_body[:5000]}"
+        )
+        for attempt in range(2):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt
+                )
+                return response.text.strip() if response.text else "Summary unavailable."
+            except Exception as e:
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    logger.warning(f"Gemini 503 UNAVAILABLE on summarize_email attempt {attempt + 1}. Retrying...")
+                    if attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                logger.error(f"Summarize email error: {e}")
+                break
+        return "Email abstractive summary failed due to internal analytical errors."
 
     async def generate_tts_summary(self, email_body: str) -> str:
         """
         Generates a 2-3 sentence spoken summary optimized for text-to-speech delivery.
         Uses a direct single-turn call — does NOT update active_chats history.
         """
-        try:
-            prompt = (
-                "You are a voice assistant. Read the following email and write a natural, spoken summary "
-                "in exactly 2-3 sentences. Use simple, clear language suitable for text-to-speech playback. "
-                "Do not use bullet points, markdown symbols, or special characters.\n\n"
-                f"Email:\n{email_body[:3000]}"
-            )
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text.strip() if response.text else "Unable to generate audio summary."
-        except Exception as e:
-            logger.error(f"TTS summary generation error: {e}")
-            return "Audio summary generation failed."
+        prompt = (
+            "You are a voice assistant. Read the following email and write a natural, spoken summary "
+            "in exactly 2-3 sentences. Use simple, clear language suitable for text-to-speech playback. "
+            "Do not use bullet points, markdown symbols, or special characters.\n\n"
+            f"Email:\n{email_body[:3000]}"
+        )
+        for attempt in range(2):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt
+                )
+                return response.text.strip() if response.text else "Unable to generate audio summary."
+            except Exception as e:
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    logger.warning(f"Gemini 503 UNAVAILABLE on generate_tts_summary attempt {attempt + 1}. Retrying...")
+                    if attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                logger.error(f"TTS summary generation error: {e}")
+                break
+        return "Audio summary generation failed."
 
 
 
