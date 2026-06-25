@@ -1003,6 +1003,19 @@ class TelegramBotManager:
         if raw == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "TOKEN_EXPIRED_REAUTH_REQUIRED" in raw:
             return await self._prompt_reauth(msg_obj, uid)
 
+        # ── 1a. SEARCH INTERCEPTOR ──
+        if uid in self.ai_engine.pending_searches:
+            search_data = self.ai_engine.pending_searches.pop(uid)
+            query_str = search_data.get("query", "label:INBOX")
+            self.current_queries[uid] = query_str
+            await self._show_list(msg_obj, uid, offset=0, is_search=True)
+            return
+
+        # ── 1c. SCHEDULE INTERCEPTOR ──
+        if raw and "schedule_email" in raw:
+            await self._edit(msg_obj, "I have scheduled the email for automated dispatch.")
+            return
+
         text_content = _clean_ai_text(raw)
         draft_data   = None
 
@@ -1024,7 +1037,7 @@ class TelegramBotManager:
             except Exception as e:
                 logger.warning(f"SHOW_EMAIL card render failed: {e}. Falling back to text.")
                 fallback_txt = text_content if text_content else "I was unable to display the email card. Please try again."
-                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{fallback_txt}")
+                await self._edit(msg_obj, fallback_txt)
             return
 
 
@@ -1093,7 +1106,7 @@ class TelegramBotManager:
                     with open(audio, "rb") as f:
                         try:
                             if voice_pref == "both":
-                                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{text_content}")
+                                await self._edit(msg_obj, text_content)
                                 await context.bot.send_voice(chat_id=uid, voice=f)
                             else:
                                 await context.bot.send_voice(chat_id=uid, voice=f)
@@ -1136,9 +1149,9 @@ class TelegramBotManager:
                 clean_msg = fallback_msg.strip()
                 if "saved successfully" in clean_msg.lower() and not clean_msg.startswith("✅"):
                     clean_msg = f"✅ {clean_msg}"
-                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{clean_msg}", markup=markup)
+                await self._edit(msg_obj, clean_msg, markup=markup)
             else:
-                await self._edit(msg_obj, f"✨ *Assistant:*\n\n{fallback_msg}")
+                await self._edit(msg_obj, fallback_msg)
         # If text_content is empty (e.g. tool completed silently), don't show any message.
 
     # ── Button handler ─────────────────────────────────────────────────────────

@@ -100,6 +100,7 @@ logger = logging.getLogger(__name__)
 # The GmailClient and pending_drafts are lazily initialized here.
 _module_gmail_client = None
 _module_pending_drafts: Dict[int, Dict[str, Any]] = {}
+_module_pending_searches: Dict[int, Dict[str, Any]] = {}
 
 
 def _get_gmail_client():
@@ -122,6 +123,7 @@ async def search_gmail_tool(query: str, *, user_id: int) -> str:
     Tool: Searches the user's Gmail inbox for specific threads or messages.
     """
     logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with query: {query}")
+    _module_pending_searches[user_id] = {"query": query}
     gmail = _get_gmail_client()
     results = await gmail.search_emails(user_id, query, max_results=5)
     if not results:
@@ -250,6 +252,7 @@ class AIEngine:
         # Reference to the module-level pending_drafts for Telegram handler retrieval.
         # This lets TelegramBotManager pop drafts via ai_engine.pending_drafts (backward compat).
         self.pending_drafts = _module_pending_drafts
+        self.pending_searches = _module_pending_searches
 
         # Multi-user conversation history cache for persistent stateful chat sessions
         self.active_chats: Dict[int, List[types.Content]] = {}
