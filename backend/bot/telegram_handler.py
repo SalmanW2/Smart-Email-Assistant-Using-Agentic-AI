@@ -288,7 +288,7 @@ def _draft_text(state: dict) -> str:
         f"✉️ *Body:*\n_{_safe_md(state.get('body', '—'))}_\n"
         f"{att_ln}\n\n"
         f"Review your draft. Tap *Send Now* or *Edit Fields* to modify.\n\n"
-        f"💡 Tip: Agar aap is email ke sath koi file attach karna chahte hain, toh direct is chat mein document upload/send kar dein. Bot use automatic is draft mein stage kar dega."
+        f"💡 Tip: If you want to attach a file to this email, simply upload/send the document directly in this chat. The bot will automatically stage it in this draft."
     )
 
 

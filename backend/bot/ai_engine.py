@@ -451,6 +451,11 @@ class AIEngine:
                         if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
 
+                        # Intercept searches right away!
+                        if telegram_id in _module_pending_searches:
+                            # Groq ran search_gmail_tool. Return the sentinel.
+                            return "__SHOW_SEARCH_LIST__"
+
                         # Intercept interactive UI cards and return early
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
                             # Store a clean user+model pair so Groq history stays valid
@@ -540,7 +545,7 @@ class AIEngine:
                 "You are the Smart Email Assistant — an agentic AI inside Telegram with direct Gmail access.\n"
                 "NEVER say 'As an AI' or 'I cannot access'. You already have full Gmail access via tools. Act immediately.\n\n"
 
-                f"LANGUAGE: The user writes in {detected_script}. Mirror their exact language and script. Never switch alphabets.\n"
+                f"LANGUAGE ENFORCEMENT: You must strictly maintain a Professional English persona at all times. The user is currently writing in: {detected_script}. ONLY respond in Urdu, Roman Urdu, or any other regional language IF the user explicitly demands it in their current message. Otherwise, default to clear, professional English.\n"
                 f"VOICE TAG: Append '[VOICE]' at the very end ONLY if the user explicitly asks for audio (e.g. 'voice', 'sunao', 'speak'). Never add it otherwise.\n\n"
 
                 f"UTC Time: {utc_now}\n"
