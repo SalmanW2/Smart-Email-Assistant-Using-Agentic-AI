@@ -61,7 +61,8 @@ class DBManager:
                     "telegram_id": telegram_id,
                     "ai_mode_enabled": True,
                     "voice_preference": "text",
-                    "auto_check_enabled": True
+                    "auto_check_enabled": True,
+                    "pagination_limit": 2
                 }
                 await self.db.run(lambda: self.db.client.table("user_preferences").insert(prefs_data).execute())
             except Exception as pref_e:

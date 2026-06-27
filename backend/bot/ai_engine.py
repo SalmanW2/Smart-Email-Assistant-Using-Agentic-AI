@@ -49,7 +49,7 @@ def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
     that happens to mention a tool-related word in natural language.
     """
     if not final_text:
-        return "I completed the action successfully."
+        return "✅ Action completed successfully."
 
     # ONLY intercept actual raw function call syntax patterns leaking into text output.
     # Pattern: word characters directly followed by opening paren (e.g. search_gmail_tool(...))
@@ -57,15 +57,15 @@ def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
     if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
         # The model leaked a raw tool invocation as text
         if telegram_id in _module_pending_drafts:
-            return "I have prepared the email draft as requested. You can review, edit, or send it below."
-        return "I have completed the action successfully."
+            return "✅ Email draft prepared."
+        return "✅ Action completed successfully."
 
     # Secondary guard: catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
     # Must have at least 3 segments (word_word_word) AND a following open paren
     if re.search(r'\b[a-z]+_[a-z]+_[a-z]+\s*\(', final_text):
         if telegram_id in _module_pending_drafts:
-            return "I have prepared the email draft as requested. You can review, edit, or send it below."
-        return "I have completed the action successfully."
+            return "✅ Email draft prepared."
+        return "✅ Action completed successfully."
 
     # Attempt to extract clean text from raw JSON objects if somehow leaked
     try:
@@ -165,6 +165,7 @@ async def search_gmail_tool(query: str, *, user_id: int) -> str:
     gmail = _get_gmail_client()
     results = await gmail.search_emails(user_id, query, max_results=5)
     if not results:
+        _module_pending_searches.pop(user_id, None)
         return "No emails found matching the search query parameters."
 
     # Truncate email bodies aggressively to prevent TPM exhaustion.
@@ -542,7 +543,9 @@ class AIEngine:
             detected_script = self._detect_user_script(message)
 
             system_instructions = (
-                "You are the Smart Email Assistant — an agentic AI inside Telegram with direct Gmail access.\n"
+                "You are the direct native user interface dashboard engine for Gmail.\n"
+                "NEVER speak as a conversational middleman (avoid phrases like 'The sender is saying...', 'This email states...', 'The email is about...').\n"
+                "Act strictly as a clean native dashboard presentation layer. Serve direct data and complete tasks natively, without conversational introductions.\n"
                 "NEVER say 'As an AI' or 'I cannot access'. You already have full Gmail access via tools. Act immediately.\n\n"
 
                 f"LANGUAGE ENFORCEMENT: You must strictly maintain a Professional English persona at all times. The user is currently writing in: {detected_script}. ONLY respond in Urdu, Roman Urdu, or any other regional language IF the user explicitly demands it in their current message. Otherwise, default to clear, professional English.\n"
@@ -557,8 +560,9 @@ class AIEngine:
                 "2. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
                 "3. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
                 "4. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
-                "5. PLAIN CHAT: Only respond conversationally for general questions not requiring email actions.\n"
+                "5. PLAIN CHAT: Only respond conversationally for general questions not requiring email actions. Keep responses direct and native, avoiding middleman preambles.\n"
                 "6. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
+                "7. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
                 "Never output raw JSON, function names, or code in your text response."
             )
 
@@ -665,6 +669,21 @@ class AIEngine:
 
                         if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
                             return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+
+                        if telegram_id in _module_pending_searches:
+                            self.active_chats[telegram_id].append(user_content)
+                            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
+                                self.active_chats[telegram_id].append(response.candidates[0].content)
+                            tool_ack_part = types.Part.from_function_response(
+                                name=fn_name, response={"result": result_str}
+                            )
+                            self.active_chats[telegram_id].append(
+                                types.Content(role="tool", parts=[tool_ack_part])
+                            )
+                            self.active_chats[telegram_id].append(
+                                types.Content(role="model", parts=[types.Part.from_text(text="Search executed and results displayed to user.")])
+                            )
+                            return "__SHOW_SEARCH_LIST__"
 
                         if "prepare_draft" in result_str or "schedule_email" in result_str:
                             self.active_chats[telegram_id].append(user_content)
@@ -894,15 +913,27 @@ class AIEngine:
 
     async def summarize_email(self, email_body: str) -> str:
         """
-        Generates a concise, 2-sentence summary of the email objective.
+        Generates a concise, structured summary of the email objective.
         Uses a direct single-turn call — does NOT update active_chats history.
         """
+        clean_body = " ".join(email_body.strip().split())
+        if not clean_body:
+            return "The email is empty."
+
+        words = clean_body.split()
+        if len(words) <= 15:
+            quoted_text = clean_body.strip('"\'')
+            return f"\"{quoted_text}\""
+
         prompt = (
-            "Analyze the email content below and write a summary of exactly 2 sentences. "
-            "The summary must strictly explain what the sender wants to say and what their primary objective or purpose is. "
-            "Do NOT mention who is sending the email (do not include any names, sender email addresses, or phrases like 'The sender is'). "
-            "Do NOT use bullet points, numbering, or conversational fillers. Return exactly 2 sentences.\n\n"
-            f"Email:\n{email_body[:5000]}"
+            "You are a native email dashboard engine. Analyze the email content below and generate a structured, highly actionable summary.\n\n"
+            "CRITICAL GUIDELINES:\n"
+            "1. Do NOT use meta-conversational introductory phrases (such as 'The sender is saying...', 'This email states...', 'The sender sent this...', 'The email is about...'). Begin the summary or bullet points directly with the core message/topic.\n"
+            "2. For simple or short emails: Output a concise summary of 1-2 sentences.\n"
+            "3. For complex, multi-layered, or informational emails (such as announcements, exam schedules, or logistical updates): Output exactly 2 to 3 clean, concise bullet points (using '-' as bullet). Capture the primary objective first, then secondary important details accurately (e.g., where to access files, deadlines, or specific platforms/LMS like Odoo if mentioned).\n"
+            "4. Do NOT mention sender/recipient names or email addresses.\n"
+            "5. Keep it direct, objective, and premium. Avoid conversational preambles.\n\n"
+            f"Email Content:\n{email_body[:5000]}"
         )
         # ── Attempt via Groq first to save Gemini quota ─────────────────────────
         if settings.GROQ_API_KEY:

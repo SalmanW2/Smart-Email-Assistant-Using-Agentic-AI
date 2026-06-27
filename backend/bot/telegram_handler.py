@@ -140,7 +140,7 @@ def _esc_html(text: str) -> str:
 def _parse_sender_header(raw_sender: str) -> tuple:
     """Parses a sender header (e.g. 'Name <email>') into (name, email) tuple."""
     if not raw_sender:
-        return "Unknown", "Unknown"
+        return "Unknown", ""
     
     # Check for name <email> format
     match = re.search(r'^(.*?)\s*<([^>]+)>', raw_sender)
@@ -156,19 +156,33 @@ def _parse_sender_header(raw_sender: str) -> tuple:
         name = raw_sender.split("@")[0]
         return name, raw_sender
         
-    return raw_sender, "Unknown"
+    return raw_sender, ""
+
+
+def _has_draft_content(state: dict) -> bool:
+    """Returns True if the draft state contains user-entered data."""
+    if not state:
+        return False
+    return bool(state.get("to") or state.get("subj") or state.get("body") or state.get("attachments"))
 
 
 # ── Keyboard Builders ──────────────────────────────────────────────────────────
 
-def kb_main_menu() -> InlineKeyboardMarkup:
+def kb_main_menu(has_draft: bool = False) -> InlineKeyboardMarkup:
     """Builds the main dashboard keyboard with symmetrical 2x2 grid."""
-    return InlineKeyboardMarkup([
+    rows = []
+    if has_draft:
+        rows.append([
+            InlineKeyboardButton("📝 Resume Draft", callback_data="resume_draft"),
+            InlineKeyboardButton("🗑️ Discard", callback_data="cancel")
+        ])
+    rows.extend([
         [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0)),
          InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
         [InlineKeyboardButton("🔍 Search", callback_data="search_prompt"),
          InlineKeyboardButton("⚙️ Settings",       callback_data="settings")],
     ])
+    return InlineKeyboardMarkup(rows)
 
 def kb_back_step() -> list:
     """Returns two side-by-side nav buttons: Go Back (history) + Main Menu (shortcut)."""
@@ -183,7 +197,7 @@ def kb_cancel() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
     ])
 
-def kb_email_list(msgs: list, offset: int, is_search: bool, has_next: bool) -> InlineKeyboardMarkup:
+def kb_email_list(msgs: list, offset: int, is_search: bool, has_next: bool, limit: int = 2) -> InlineKeyboardMarkup:
     """Builds pagination keyboard for email lists."""
     rows = []
     ctx = "search" if is_search else "inbox"
@@ -196,10 +210,10 @@ def kb_email_list(msgs: list, offset: int, is_search: bool, has_next: bool) -> I
         
     nav = []
     if offset > 0:
-        cb = _cb("srpage", offset - 2) if is_search else _cb("inbox", offset - 2)
+        cb = _cb("srpage", max(0, offset - limit)) if is_search else _cb("inbox", max(0, offset - limit))
         nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=cb))
     if has_next:
-        cb = _cb("srpage", offset + 2) if is_search else _cb("inbox", offset + 2)
+        cb = _cb("srpage", offset + limit) if is_search else _cb("inbox", offset + limit)
         nav.append(InlineKeyboardButton("Next ➡️", callback_data=cb))
         
     if nav:
@@ -212,7 +226,7 @@ def kb_email_view(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKe
     """Builds inline actions for full email viewing."""
     mid = msg_id[:16]
     rows = [
-        [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
+        [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read_html", mid, ctx, offset)),
          InlineKeyboardButton("📝 Summarize", callback_data=_cb("sum",   mid, ctx, offset))],
         [InlineKeyboardButton("✉️ Reply", callback_data=_cb("reply", mid, ctx, offset)),
          InlineKeyboardButton("🗑️ Trash", callback_data=_cb("del",   mid, ctx, offset))],
@@ -267,13 +281,15 @@ def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
         
     return InlineKeyboardMarkup(rows)
 
-def kb_settings(ai_on: bool, voice: str, auto_on: bool) -> InlineKeyboardMarkup:
+def kb_settings(ai_on: bool, voice: str, auto_on: bool, pag_limit: int = 2) -> InlineKeyboardMarkup:
     """User preferences keyboard."""
     v_map = {"text": "📝 Text Only", "voice": "🔊 Voice Only", "both": "📝+🔊 Both"}
+    pag_label = "📄 View: Compact (2/pg)" if pag_limit == 2 else "📄 View: Standard (5/pg)"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'✅' if ai_on   else '❌'} AI Mode",          callback_data="toggle_ai")],
         [InlineKeyboardButton(v_map.get(voice, "📝 Text Only"),                callback_data="cycle_voice")],
         [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Check", callback_data="toggle_auto")],
+        [InlineKeyboardButton(pag_label,                                       callback_data="cycle_pagination")],
         [InlineKeyboardButton("🚪 Logout",                             callback_data="logout")],
         kb_back_step(),
     ])
@@ -343,11 +359,13 @@ class TelegramBotManager:
         try:
             prefs = await self.db.get_user_preferences(uid)
             if prefs:
+                if "pagination_limit" not in prefs or prefs.get("pagination_limit") is None:
+                    prefs["pagination_limit"] = 2
                 return prefs
         except Exception as e:
             logger.debug(f"Preference fetch fallback error: {e}")
             pass
-        return {"ai_mode_enabled": True, "voice_preference": "text", "auto_check_enabled": True}
+        return {"ai_mode_enabled": True, "voice_preference": "text", "auto_check_enabled": True, "pagination_limit": 2}
 
     async def _send(self, update: Update, text: str,
                     markup: InlineKeyboardMarkup | None = None,
@@ -583,11 +601,18 @@ class TelegramBotManager:
         self._clear_history(u.id)
         email_display = acc["user"].get("email") or "User"
         
+        has_draft = u.id in self.compose_states
+        if has_draft:
+            state = self.compose_states[u.id]
+            if "step" in state and state["step"] != "PAUSED":
+                state["paused_step"] = state["step"]
+                state["step"] = "PAUSED"
+                
         await self._send(update,
             f"✅ *Authenticated as {email_display}*\n\n"
             "🎛️ *Smart Email Assistant Dashboard*\n"
             "Select an action below to manage your inbox:",
-            kb_main_menu())
+            kb_main_menu(has_draft))
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
@@ -598,14 +623,24 @@ class TelegramBotManager:
             return
             
         self._clear_history(u.id)
-        await self._send(update, "🎛️ *Main Dashboard*\n\nSelect an action:", kb_main_menu())
+        
+        has_draft = u.id in self.compose_states
+        if has_draft:
+            state = self.compose_states[u.id]
+            if "step" in state and state["step"] != "PAUSED":
+                state["paused_step"] = state["step"]
+                state["step"] = "PAUSED"
+                
+        await self._send(update, "🎛️ *Main Dashboard*\n\nSelect an action:", kb_main_menu(has_draft))
 
     # ── Email list ─────────────────────────────────────────────────────────────
 
     async def _show_list(self, msg_obj, uid: int, offset: int, is_search: bool):
         query = self.current_queries.get(uid, "is:unread") if is_search else "label:INBOX"
+        prefs = await self._prefs(uid)
+        limit = prefs.get("pagination_limit", 2)
         try:
-            messages = await self.gmail.get_emails(uid, query=query, max_results=offset + 3)
+            messages = await self.gmail.get_emails(uid, query=query, max_results=offset + limit + 1)
             if messages == "TOKEN_EXPIRED_REAUTH_REQUIRED":
                 return await self._prompt_reauth(msg_obj, uid)
         except Exception:
@@ -616,8 +651,8 @@ class TelegramBotManager:
             await self._edit(msg_obj, lbl, InlineKeyboardMarkup([kb_back_step()]))
             return
 
-        display  = messages[offset:offset + 2]
-        has_next = len(messages) > offset + 2
+        display  = messages[offset:offset + limit]
+        has_next = len(messages) > offset + limit
         header   = f"🔍 *Results:* `{_safe_md(query)}`\n\n" if is_search else "📥 *Your Inbox*\n\n"
         lines    = [header]
 
@@ -631,12 +666,15 @@ class TelegramBotManager:
                 
             raw_sender = meta.get("sender", "Unknown")
             name, email = _parse_sender_header(raw_sender)
-            sender_formatted = f"👤 *{_safe_md(name)}* `({_safe_md(email)})`"
+            if email:
+                sender_formatted = f"👤 *{_safe_md(name)}* `({_safe_md(email)})`"
+            else:
+                sender_formatted = f"👤 *{_safe_md(name)}*"
             subject = _safe_md(meta.get("subject", "No Subject"))
             lines.append(f"*{offset + i + 1}.* {sender_formatted}\n   📝 *Subject:* _{subject}_\n")
 
         await self._edit(msg_obj, "\n".join(lines),
-                         kb_email_list(display, offset, is_search, has_next))
+                         kb_email_list(display, offset, is_search, has_next, limit))
 
     # ── Full email render ──────────────────────────────────────────────────────
 
@@ -682,7 +720,9 @@ class TelegramBotManager:
         att_list = meta.get("attachments", [])
         att_line = f"\n📎 <b>{len(att_list)} Attachment(s)</b>" if att_list else ""
 
-        text = (f"📧 <b>From:</b> 👤 <b>{safe_name}</b> <code>({safe_email})</code>\n"
+        from_line = f"📧 <b>From:</b> 👤 <b>{safe_name}</b> <code>({safe_email})</code>" if email else f"📧 <b>From:</b> 👤 <b>{safe_name}</b>"
+
+        text = (f"{from_line}\n"
                 f"📝 <b>Subject:</b> {safe_subject}{att_line}\n"
                 f"{'━' * 20}\n\n{safe_body}")
 
@@ -734,7 +774,7 @@ class TelegramBotManager:
         if await self._gate(update, u.id, acc["status"]):
             return
 
-        if uid in self.compose_states:
+        if uid in self.compose_states and self.compose_states[uid].get("step") != "PAUSED":
             await self._compose_step(update, uid, text)
             return
 
@@ -979,7 +1019,7 @@ class TelegramBotManager:
             await msg.edit_text("❌ *Download failed.* Could not fetch the attachment from Telegram servers.", parse_mode="Markdown")
             return
 
-        if uid in self.compose_states:
+        if uid in self.compose_states and self.compose_states[uid].get("step") != "PAUSED":
             state = self.compose_states[uid]
             state.setdefault("attachments", []).append(fpath)
             state["step"] = "AWAIT_ATT"
@@ -1193,15 +1233,62 @@ class TelegramBotManager:
             if not prev_state:
                 return await self.cmd_menu(update, context)
             # python-telegram-bot v22 forbids mutating query.data (it's immutable).
-            # Instead we re-dispatch by re-parsing the previous state directly.
-            data   = prev_state
+            data = prev_state
+            action, args = _parse_cb(data)
+
+        if action == "discard_then":
+            for fp in (self.compose_states.pop(uid, {}) or {}).get("attachments", []):
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+            self.compose_states.pop(uid, None)
+            data = ":".join(args)
             action, args = _parse_cb(data)
 
         if action == "menu_main":
-            self.compose_states.pop(uid, None)
             self.search_states.pop(uid, None)
             self._clear_history(uid)
-            await self._send(update, "🎛️ *Main Dashboard*\n\nSelect an action:", kb_main_menu())
+            
+            has_draft = uid in self.compose_states
+            if has_draft:
+                state = self.compose_states[uid]
+                if "step" in state and state["step"] != "PAUSED":
+                    state["paused_step"] = state["step"]
+                    state["step"] = "PAUSED"
+                    
+            await self._send(update, "🎛️ *Main Dashboard*\n\nSelect an action:", kb_main_menu(has_draft))
+            return
+
+        if action == "resume_draft":
+            state = self.compose_states.get(uid)
+            if not state:
+                try:
+                    await query.answer("❌ No active draft found.", show_alert=True)
+                except Exception:
+                    pass
+                return
+            
+            # Restore paused step
+            step = state.pop("paused_step", "AWAIT_ATT")
+            state["step"] = step
+            
+            if step == "AWAIT_TO":
+                await query.edit_message_text(
+                    "✉️ *Compose Email*\n\nEnter the *recipient's email address:*",
+                    parse_mode="Markdown", reply_markup=kb_cancel())
+            elif step == "AWAIT_SUBJ":
+                await query.edit_message_text(
+                    f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
+                    parse_mode="Markdown", reply_markup=kb_cancel())
+            elif step == "AWAIT_BODY":
+                await query.edit_message_text(
+                    "✍️ *Enter message body:*\n_(or send a voice note)_",
+                    parse_mode="Markdown", reply_markup=kb_cancel())
+            elif step == "AWAIT_ATT":
+                await query.edit_message_text(
+                    _draft_text(state), parse_mode="Markdown",
+                    reply_markup=kb_draft(bool(state.get("attachments"))))
             return
 
         # ── Retry Last Query ─────────────────────────────────────────────────────
@@ -1252,6 +1339,16 @@ class TelegramBotManager:
             return
 
         if action == "compose":
+            if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
+                await query.edit_message_text(
+                    "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Resume Existing Draft", callback_data="resume_draft")],
+                        [InlineKeyboardButton("🗑️ Discard & Start New", callback_data="discard_then:compose")]
+                    ])
+                )
+                return
             self.compose_states[uid] = {"step": "AWAIT_TO", "attachments": []}
             await query.edit_message_text(
                 "✉️ *Compose Email*\n\nEnter the *recipient's email address:*",
@@ -1359,6 +1456,17 @@ class TelegramBotManager:
         if action == "select_contact":
             email = args[0] if args else ""
             state = self.compose_states.get(uid)
+            if state and state.get("step") == "PAUSED" and _has_draft_content(state):
+                await query.edit_message_text(
+                    "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Resume Existing Draft", callback_data="resume_draft")],
+                        [InlineKeyboardButton("🗑️ Discard & Start New", callback_data=f"discard_then:select_contact:{':'.join(args)}")]
+                    ])
+                )
+                return
+
             if not state:
                 self.compose_states[uid] = {
                     "step": "AWAIT_SUBJ",
@@ -1386,6 +1494,16 @@ class TelegramBotManager:
 
         if action == "compose_to":
             email = args[0] if args else ""
+            if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
+                await query.edit_message_text(
+                    "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Resume Existing Draft", callback_data="resume_draft")],
+                        [InlineKeyboardButton("🗑️ Discard & Start New", callback_data=f"discard_then:compose_to:{':'.join(args)}")]
+                    ])
+                )
+                return
             self.compose_states[uid] = {
                 "step": "AWAIT_SUBJ",
                 "to": email,
@@ -1407,10 +1525,11 @@ class TelegramBotManager:
                 reply_markup=kb_settings(
                     prefs.get("ai_mode_enabled", True),
                     prefs.get("voice_preference", "text"),
-                    prefs.get("auto_check_enabled", True)))
+                    prefs.get("auto_check_enabled", True),
+                    prefs.get("pagination_limit", 2)))
             return
 
-        if action in ["toggle_ai", "cycle_voice", "toggle_auto"]:
+        if action in ["toggle_ai", "cycle_voice", "toggle_auto", "cycle_pagination"]:
             prefs   = await self._prefs(uid)
             if action == "toggle_ai":
                 await self.db.update_user_preferences(uid, {"ai_mode_enabled": not prefs.get("ai_mode_enabled", True)})
@@ -1419,11 +1538,19 @@ class TelegramBotManager:
             elif action == "cycle_voice":
                 cycle   = {"text": "voice", "voice": "both", "both": "text"}
                 await self.db.update_user_preferences(uid, {"voice_preference": cycle.get(prefs.get("voice_preference", "text"), "text")})
+            elif action == "cycle_pagination":
+                current_limit = prefs.get("pagination_limit", 2)
+                new_limit = 5 if current_limit == 2 else 2
+                await self.db.update_user_preferences(uid, {"pagination_limit": new_limit})
             
             prefs = await self._prefs(uid)
             await query.edit_message_text(
                 "⚙️ *Settings*", parse_mode="Markdown", 
-                reply_markup=kb_settings(prefs.get("ai_mode_enabled", True), prefs.get("voice_preference", "text"), prefs.get("auto_check_enabled", True)))
+                reply_markup=kb_settings(
+                    prefs.get("ai_mode_enabled", True), 
+                    prefs.get("voice_preference", "text"), 
+                    prefs.get("auto_check_enabled", True),
+                    prefs.get("pagination_limit", 2)))
             return
 
         if action == "logout":
@@ -1447,6 +1574,10 @@ class TelegramBotManager:
 
         if action == "read":
             await self._show_email(query, mid_s, ctx, offset, uid)
+            return
+
+        if action == "read_html":
+            await self._do_read_html(query, context, mid_s, ctx, offset, uid)
             return
 
         if action == "sum":
@@ -1485,6 +1616,17 @@ class TelegramBotManager:
             return
 
         if action == "reply":
+            if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
+                await query.edit_message_text(
+                    "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Replying to this email will discard your current draft.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📝 Resume Existing Draft", callback_data="resume_draft")],
+                        [InlineKeyboardButton("🗑️ Discard & Reply", callback_data=f"discard_then:reply:{':'.join(args)}")]
+                    ])
+                )
+                return
+
             full_mid = self._full_mid(mid_s)
             meta     = await self.gmail.get_email_metadata(uid, full_mid)
             if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
@@ -1570,6 +1712,55 @@ class TelegramBotManager:
 
         asyncio.create_task(_send_immediately())
 
+    async def _do_read_html(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
+        await query.edit_message_text("⏳ *Retrieving full HTML layout...*", parse_mode="Markdown")
+        full_mid = self._full_mid(mid_short)
+
+        html_body = await self.gmail.get_email_html(uid, full_mid)
+        if html_body == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return await self._prompt_reauth(query.message, uid)
+
+        if not html_body:
+            await query.edit_message_text("❌ *Failed to fetch full email HTML.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            return
+
+        meta = await self.gmail.get_email_metadata(uid, full_mid)
+        subject = meta.get("subject", "email") if isinstance(meta, dict) else "email"
+
+        # Sanitize filename
+        safe_filename = re.sub(r'[\\/*?:"<>|]', "", subject).strip()
+        if not safe_filename:
+            safe_filename = "email"
+
+        import io
+        html_bytes = io.BytesIO(html_body.encode('utf-8'))
+        html_bytes.name = f"{safe_filename}.html"
+
+        back_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Back to Email", callback_data=_cb("read", mid_short, ctx, offset))]
+        ])
+
+        try:
+            await context.bot.send_document(
+                chat_id=uid,
+                document=html_bytes,
+                filename=f"{safe_filename}.html",
+                caption=(
+                    "📄 *Interactive Email Document*\n\n"
+                    "Open this file in your browser to view the original email with full styles, layouts, and images intact."
+                ),
+                parse_mode="Markdown",
+                reply_markup=back_markup
+            )
+            # Delete the loading message to keep the chat clean
+            try:
+                await getattr(query, "message", query).delete()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed sending HTML fallback document: {e}")
+            await query.edit_message_text("❌ *Failed to transmit HTML document.*", parse_mode="Markdown", reply_markup=back_markup)
+
     async def _do_summary(self, query, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
@@ -1593,7 +1784,10 @@ class TelegramBotManager:
 
         raw_sender = meta.get("sender", "Unknown")
         name, email = _parse_sender_header(raw_sender)
-        sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+        if email:
+            sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+        else:
+            sender_formatted = f"👤 *From:* *{_safe_md(name)}*"
         subject = _safe_md(meta.get("subject", "No Subject"))
         att_ct  = len(meta.get("attachments", []))
 
@@ -1644,7 +1838,10 @@ class TelegramBotManager:
 
             raw_sender = meta.get("sender", "Unknown")
             name, email = _parse_sender_header(raw_sender)
-            sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+            if email:
+                sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+            else:
+                sender_formatted = f"👤 *From:* *{_safe_md(name)}*"
             subject = _safe_md(meta.get("subject", ""))
             att_ct  = len(meta.get("attachments", []))
 
@@ -1769,7 +1966,10 @@ class TelegramBotManager:
 
                             raw_sender = meta.get("sender", "Unknown")
                             name, email = _parse_sender_header(raw_sender)
-                            sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+                            if email:
+                                sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
+                            else:
+                                sender_formatted = f"👤 *From:* *{_safe_md(name)}*"
                             subject = _safe_md(meta.get("subject", "No Subject"))
                             att_ct  = len(meta.get("attachments", []))
                             att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""

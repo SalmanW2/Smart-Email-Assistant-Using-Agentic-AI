@@ -457,6 +457,56 @@ class GmailClient:
             logger.error(f"Error retrieving email details for message {msg_id}: {e}")
             return None
 
+    async def get_email_html(self, user_id: int, msg_id: str) -> Any:
+        """
+        Retrieves the complete, un-truncated HTML body of an email.
+        """
+        try:
+            service = await self.get_service(user_id)
+            if not service:
+                return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+
+            msg = await asyncio.to_thread(
+                lambda: service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+            )
+            
+            payload = msg.get('payload', {})
+            
+            # Extract HTML body recursively without truncation
+            def _extract_full_html(part: Dict[str, Any]) -> str:
+                html_data = ""
+                if 'parts' in part:
+                    for sub_part in part['parts']:
+                        if sub_part['mimeType'] == 'text/html':
+                            data = sub_part['body'].get('data')
+                            if data:
+                                html_data += base64.urlsafe_b64decode(data).decode('utf-8')
+                        elif 'parts' in sub_part:
+                            html_data += _extract_full_html(sub_part)
+                else:
+                    if part.get('mimeType') == 'text/html':
+                        data = part.get('body', {}).get('data')
+                        if data:
+                            html_data = base64.urlsafe_b64decode(data).decode('utf-8')
+                return html_data
+
+            html_body = _extract_full_html(payload)
+            
+            # Fallback to plain text body if HTML is not found
+            if not html_body:
+                html_body = self._extract_body(payload)
+                
+            return html_body
+        except GmailAuthException:
+            self.clear_cache(user_id)
+            return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+        except Exception as e:
+            if self._is_auth_error(e):
+                self.clear_cache(user_id)
+                return "TOKEN_EXPIRED_REAUTH_REQUIRED"
+            logger.error(f"Error fetching full email HTML for {msg_id}: {e}")
+            return None
+
     async def get_email_metadata(self, user_id: int, msg_id: str) -> Any:
         """
         Retrieves lightweight metadata (Headers, Sender, Subject, Attachments)

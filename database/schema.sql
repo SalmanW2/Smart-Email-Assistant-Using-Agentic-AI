@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     auto_suggest_contacts BOOLEAN DEFAULT TRUE,
     undo_window_seconds INT DEFAULT 4,
     max_attachment_size_mb INT DEFAULT 20,
+    pagination_limit INT DEFAULT 2,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
