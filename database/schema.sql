@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     telegram_id BIGINT UNIQUE NOT NULL,
     ai_mode_enabled BOOLEAN DEFAULT TRUE,
+    voice_preference VARCHAR(50) DEFAULT 'text',
+    auto_check_enabled BOOLEAN DEFAULT TRUE,
     auto_suggest_contacts BOOLEAN DEFAULT TRUE,
     undo_window_seconds INT DEFAULT 4,
     max_attachment_size_mb INT DEFAULT 20,

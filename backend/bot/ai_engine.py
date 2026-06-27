@@ -35,39 +35,59 @@ try:
 except ImportError:
     _GenAIClientError = None  # type: ignore
 
+# Meaningless generic AI responses that should be suppressed.
+# When AFC or Groq runs a tool but the model returns one of these placeholders
+# as its final text, we replace it with a proper system-level status notice.
+_MEANINGLESS_RESPONSES = frozenset([
+    "i processed your request",
+    "i have processed your request",
+    "i've processed your request",
+    "your request has been processed",
+    "request processed",
+    "i completed the action",
+    "i completed that",
+    "action completed",
+    "i will do that",
+    "done",
+    "processing your request",
+    "i completed the action successfully",
+    "i have completed the action",
+    "task done",
+    "understood",
+    "okay, i'll do that",
+    "got it",
+    "sure",
+])
+
 def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
     """
-    Surgical output sanitizer: ONLY intercepts actual raw tool call syntax leaks.
-    
-    CRITICAL DESIGN RULE: This function must NEVER use broad keyword matching
-    (e.g. checking if "schedule" and "email" both appear) because Gemini's natural
-    language responses routinely contain these words. Such matching causes every
-    real response to be silently replaced with a generic string, breaking the entire
-    conversational and functional flow of the bot.
-    
-    Only intercept text that is structurally a raw tool call signature, not text
-    that happens to mention a tool-related word in natural language.
+    Surgical output sanitizer: intercepts raw tool call syntax leaks AND
+    meaningless AI meta-responses that provide zero value to the end user.
     """
-    if not final_text:
+    if not final_text or not final_text.strip():
         return "✅ Action completed successfully."
 
-    # ONLY intercept actual raw function call syntax patterns leaking into text output.
-    # Pattern: word characters directly followed by opening paren (e.g. search_gmail_tool(...))
-    # This precisely matches function call syntax — NOT natural language.
-    if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
-        # The model leaked a raw tool invocation as text
+    # Filter known meaningless single-line AI meta-responses.
+    # Compare lowercase stripped version (strip trailing punctuation for robustness).
+    stripped_lower = final_text.strip().lower().rstrip('.!')
+    if stripped_lower in _MEANINGLESS_RESPONSES:
         if telegram_id in _module_pending_drafts:
             return "✅ Email draft prepared."
         return "✅ Action completed successfully."
 
-    # Secondary guard: catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
-    # Must have at least 3 segments (word_word_word) AND a following open paren
+    # ONLY intercept actual raw function call syntax patterns leaking into text output.
+    if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
+        if telegram_id in _module_pending_drafts:
+            return "✅ Email draft prepared."
+        return "✅ Action completed successfully."
+
+    # Catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
     if re.search(r'\b[a-z]+_[a-z]+_[a-z]+\s*\(', final_text):
         if telegram_id in _module_pending_drafts:
             return "✅ Email draft prepared."
         return "✅ Action completed successfully."
 
-    # Attempt to extract clean text from raw JSON objects if somehow leaked
+    # Extract clean text from raw JSON objects if somehow leaked
     try:
         cleaned = re.sub(r'```json|```', '', final_text).strip()
         if cleaned.startswith("{") and cleaned.endswith("}"):
@@ -757,7 +777,7 @@ class AIEngine:
                 import json as _json
                 return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
 
-            final_text = response.text or "I processed your request."
+            final_text = response.text or ""
             return _sanitize_final_text(final_text, telegram_id)
 
         except Exception as e:
@@ -926,14 +946,11 @@ class AIEngine:
             return f"\"{quoted_text}\""
 
         prompt = (
-            "You are a native email dashboard engine. Analyze the email content below and generate a structured, highly actionable summary.\n\n"
-            "CRITICAL GUIDELINES:\n"
-            "1. Do NOT use meta-conversational introductory phrases (such as 'The sender is saying...', 'This email states...', 'The sender sent this...', 'The email is about...'). Begin the summary or bullet points directly with the core message/topic.\n"
-            "2. For simple or short emails: Output a concise summary of 1-2 sentences.\n"
-            "3. For complex, multi-layered, or informational emails (such as announcements, exam schedules, or logistical updates): Output exactly 2 to 3 clean, concise bullet points (using '-' as bullet). Capture the primary objective first, then secondary important details accurately (e.g., where to access files, deadlines, or specific platforms/LMS like Odoo if mentioned).\n"
-            "4. Do NOT mention sender/recipient names or email addresses.\n"
-            "5. Keep it direct, objective, and premium. Avoid conversational preambles.\n\n"
-            f"Email Content:\n{email_body[:5000]}"
+            "Summarize the following email in a maximum of 3 SHORT bullet points.\n"
+            "Each bullet must be a single short sentence. No filler words, no URLs, no sender/recipient names.\n"
+            "Lead with the single most important action or takeaway. Strip everything else.\n"
+            "Format: use '-' as bullet marker. No preamble, no markdown bold/headers.\n\n"
+            f"Email:\n{email_body[:3000]}"
         )
         # ── Attempt via Groq first to save Gemini quota ─────────────────────────
         if settings.GROQ_API_KEY:
@@ -944,7 +961,7 @@ class AIEngine:
                     "model": "llama-3.3-70b-versatile",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 150,
+                    "max_tokens": 80,
                 }
                 async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.post(url, headers=headers, json=payload)

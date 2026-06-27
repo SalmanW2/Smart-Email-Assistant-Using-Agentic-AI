@@ -359,8 +359,13 @@ class TelegramBotManager:
         try:
             prefs = await self.db.get_user_preferences(uid)
             if prefs:
-                if "pagination_limit" not in prefs or prefs.get("pagination_limit") is None:
+                # Ensure all settings fields have safe defaults
+                if prefs.get("pagination_limit") is None:
                     prefs["pagination_limit"] = 2
+                if prefs.get("voice_preference") is None:
+                    prefs["voice_preference"] = "text"
+                if prefs.get("auto_check_enabled") is None:
+                    prefs["auto_check_enabled"] = True
                 return prefs
         except Exception as e:
             logger.debug(f"Preference fetch fallback error: {e}")
@@ -1545,7 +1550,7 @@ class TelegramBotManager:
             
             prefs = await self._prefs(uid)
             await query.edit_message_text(
-                "⚙️ *Settings*", parse_mode="Markdown", 
+                "⚙️ *Settings*\n\nConfigure your assistant preferences:", parse_mode="Markdown", 
                 reply_markup=kb_settings(
                     prefs.get("ai_mode_enabled", True), 
                     prefs.get("voice_preference", "text"), 
@@ -1581,7 +1586,7 @@ class TelegramBotManager:
             return
 
         if action == "sum":
-            await self._do_summary(query, mid_s, ctx, offset, uid)
+            await self._do_summary(query, context, mid_s, ctx, offset, uid)
             return
 
         if action == "tts":
@@ -1761,8 +1766,22 @@ class TelegramBotManager:
             logger.error(f"Failed sending HTML fallback document: {e}")
             await query.edit_message_text("❌ *Failed to transmit HTML document.*", parse_mode="Markdown", reply_markup=back_markup)
 
-    async def _do_summary(self, query, mid_short: str, ctx: str, offset: int, uid: int):
-        await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
+    async def _do_summary(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
+        # The message that triggered this callback may be a voice/audio message
+        # (sent from the TTS view). Editing a voice message for text raises BadRequest.
+        # We try to edit; if that fails we send a new loader message instead.
+        loading_msg = None
+        try:
+            await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
+            loading_msg = query.message
+        except Exception:
+            try:
+                loading_msg = await context.bot.send_message(
+                    chat_id=uid, text="⏳ *Generating AI Summary...*", parse_mode="Markdown"
+                )
+            except Exception:
+                loading_msg = None
+
         full_mid = self._full_mid(mid_short)
 
         details = await self.gmail.get_email_details(uid, full_mid)
@@ -1774,12 +1793,16 @@ class TelegramBotManager:
             return await self._prompt_reauth(query.message, uid)
 
         if not details or not meta or (isinstance(meta, dict) and "error" in meta):
-            await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            err_text = "❌ *Email not found.* It may have been deleted."
+            if loading_msg:
+                try:
+                    await loading_msg.edit_text(err_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+                except Exception:
+                    await context.bot.send_message(chat_id=uid, text=err_text, parse_mode="Markdown")
             return
 
         body = details.get("body", "") if details else ""
-        # Use the token-efficient direct summarize call — avoids polluting chat history
-        # and skips expensive tool-setup tokens of agent_chat.
+        # Use the token-efficient direct summarize call
         sum_text = await self.ai_engine.summarize_email(body)
 
         raw_sender = meta.get("sender", "Unknown")
@@ -1797,11 +1820,18 @@ class TelegramBotManager:
             f"{sender_formatted}\n"
             f"📝 *Subject:* _{subject}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 *AI Summary:*\n\n"
+            f"🤖 *AI Summary:*\n"
             f"{sum_text}"
         )
 
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb_summary(full_mid, ctx, offset, bool(att_ct)))
+        kb = kb_summary(full_mid, ctx, offset, bool(att_ct))
+        if loading_msg:
+            try:
+                await loading_msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+            except Exception:
+                await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=kb)
+        else:
+            await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=kb)
 
     async def _do_tts(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("🔊 *Generating audio summary...*", parse_mode="Markdown")
