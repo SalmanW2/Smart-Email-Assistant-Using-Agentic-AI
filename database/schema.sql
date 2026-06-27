@@ -210,3 +210,42 @@ ADD COLUMN IF NOT EXISTS auto_check_enabled BOOLEAN DEFAULT TRUE;
 -- Unique constraint enforcement
 ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
 ALTER TABLE contacts ADD CONSTRAINT contacts_telegram_id_email_address_key UNIQUE (telegram_id, email_address);
+
+-- ============================================================================
+-- ROW-LEVEL SECURITY (RLS) & TENANT ISOLATION POLICIES
+-- ============================================================================
+-- Enable RLS on all 14 tables to prevent unauthorized direct REST access
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE blocked_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversation_summaries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversation_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tts_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_emails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stt_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_attachments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contact_messages ENABLE ROW LEVEL SECURITY;
+
+-- Tenant Isolation Policy on users (evaluates to FALSE for public/anon/authenticated roles)
+-- This shuts off direct REST queries, ensuring all access goes through FastAPI with service_role bypass.
+CREATE POLICY "Tenant-Isolation-Policy" ON users
+    FOR ALL TO public USING (false);
+
+-- Tenant Isolation Policies for other tables (anon/public block)
+CREATE POLICY "Tenant-Isolation-Policy-Contacts" ON contacts FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-Summaries" ON conversation_summaries FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-History" ON conversation_history FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-Preferences" ON user_preferences FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-Cache" ON email_cache FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-Scheduled" ON scheduled_emails FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-SavedAttachments" ON saved_attachments FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-STT" ON stt_usage FOR ALL TO public USING (false);
+CREATE POLICY "Tenant-Isolation-Policy-TTS" ON tts_usage FOR ALL TO public USING (false);
+
+-- Public Contact Form Policy: Allow anonymous users to insert contact messages, but block select/update
+CREATE POLICY "Allow anonymous message submissions" ON contact_messages
+    FOR INSERT TO anon WITH CHECK (status = 'pending');

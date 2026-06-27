@@ -242,14 +242,16 @@ def kb_notification(msg_id: str, has_att: bool) -> InlineKeyboardMarkup:
     mid = msg_id[:16]
     rows = [
         [
-            InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "inbox", 0)),
             InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "inbox", 0)),
+            InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "inbox", 0))
+        ],
+        [
             InlineKeyboardButton("🔊 Listen",        callback_data=_cb("tts",  mid, "inbox", 0))
         ]
     ]
     if has_att:
-        rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, "inbox", 0))])
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data="menu_main")])
+        rows[1].append(InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, "inbox", 0)))
+    rows.append([InlineKeyboardButton("🏠 Dashboard", callback_data="menu_main")])
     return InlineKeyboardMarkup(rows)
 
 def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
@@ -769,6 +771,8 @@ class TelegramBotManager:
                 bot_response=raw[:500] if raw else "",
                 interaction_type="chat",
             ))
+            # Trigger background contact extraction from conversation
+            self._bg(self.contacts.extract_and_save_contacts(uid, text))
         except Exception as e:
             logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
             await self._edit(msg,
@@ -929,6 +933,8 @@ class TelegramBotManager:
                 bot_response=raw[:500] if raw else "",
                 interaction_type="voice",
             ))
+            # Trigger background contact extraction from voice transcription
+            self._bg(self.contacts.extract_and_save_contacts(uid, transcribed))
         except Exception as e:
             logger.error(f"Unhandled error in handle_voice for user {uid}: {e}", exc_info=True)
             if task_id in self.active_voice_tasks:
@@ -1585,15 +1591,17 @@ class TelegramBotManager:
         # and skips expensive tool-setup tokens of agent_chat.
         sum_text = await self.ai_engine.summarize_email(body)
 
-        sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+        raw_sender = meta.get("sender", "Unknown")
+        name, email = _parse_sender_header(raw_sender)
+        sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
         subject = _safe_md(meta.get("subject", "No Subject"))
         att_ct  = len(meta.get("attachments", []))
 
         text = (
             f"📩 *Email Summary*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"👤 *From:* {sender}\n"
-            f"📝 *Subject:* {subject}\n"
+            f"{sender_formatted}\n"
+            f"📝 *Subject:* _{subject}_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🤖 *AI Summary:*\n\n"
             f"{sum_text}"
@@ -1634,7 +1642,9 @@ class TelegramBotManager:
                 logger.error(f"TTS synthesis failed in _do_tts: {e}")
                 audio = None
 
-            sender  = _safe_md(meta.get("sender",  "").replace('<', '').replace('>', ''))
+            raw_sender = meta.get("sender", "Unknown")
+            name, email = _parse_sender_header(raw_sender)
+            sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
             subject = _safe_md(meta.get("subject", ""))
             att_ct  = len(meta.get("attachments", []))
 
@@ -1643,7 +1653,7 @@ class TelegramBotManager:
             rows.append(kb_back_step())
             kb = InlineKeyboardMarkup(rows)
 
-            caption = f"🔊 *Audio Summary*\n📧 *From:* {sender}\n📝 *Subject:* {subject}"
+            caption = f"🔊 *Audio Summary*\n{sender_formatted}\n📝 *Subject:* _{subject}_"
 
             if audio and os.path.exists(audio):
                 with open(audio, "rb") as f:
@@ -1757,7 +1767,9 @@ class TelegramBotManager:
                             if not meta or meta == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "error" in meta:
                                 continue
 
-                            sender  = _safe_md(meta.get("sender",  "Unknown").replace('<', '').replace('>', ''))
+                            raw_sender = meta.get("sender", "Unknown")
+                            name, email = _parse_sender_header(raw_sender)
+                            sender_formatted = f"👤 *From:* *{_safe_md(name)}* `({_safe_md(email)})`"
                             subject = _safe_md(meta.get("subject", "No Subject"))
                             att_ct  = len(meta.get("attachments", []))
                             att_line = f"\n📎 *{att_ct} Attachment(s) Found*" if att_ct else ""
@@ -1765,8 +1777,8 @@ class TelegramBotManager:
                             text = (
                                 f"📩 *New Email Received*\n"
                                 f"━━━━━━━━━━━━━━━━━━\n"
-                                f"👤 *From:* {sender}\n"
-                                f"📝 *Subject:* {subject}"
+                                f"{sender_formatted}\n"
+                                f"📝 *Subject:* _{subject}_"
                                 f"{att_line}"
                             )
 

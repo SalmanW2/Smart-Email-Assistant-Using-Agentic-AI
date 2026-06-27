@@ -318,7 +318,33 @@ class DBManager:
         try:
             result = await self.db.run(lambda: self.db.client.table("blocked_users").select("*").eq("block_type", block_type).eq("block_value", str(value)).execute())
             data = self._safe_data(result)
-            return len(data) > 0 if data else False
+            if not data:
+                return False
+            
+            record = data[0]
+            expires_at = record.get("expires_at")
+            if expires_at:
+                try:
+                    from datetime import datetime, timezone
+                    # Normalize ISO format timestamp
+                    if expires_at.endswith("Z"):
+                        expires_at = expires_at[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(expires_at)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                    
+                    if datetime.now(timezone.utc) > dt:
+                        # Block has expired. Remove it from the database asynchronously.
+                        await self.db.run(lambda: self.db.client.table("blocked_users").delete().eq("id", record["id"]).execute())
+                        self._invalidate_cache(["all_blocked_users", "active_auto_check_users"])
+                        logger.info(f"Automatically deleted expired block record for {block_type}:{value}")
+                        return False
+                except Exception as parse_err:
+                    logger.warning(f"Failed to parse block expires_at timestamp: {parse_err}")
+            
+            return True
         except Exception as e:
             logger.error(f"DB Error in is_blocked: {e}")
             return False
