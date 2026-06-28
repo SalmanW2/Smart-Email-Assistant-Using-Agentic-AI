@@ -191,6 +191,17 @@ def kb_back_step() -> list:
         InlineKeyboardButton("🏠 Menu", callback_data="menu_main"),
     ]
 
+
+def kb_nav_for_ctx(ctx: str) -> list:
+    """
+    Returns the correct navigation row depending on origin context.
+    - 'notif': email was opened from a push notification card — Back must go to Dashboard.
+    - 'inbox'/'search': email was opened from a list view — Back replays list.
+    """
+    if ctx == "notif":
+        return [InlineKeyboardButton("🏠 Dashboard", callback_data="menu_main")]
+    return kb_back_step()
+
 def kb_cancel() -> InlineKeyboardMarkup:
     """Generic cancel keyboard."""
     return InlineKeyboardMarkup([
@@ -223,7 +234,7 @@ def kb_email_list(msgs: list, offset: int, is_search: bool, has_next: bool, limi
     return InlineKeyboardMarkup(rows)
 
 def kb_email_view(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeyboardMarkup:
-    """Builds inline actions for full email viewing."""
+    """Builds inline actions for full email viewing. Nav row is ctx-aware."""
     mid = msg_id[:16]
     rows = [
         [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read_html", mid, ctx, offset)),
@@ -234,11 +245,11 @@ def kb_email_view(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKe
     if has_att:
         rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, ctx, offset))])
         
-    rows.append(kb_back_step())
+    rows.append(kb_nav_for_ctx(ctx))
     return InlineKeyboardMarkup(rows)
 
 def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeyboardMarkup:
-    """Summary view — Core actions only."""
+    """Summary view — Core actions only. Nav row is ctx-aware."""
     mid = msg_id[:16]
     rows = [
         [InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", mid, ctx, offset)),
@@ -248,23 +259,25 @@ def kb_summary(msg_id: str, ctx: str, offset: int, has_att: bool) -> InlineKeybo
     if has_att:
         rows.insert(1, [InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, ctx, offset))])
         
-    rows.append(kb_back_step())
+    rows.append(kb_nav_for_ctx(ctx))
     return InlineKeyboardMarkup(rows)
 
 def kb_notification(msg_id: str, has_att: bool) -> InlineKeyboardMarkup:
-    """Push notification — AI Summary, Read Email, Listen, Attachments, and Back."""
+    """Push notification card — uses 'notif' context so Back always returns to Dashboard."""
     mid = msg_id[:16]
+    # Use 'notif' as the ctx tag so history_back recognises notification-origin cards
+    # and falls back to menu_main instead of attempting to re-render a nonexistent list.
     rows = [
         [
-            InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "inbox", 0)),
-            InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "inbox", 0))
+            InlineKeyboardButton("📖 Read Email",   callback_data=_cb("read", mid, "notif", 0)),
+            InlineKeyboardButton("🤖 AI Summary",   callback_data=_cb("sum",  mid, "notif", 0))
         ],
         [
-            InlineKeyboardButton("🔊 Listen",        callback_data=_cb("tts",  mid, "inbox", 0))
+            InlineKeyboardButton("🔊 Listen",        callback_data=_cb("tts",  mid, "notif", 0))
         ]
     ]
     if has_att:
-        rows[1].append(InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, "inbox", 0)))
+        rows[1].append(InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", mid, "notif", 0)))
     rows.append([InlineKeyboardButton("🏠 Dashboard", callback_data="menu_main")])
     return InlineKeyboardMarkup(rows)
 
@@ -1227,8 +1240,11 @@ class TelegramBotManager:
         except Exception:
             pass
 
-        # Intercept and append to deep navigation history array
-        if not data.startswith("history_back") and data not in ["cancel", "menu_main", "logout", "retry_last_query", "attach_hint", "clear_att"]:
+        # Intercept and append to deep navigation history array.
+        # Exclude ephemeral/destructive actions that must never be replayed by Back.
+        _NO_HISTORY_ACTIONS = {"cancel", "menu_main", "logout", "retry_last_query",
+                                "attach_hint", "clear_att", "send_draft", "force_send_draft"}
+        if not data.startswith("history_back") and data not in _NO_HISTORY_ACTIONS:
             self._push_history(uid, data)
 
         action, args = _parse_cb(data)
@@ -1236,8 +1252,19 @@ class TelegramBotManager:
         if action == "history_back":
             prev_state = self._pop_history(uid)
             if not prev_state:
+                # History empty or expired — safe fallback to Dashboard.
                 return await self.cmd_menu(update, context)
-            # python-telegram-bot v22 forbids mutating query.data (it's immutable).
+
+            # NOTIFICATION ORIGIN GUARD: If the previous state used the 'notif' context
+            # tag (push notification card), Back should always go to Dashboard, not
+            # attempt to re-render a list that doesn't exist in this session.
+            _prev_action, _prev_args = _parse_cb(prev_state)
+            _prev_ctx = _prev_args[1] if len(_prev_args) > 1 else ""
+            if _prev_ctx == "notif":
+                self._clear_history(uid)
+                return await self.cmd_menu(update, context)
+
+            # Replay the previous screen state via the normal routing below.
             data = prev_state
             action, args = _parse_cb(data)
 
@@ -1324,12 +1351,22 @@ class TelegramBotManager:
             return
 
         if action == "inbox":
-            offset = int(args[0]) if args else 0
+            try:
+                offset = int(args[0]) if args else 0
+            except (ValueError, IndexError):
+                offset = 0
             await self._show_list(query.message, uid, offset, is_search=False)
             return
 
         if action == "srpage":
-            offset = int(args[0]) if args else 0
+            try:
+                offset = int(args[0]) if args else 0
+            except (ValueError, IndexError):
+                offset = 0
+            if uid not in self.current_queries:
+                # No active search context — fall back to inbox list
+                await self._show_list(query.message, uid, offset, is_search=False)
+                return
             await self._show_list(query.message, uid, offset, is_search=True)
             return
 
@@ -1390,6 +1427,14 @@ class TelegramBotManager:
             return
 
         if action.startswith("edit_field_"):
+            # Guard: compose state must exist and be active before mutating
+            if uid not in self.compose_states or not self.compose_states.get(uid):
+                await query.edit_message_text(
+                    "⚠️ *Draft expired.* Please start a new email.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✍️ Compose", callback_data="compose")]])
+                )
+                return
             target_field = action.replace("edit_field_", "")
             self.compose_states[uid]["step"] = f"AWAIT_{target_field.upper()}"
             await query.edit_message_text(
@@ -1399,10 +1444,18 @@ class TelegramBotManager:
             return
 
         if action == "restore_draft_view":
+            state = self.compose_states.get(uid)
+            if not state:
+                await query.edit_message_text(
+                    "⚠️ *Draft expired.* Please start a new email.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✍️ Compose", callback_data="compose")]])
+                )
+                return
             await query.edit_message_text(
-                _draft_text(self.compose_states[uid]), 
-                parse_mode="Markdown", 
-                reply_markup=kb_draft(bool(self.compose_states[uid].get("attachments")))
+                _draft_text(state),
+                parse_mode="Markdown",
+                reply_markup=kb_draft(bool(state.get("attachments")))
             )
             return
 
@@ -1418,7 +1471,16 @@ class TelegramBotManager:
             return
 
         if action == "clear_att":
-            state = self.compose_states.get(uid, {})
+            # Must access the ACTUAL dict in compose_states, not a default-copy
+            state = self.compose_states.get(uid)
+            if not state:
+                # State expired; go back to menu
+                await query.edit_message_text(
+                    "⚠️ *Draft expired.* Returning to dashboard.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
+                )
+                return
             for fp in state.get("attachments", []):
                 try:
                     os.remove(fp)
@@ -1573,9 +1635,16 @@ class TelegramBotManager:
         # ── Parameterized email actions ────────────────────────────────────────
 
         if len(args) < 3:
+            # Malformed callback — silently return to avoid crashes
+            logger.debug(f"handle_button: malformed callback '{data}' for user {uid} — insufficient args")
             return
-            
-        mid_s, ctx, offset = args[0], args[1], int(args[2])
+
+        mid_s = args[0]
+        ctx   = args[1]
+        try:
+            offset = int(args[2])
+        except (ValueError, IndexError):
+            offset = 0
 
         if action == "read":
             await self._show_email(query, mid_s, ctx, offset, uid)
@@ -1653,7 +1722,18 @@ class TelegramBotManager:
                 parse_mode="Markdown", reply_markup=kb_cancel())
             return
 
-    # ── Email action sub-handlers ──────────────────────────────────────────────
+        # ── Unrecognised action — safe fallback ─────────────────────────────────
+        # If we reach here, no handler matched the callback data. Log it and
+        # return the user to the Dashboard rather than hanging silently.
+        logger.debug(f"handle_button: unrecognised action '{action}' (data='{data}') for user {uid}")
+        try:
+            await query.edit_message_text(
+                "🎛️ *Main Dashboard*\n\nSelect an action:",
+                parse_mode="Markdown",
+                reply_markup=kb_main_menu(uid in self.compose_states)
+            )
+        except Exception:
+            pass
 
     async def _do_send_draft(self, query, uid: int, context):
         """Immediately dispatches payload configuration. Removed legacy 7-second undo limits."""
@@ -1877,7 +1957,7 @@ class TelegramBotManager:
 
             rows = [[InlineKeyboardButton("📖 Read Full", callback_data=_cb("read", full_mid[:16], ctx, offset))]]
             if att_ct: rows.append([InlineKeyboardButton("📥 Attachments", callback_data=_cb("att", full_mid[:16], ctx, offset))])
-            rows.append(kb_back_step())
+            rows.append(kb_nav_for_ctx(ctx))
             kb = InlineKeyboardMarkup(rows)
 
             caption = f"🔊 *Audio Summary*\n{sender_formatted}\n📝 *Subject:* _{subject}_"
@@ -1905,7 +1985,7 @@ class TelegramBotManager:
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
-        back_kb  = InlineKeyboardMarkup([kb_back_step()])
+        back_kb  = InlineKeyboardMarkup([kb_nav_for_ctx(ctx)])
 
         try:
             meta = await self.gmail.get_email_metadata(uid, full_mid)
