@@ -59,7 +59,7 @@ _MEANINGLESS_RESPONSES = frozenset([
     "sure",
 ])
 
-def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
+def _sanitize_final_text(final_text: str) -> str:
     """
     Surgical output sanitizer: intercepts raw tool call syntax leaks AND
     meaningless AI meta-responses that provide zero value to the end user.
@@ -71,32 +71,17 @@ def _sanitize_final_text(final_text: str, telegram_id: int) -> str:
     # Compare lowercase stripped version (strip trailing punctuation for robustness).
     stripped_lower = final_text.strip().lower().rstrip('.!')
     if stripped_lower in _MEANINGLESS_RESPONSES:
-        if telegram_id in _module_pending_drafts:
-            return "✅ Email draft prepared."
         return "✅ Action completed successfully."
 
     # ONLY intercept actual raw function call syntax patterns leaking into text output.
     if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
-        if telegram_id in _module_pending_drafts:
-            return "✅ Email draft prepared."
         return "✅ Action completed successfully."
 
     # Catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
     if re.search(r'\b[a-z]+_[a-z]+_[a-z]+\s*\(', final_text):
-        if telegram_id in _module_pending_drafts:
-            return "✅ Email draft prepared."
         return "✅ Action completed successfully."
 
-    # Extract clean text from raw JSON objects if somehow leaked
-    try:
-        cleaned = re.sub(r'```json|```', '', final_text).strip()
-        if cleaned.startswith("{") and cleaned.endswith("}"):
-            parsed = json.loads(cleaned)
-            text = parsed.get("text", "")
-            if text:
-                return str(text).strip()
-    except Exception:
-        pass
+    return final_text
 
     return final_text
 
@@ -504,14 +489,7 @@ class AIEngine:
                         resp2.raise_for_status()
                         final_text = resp2.json()["choices"][0]["message"].get("content", "")
 
-                        self.active_chats.setdefault(telegram_id, []).append(
-                            types.Content(role="user", parts=[types.Part.from_text(text=message)])
-                        )
-                        resolved_text = _sanitize_final_text(final_text, telegram_id)
-                        self.active_chats[telegram_id].append(
-                            types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
-                        )
-                        return resolved_text
+                        return self._unify_agent_response(telegram_id, message, final_text)
 
                     except Exception as tool_err:
                         logger.error(f"Groq tool error: {tool_err}")
@@ -519,14 +497,7 @@ class AIEngine:
                 else:
                     # Plain chat response
                     content = choice.get("content", "")
-                    resolved_text = _sanitize_final_text(content, telegram_id)
-                    self.active_chats.setdefault(telegram_id, []).append(
-                        types.Content(role="user", parts=[types.Part.from_text(text=message)])
-                    )
-                    self.active_chats[telegram_id].append(
-                        types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
-                    )
-                    return resolved_text
+                    return self._unify_agent_response(telegram_id, message, content)
 
         except httpx.HTTPStatusError as e:
             logger.error(f"Groq HTTP error {e.response.status_code}: {e.response.text}")
@@ -539,10 +510,50 @@ class AIEngine:
     # CORE AGENT REASONING ENGINE
     # ==========================================
 
+    def _unify_agent_response(self, telegram_id: int, user_message: str, raw_text: str) -> str:
+        """
+        Unifies response handling for both Gemini and Groq, safely managing
+        history and sentinel intercepts without premature dict popping.
+        """
+        # 1. Store the user content in conversation history
+        user_content = types.Content(role="user", parts=[types.Part.from_text(text=user_message)])
+        self.active_chats.setdefault(telegram_id, []).append(user_content)
+
+        # 2. Check for Search Sentinel (INSPECT only, do NOT pop)
+        if telegram_id in _module_pending_searches:
+            self.active_chats[telegram_id].append(
+                types.Content(role="model", parts=[types.Part.from_text(text="Search executed and results displayed to user.")])
+            )
+            return "__SHOW_SEARCH_LIST__"
+
+        # 3. Check for Draft Sentinel (INSPECT only, do NOT pop)
+        if telegram_id in _module_pending_drafts:
+            self.active_chats[telegram_id].append(
+                types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")])
+            )
+            draft_payload = _module_pending_drafts[telegram_id]
+            import json as _json
+            return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
+
+        # 4. Standard conversational/text response
+        resolved_text = _sanitize_final_text(raw_text)
+        self.active_chats[telegram_id].append(
+            types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
+        )
+        return resolved_text
+
     async def agent_chat(self, message: str, telegram_id: int) -> str:
         """
         Main Conversational AI loop for interacting with the Smart Email Assistant.
         """
+        _GREETINGS = {"hi", "hello", "hey", "start", "/start", "help", "who are you"}
+        if message.strip().lower() in _GREETINGS:
+            return self._unify_agent_response(
+                telegram_id, 
+                message, 
+                "Hello! I am your Smart Email Assistant. How can I help you manage your inbox today?"
+            )
+
         try:
             contacts_list = await contact_manager.get_contacts(telegram_id)
             contacts_context = "\n".join([
@@ -674,111 +685,10 @@ class AIEngine:
                 return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
 
             # --- STANDARD GEMINI PROCESSING ---
-            if response.function_calls:
-                results_parts = []
-                for fc in response.function_calls:
-                    fn_name = fc.name
-                    args = dict(fc.args)
-
-                    try:
-                        func = tools_map[fn_name]
-                        if inspect.iscoroutinefunction(func):
-                            result_str = await func(**args)
-                        else:
-                            result_str = func(**args)
-
-                        if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
-                            return "TOKEN_EXPIRED_REAUTH_REQUIRED"
-
-                        if telegram_id in _module_pending_searches:
-                            self.active_chats[telegram_id].append(user_content)
-                            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
-                                self.active_chats[telegram_id].append(response.candidates[0].content)
-                            tool_ack_part = types.Part.from_function_response(
-                                name=fn_name, response={"result": result_str}
-                            )
-                            self.active_chats[telegram_id].append(
-                                types.Content(role="tool", parts=[tool_ack_part])
-                            )
-                            self.active_chats[telegram_id].append(
-                                types.Content(role="model", parts=[types.Part.from_text(text="Search executed and results displayed to user.")])
-                            )
-                            return "__SHOW_SEARCH_LIST__"
-
-                        if "prepare_draft" in result_str or "schedule_email" in result_str:
-                            self.active_chats[telegram_id].append(user_content)
-                            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
-                                self.active_chats[telegram_id].append(response.candidates[0].content)
-                            tool_ack_part = types.Part.from_function_response(
-                                name=fn_name, response={"result": result_str}
-                            )
-                            self.active_chats[telegram_id].append(
-                                types.Content(role="tool", parts=[tool_ack_part])
-                            )
-                            self.active_chats[telegram_id].append(
-                                types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")])
-                            )
-                            return result_str
-
-                        results_parts.append(
-                            types.Part.from_function_response(name=fn_name, response={"result": result_str})
-                        )
-                    except Exception as tool_err:
-                        logger.error(f"Error executing tool {fn_name}: {tool_err}")
-                        results_parts.append(
-                            types.Part.from_function_response(name=fn_name, response={"error": str(tool_err)})
-                        )
-
-                try:
-                    tool_result_content = types.Content(
-                        role="tool",
-                        parts=results_parts,
-                    )
-                    _call_contents = contents + [response.candidates[0].content, tool_result_content]
-                    # Use lean config (no tool definitions) for the formulation call.
-                    # Tool routing is already done; we only need a natural-language response.
-                    final_response = await self.client.aio.models.generate_content(
-                        model=self.model_name,
-                        contents=_call_contents,
-                        config=_lean_config,
-                    )
-                    self.active_chats[telegram_id].append(user_content)
-                    if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
-                        self.active_chats[telegram_id].append(response.candidates[0].content)
-                    self.active_chats[telegram_id].append(tool_result_content)
-                    if final_response.candidates and len(final_response.candidates) > 0 and final_response.candidates[0].content:
-                        self.active_chats[telegram_id].append(final_response.candidates[0].content)
-
-                    final_text = final_response.text or "I completed the action successfully."
-                    return _sanitize_final_text(final_text, telegram_id)
-                except Exception as final_err:
-                    if _is_quota_error(final_err):
-                        logger.warning(f"Gemini API quota exhausted (429) on secondary call for user {telegram_id}.")
-                        return "__API_QUOTA_EXCEEDED__"
-                    logger.warning(f"Gemini secondary tool parsing failed ({final_err}). Falling back to Groq...")
-                    return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
- 
-            self.active_chats[telegram_id].append(user_content)
-            if response.candidates and len(response.candidates) > 0 and response.candidates[0].content:
-                self.active_chats[telegram_id].append(response.candidates[0].content)
-
-            # ── AFC TOOL RESULT DETECTION ──────────────────────────────────────────────
-            # When AFC is enabled, the SDK resolves tool calls internally and returns a
-            # plain text response — response.function_calls is empty. The tool functions
-            # still ran and populated _module_pending_searches / _module_pending_drafts.
-            # We must detect this here before falling through to plain text output.
-            if telegram_id in _module_pending_searches:
-                # A search was executed via AFC. Signal the dispatcher to render the list card.
-                return "__SHOW_SEARCH_LIST__"
-
-            if telegram_id in _module_pending_drafts:
-                # A draft was prepared via AFC. Return the draft JSON payload directly.
-                draft_payload = _module_pending_drafts[telegram_id]
-                import json as _json
-                return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
-
+            # (AFC handles function calls internally. Manual block pruned for performance)
+            
             final_text = response.text or ""
-            return _sanitize_final_text(final_text, telegram_id)
+            return self._unify_agent_response(telegram_id, message, final_text)
 
         except Exception as e:
             logger.error(f"AIEngine.agent_chat error: {e}", exc_info=True)

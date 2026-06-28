@@ -61,25 +61,6 @@ def _parse_cb(data: str) -> tuple:
     parts = data.split(":")
     return parts[0], parts[1:]
 
-def _clean_ai_text(raw: str) -> str:
-    """Extract clean text from AI response — handles both text and parsed JSON."""
-    if not raw:
-        return ""
-        
-    try:
-        # Check if the output is JSON
-        cleaned = re.sub(r'```json|```', '', raw).strip()
-        m = re.search(r'\{.*\}', cleaned, re.DOTALL)
-        if m:
-            parsed = json.loads(m.group(0))
-            text = parsed.get("text", "")
-            if text:
-                return str(text).strip()
-    except Exception:
-        pass
-        
-    return raw.strip()
-
 
 def _strip_email_footer(body: str) -> str:
     """
@@ -1091,7 +1072,7 @@ class TelegramBotManager:
             await self._show_list(msg_obj, uid, offset=0, is_search=True)
             return
 
-        text_content = _clean_ai_text(raw)
+        text_content = raw.strip()
         draft_data   = None
 
         # ── 1. TAG INTERCEPTOR: Detect and Clean [VOICE] ──
