@@ -1059,17 +1059,18 @@ class TelegramBotManager:
             )
             return
 
-        # ── SEARCH INTERCEPTOR (AFC + Manual path) ──────────────────────────────────
         # AFC path: ai_engine returns the sentinel string "__SHOW_SEARCH_LIST__" when
-        # AFC resolved search_gmail_tool internally and pending_searches was populated.
-        # Manual path: response.function_calls was non-empty; pending_searches was set
-        # inside the tool but before _dispatch_ai was called.
-        if raw == "__SHOW_SEARCH_LIST__" or uid in self.ai_engine.pending_searches:
+        # AFC resolved search_gmail_tool internally and the UI needs to be rendered.
+        if "__SHOW_SEARCH_LIST__" in raw:
             search_data = self.ai_engine.pending_searches.pop(uid, {})
             query_str = search_data.get("query", self.current_queries.get(uid, "label:INBOX"))
             self.current_queries[uid] = query_str
             await self._show_list(msg_obj, uid, offset=0, is_search=True)
             return
+            
+        # If it was a natural text query that happened to use search in the background, clear the queue without UI interruption.
+        if uid in self.ai_engine.pending_searches:
+            self.ai_engine.pending_searches.pop(uid, None)
 
         text_content = raw.strip()
         draft_data   = None
@@ -1197,6 +1198,10 @@ class TelegramBotManager:
             # Check if this is a contact save/query response
             email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', fallback_msg)
             is_contact_related = any(k in fallback_msg.lower() for k in ["contact", "saved", "email is", "address is", "successfully saved"])
+            
+            # Suppress intermediate/filler phrases if the LLM leaked them while running natural text background tools
+            if fallback_msg.lower().strip() in ["okay, main check kar raha hoon", "checking...", "i am checking", "wait", "working on it"]:
+                fallback_msg = "✅ Processing complete."
             
             if is_contact_related and email_match:
                 email = email_match.group(0)
@@ -1525,6 +1530,13 @@ class TelegramBotManager:
                 state = self.compose_states[uid]
             else:
                 state["to"] = email
+                
+            self._bg(self.memory.log_conversation(
+                telegram_id=uid,
+                user_message=f"[System UI Action] User disambiguated and explicitly selected recipient.",
+                bot_response=f"Recipient strictly locked to: {email}",
+                interaction_type="chat"
+            ))
                 
             if state.get("body") and state.get("subj"):
                 state["step"] = "AWAIT_ATT"
