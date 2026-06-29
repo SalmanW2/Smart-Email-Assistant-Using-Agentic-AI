@@ -6,8 +6,6 @@ CREATE TABLE IF NOT EXISTS users (
     first_name VARCHAR(255),
     email VARCHAR(255),
     auth_token JSONB,
-    ai_mode_enabled BOOLEAN DEFAULT TRUE,
-    voice_preference VARCHAR(50) DEFAULT 'text', -- 'text', 'voice', 'both'
     preferred_tts_method VARCHAR(50) DEFAULT 'google', -- 'google' or 'local'
     is_verified BOOLEAN DEFAULT FALSE,
     approved_at TIMESTAMP,
@@ -47,9 +45,6 @@ CREATE TABLE IF NOT EXISTS contacts (
     contact_alias VARCHAR(255), -- "Boss", "John", "HR Team"
     relationship_type VARCHAR(100), -- "manager", "colleague", "client", "friend", etc.
     last_email_date TIMESTAMP,
-    frequency_of_contact INT DEFAULT 0, -- Number of emails exchanged
-    tags JSONB DEFAULT '[]'::jsonb, -- ["project_alpha", "important"]
-    context_topics JSONB DEFAULT '[]'::jsonb, -- Topics discussed with this contact
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -196,6 +191,18 @@ CREATE INDEX idx_blocked_users_value ON blocked_users(block_value);
 CREATE INDEX idx_saved_attachments_telegram_id ON saved_attachments(telegram_id);
 CREATE INDEX idx_contact_messages_status ON contact_messages(status);
 CREATE INDEX idx_contact_messages_created_at ON contact_messages(created_at);
+
+-- Trigram text search for ILIKE queries
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX IF NOT EXISTS idx_contacts_name_trgm ON contacts USING gin (contact_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_contacts_alias_trgm ON contacts USING gin (contact_alias gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_contacts_email_trgm ON contacts USING gin (email_address gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_email_cache_sender_trgm ON email_cache USING gin (sender gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_email_cache_sender_email_trgm ON email_cache USING gin (sender_email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_email_cache_subject_trgm ON email_cache USING gin (subject gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_email_cache_preview_trgm ON email_cache USING gin (preview gin_trgm_ops);
 
 -- Admin restrictions columns
 ALTER TABLE users 
