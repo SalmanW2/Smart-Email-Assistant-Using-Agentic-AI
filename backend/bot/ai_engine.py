@@ -40,13 +40,13 @@ def _sanitize_final_text(final_text: str) -> str:
     Surgical output sanitizer: intercepts raw tool call syntax leaks securely.
     """
     if not final_text or not final_text.strip():
-        return "✅ Processing complete."
+        return ""
         
     # Clean up leaked function syntax but keep the rest of the text
     cleaned_text = re.sub(r'\b\w+tool\s*\(.*?\)', '', final_text, flags=re.IGNORECASE).strip()
     
     if not cleaned_text:
-        return "✅ Processing complete."
+        return ""
         
     return cleaned_text
 
@@ -331,162 +331,60 @@ class AIEngine:
         return "English. Reply in English."
 
     # ==========================================
-    # GROQ FALLBACK PIPELINE
+    # GROQ GATEKEEPER / INTENT ROUTER
     # ==========================================
 
-    async def _groq_fallback_chat(self, message: str, telegram_id: int, system_instructions: str, tools_map: dict) -> str:
+    async def _groq_intent_router(self, message: str, telegram_id: int) -> dict:
         """
-        Triggered automatically when Gemini hits API rate limits (429) or other errors.
-        Routes the existing context and tools directly to Llama-3-70b on Groq.
+        Orchestrator Gatekeeper. Analyzes intent and returns STRICT JSON.
         """
         if not settings.GROQ_API_KEY:
-            return "⚠️ Gemini LLM limits reached and Groq API Fallback is not configured. Please wait a few seconds."
-
-        # Map Gemini History Schema to Groq (OpenAI) Chat Schema
-        raw_messages = []
-        for turn in self.active_chats.get(telegram_id, []):
-            if turn is None or not hasattr(turn, 'role') or turn.role is None:
-                continue
-            role = "user" if turn.role == "user" else "assistant"
-            text_content = ""
-            for part in getattr(turn, "parts", []):
-                if hasattr(part, "text") and part.text:
-                    text_content += part.text
-            if text_content.strip():
-                raw_messages.append({"role": role, "content": text_content.strip()})
-
-        # Append the current user request
-        if message.strip():
-            raw_messages.append({"role": "user", "content": message.strip()})
-
-        # Alternate roles and merge consecutive roles to satisfy strict OpenAI/Groq requirements
-        messages = [{"role": "system", "content": system_instructions}]
-        for m in raw_messages:
-            if messages and messages[-1]["role"] == m["role"]:
-                messages[-1]["content"] += "\n" + m["content"]
-            else:
-                messages.append(m)
-
-        # Map Custom Tools to Groq Functions
-        groq_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_gmail_tool",
-                    "description": "Searches the user's Gmail inbox for specific threads or messages.",
-                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "prepare_email_draft_tool",
-                    "description": "Prepares and stages an immediate email draft.",
-                    "parameters": {"type": "object", "properties": {"to_email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to_email", "subject", "body"]}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "schedule_email_tool",
-                    "description": "Schedules an email for future automated dispatch.",
-                    "parameters": {"type": "object", "properties": {"to_email": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "scheduled_time": {"type": "string"}}, "required": ["to_email", "subject", "body", "scheduled_time"]}
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "save_contact_tool",
-                    "description": "Saves or updates an address book contact.",
-                    "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}}, "required": ["name", "email"]}
-                }
-            }
-        ]
+            return {"intent": "complex_search"}
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+        
+        system_prompt = (
+            "You are an intent classification router for an Email Assistant.\n"
+            "Analyze the user's message and strictly output valid JSON with no markdown wrapping or additional text.\n\n"
+            "Valid intents:\n"
+            "1. 'chit_chat' - General greetings, small talk, gratitude. (Include 'response': <string> with your reply).\n"
+            "2. 'send_email' - Requesting to send or compose an email. (Include 'name': <extracted_name_or_empty>, 'context': <subject_or_body_or_empty>).\n"
+            "3. 'complex_search' - Any query asking to search, find, read, summarize, or manage emails.\n"
+            "4. 'read_attachment' - Explicitly asking to read, summarize, or open an attached file (Include 'file_id': <string_if_provided>).\n\n"
+            "Example 1: {\"intent\": \"chit_chat\", \"response\": \"Hello! How can I help you?\"}\n"
+            "Example 2: {\"intent\": \"send_email\", \"name\": \"Abdullah\", \"context\": \"Friday party\"}\n"
+            "Example 3: {\"intent\": \"complex_search\"}\n\n"
+            "Respond ONLY with JSON."
+        )
+
         payload = {
             "model": "llama-3.3-70b-versatile",
-            "messages": messages,
-            "tools": groq_tools,
-            "tool_choice": "auto",
-            "temperature": 0.2
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"}
         }
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
-                # Log full response body on error for easier debugging
-                if response.status_code != 200:
-                    logger.error(f"Groq API returned {response.status_code}: {response.text}")
+                if response.status_code == 429:
+                    return {"intent": "__GROQ_QUOTA_ERROR__"}
                 response.raise_for_status()
                 data = response.json()
-
-                choice = data["choices"][0]["message"]
-
-                if choice.get("tool_calls"):
-                    tool_call = choice["tool_calls"][0]
-                    fn_name = tool_call["function"]["name"]
-                    args = json.loads(tool_call["function"]["arguments"])
-
-                    try:
-                        func = tools_map[fn_name]
-                        if inspect.iscoroutinefunction(func):
-                            result_str = await func(**args)
-                        else:
-                            result_str = func(**args)
-
-                        if "TOKEN_EXPIRED_REAUTH_REQUIRED" in result_str:
-                            return "TOKEN_EXPIRED_REAUTH_REQUIRED"
-
-                        # Intercept searches right away!
-                        if telegram_id in _module_pending_searches:
-                            # Groq ran search_gmail_tool. Return the sentinel.
-                            return "__SHOW_SEARCH_LIST__"
-
-                        # Intercept interactive UI cards and return early
-                        if "prepare_draft" in result_str or "schedule_email" in result_str:
-                            # Store a clean user+model pair so Groq history stays valid
-                            self.active_chats.setdefault(telegram_id, []).append(
-                                types.Content(role="user", parts=[types.Part.from_text(text=message)])
-                            )
-                            self.active_chats[telegram_id].append(
-                                types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")])
-                            )
-                            return result_str
-
-                        # Complete standard tool-return execution for Groq
-                        messages.append(choice)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call["id"],
-                            "name": fn_name,
-                            "content": result_str
-                        })
-                        payload["messages"] = messages
-
-                        resp2 = await client.post(url, headers=headers, json=payload)
-                        if resp2.status_code != 200:
-                            logger.error(f"Groq second call returned {resp2.status_code}: {resp2.text}")
-                        resp2.raise_for_status()
-                        final_text = resp2.json()["choices"][0]["message"].get("content", "")
-
-                        return self._unify_agent_response(telegram_id, message, final_text)
-
-                    except Exception as tool_err:
-                        logger.error(f"Groq tool error: {tool_err}")
-                        return f"Error executing tool during fallback: {tool_err}"
-                else:
-                    # Plain chat response
-                    content = choice.get("content", "")
-                    return self._unify_agent_response(telegram_id, message, content)
-
+                content = data["choices"][0]["message"]["content"].strip()
+                return json.loads(content)
         except httpx.HTTPStatusError as e:
-            logger.error(f"Groq HTTP error {e.response.status_code}: {e.response.text}")
-            return "⚠️ System is experiencing extremely high traffic and both AI nodes failed. Please try again shortly."
+            if e.response.status_code == 429:
+                return {"intent": "__GROQ_QUOTA_ERROR__"}
+            logger.error(f"Groq router HTTP error {e.response.status_code}: {e.response.text}")
+            return {"intent": "complex_search"}
         except Exception as e:
-            logger.error(f"Groq Fallback also failed: {e}")
-            return "⚠️ System is experiencing extremely high traffic and both AI nodes failed. Please try again shortly."
+            logger.error(f"Groq router failed: {e}")
+            return {"intent": "complex_search"}
 
     # ==========================================
     # CORE AGENT REASONING ENGINE
@@ -542,6 +440,42 @@ class AIEngine:
             )
 
         try:
+            # ── 1. GROQ GATEKEEPER ROUTING ──
+            route = await self._groq_intent_router(message, telegram_id)
+            intent = route.get("intent", "complex_search")
+
+            if intent == "__GROQ_QUOTA_ERROR__":
+                return "__GROQ_QUOTA_ERROR__"
+
+            if intent == "chit_chat":
+                response_text = route.get("response", "Hello! How can I help you?")
+                return self._unify_agent_response(telegram_id, message, response_text)
+                
+            if intent == "send_email":
+                name = route.get("name", "")
+                context_str = route.get("context", "")
+                
+                # Resolve recipient
+                to_clean = "[Specify Recipient Email]"
+                if name:
+                    contacts_list = await contact_manager.get_contacts(telegram_id)
+                    for c in contacts_list:
+                        c_name = c.get('contact_name', '').lower()
+                        c_alias = c.get('contact_alias', '').lower()
+                        if name.lower() in c_name or name.lower() in c_alias:
+                            to_clean = c.get('email_address', to_clean)
+                            break
+                
+                draft = {
+                    "action": "prepare_draft",
+                    "to": to_clean,
+                    "subject": "No Subject" if not context_str else context_str,
+                    "body": context_str
+                }
+                _module_pending_drafts[telegram_id] = draft
+                return self._unify_agent_response(telegram_id, message, "I have prepared the draft.")
+
+            # ── 2. GEMINI AFC PIPELINE (Complex Search) ──
             contacts_list = await contact_manager.get_contacts(telegram_id)
             contacts_context = "\n".join([
                 f"- {c.get('contact_alias')} ({c.get('contact_name')}): {c.get('email_address')}"
@@ -579,6 +513,7 @@ class AIEngine:
                 "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
                 "Rule D (Parallel Hypothesis Testing): If a user's request is ambiguous (e.g., 'Did I get an invite from an organization?'), pass multiple search queries to the search tool simultaneously (e.g., [\"invite organization\", \"subject:invitation\"]) to guarantee you find the target email in one turn.\n"
                 "Rule E (Mandatory Confirmation): You must NEVER return an empty text response. After any tool call executes successfully (e.g., sending an email, saving a draft), you MUST generate a natural language confirmation for the user in the same language they spoke (e.g., 'I have successfully sent the email to Ayesha.').\n"
+                "Rule F (Result Limit Enforcement): If the user asks for a specific number of emails (e.g., 'last 7 emails'), you MUST map that exact number to the `max_results` integer parameter in the search tool.\n"
                 "5. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
                 "6. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
                 "7. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
@@ -612,17 +547,10 @@ class AIEngine:
                 types.SafetySetting(category="HARM_CATEGORY_CIVIC_INTEGRITY",     threshold="OFF"),
             ]
 
-            # ── AFC THROTTLE: maximum_remote_calls=1 ───────────────────────────────────
-            # Default AFC allows up to 10 internal tool-call iterations. On each iteration
-            # the SDK resends the FULL payload (system prompt + history + tool results),
-            # multiplying token consumption by up to 10x per message. This instantly
-            # exhausts free-tier TPM quotas. We cap at 1 to allow exactly one tool call
-            # per user message — sufficient for all email operations (search OR draft).
-            # Multi-step flows (search + draft in one message) are handled by the system
-            # prompt's instruction to call tools sequentially in separate user turns.
+            # ── AFC THROTTLE: maximum_remote_calls=5 ───────────────────────────────────
             afc_config = types.AutomaticFunctionCallingConfig(
                 disable=False,
-                maximum_remote_calls=3,
+                maximum_remote_calls=5,
             )
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
@@ -666,13 +594,10 @@ class AIEngine:
                 )
             except Exception as gemini_err:
                 if _is_quota_error(gemini_err):
-                    # Return the quota sentinel immediately. Do NOT forward to Groq here
-                    # because the user's request requires tools that Groq may misfire on.
-                    # The dispatcher will show a clean, actionable user-facing message.
                     logger.warning(f"Gemini API quota exhausted (429) for user {telegram_id}. Returning quota sentinel.")
                     return "__API_QUOTA_EXCEEDED__"
-                logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}). Triggering Groq Fallback...")
-                return await self._groq_fallback_chat(message, telegram_id, system_instructions, tools_map)
+                logger.warning(f"Gemini Engine Blocked/Rate-limited ({gemini_err}).")
+                return "⚠️ System error during reasoning. Please try again."
 
             # --- STANDARD GEMINI PROCESSING ---
             # (AFC handles function calls internally. Manual block pruned for performance)

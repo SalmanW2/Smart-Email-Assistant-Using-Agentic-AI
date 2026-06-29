@@ -810,7 +810,7 @@ class TelegramBotManager:
                 interaction_type="chat",
             ))
             # Trigger background contact extraction from conversation
-            self._bg(self.contacts.extract_and_save_contacts(uid, text))
+            # DISABLED (CRITICAL): self._bg(self.contacts.extract_and_save_contacts(uid, text))
         except Exception as e:
             logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
             await self._edit(msg,
@@ -971,8 +971,8 @@ class TelegramBotManager:
                 bot_response=raw[:500] if raw else "",
                 interaction_type="voice",
             ))
-            # Trigger background contact extraction from voice transcription
-            self._bg(self.contacts.extract_and_save_contacts(uid, transcribed))
+            # Extract contacts asynchronously based on the transcript
+            # DISABLED (CRITICAL): self._bg(self.contacts.extract_and_save_contacts(uid, transcribed))
         except Exception as e:
             logger.error(f"Unhandled error in handle_voice for user {uid}: {e}", exc_info=True)
             if task_id in self.active_voice_tasks:
@@ -1047,15 +1047,21 @@ class TelegramBotManager:
         if raw == "TOKEN_EXPIRED_REAUTH_REQUIRED" or "TOKEN_EXPIRED_REAUTH_REQUIRED" in raw:
             return await self._prompt_reauth(msg_obj, uid)
 
+        if raw == "__GROQ_QUOTA_ERROR__":
+            await self._edit(
+                msg_obj,
+                "⚠️ *Groq STT/Routing Limit Reached*\n\n"
+                "Please wait a moment."
+            )
+            return
+
         # ── QUOTA EXCEEDED INTERCEPTOR ───────────────────────────────────────────────
         # Returned by ai_engine when Gemini raises HTTP 429 / ResourceExhausted.
-        # We surface a clear, actionable user message instead of breaking silently.
         if raw == "__API_QUOTA_EXCEEDED__":
             await self._edit(
                 msg_obj,
-                "⚠️ *AI Processing Limit Reached*\n\n"
-                "Our AI system is experiencing high demand right now and has temporarily reached its processing limit.\n\n"
-                "⏳ Please wait *30–60 seconds* and send your request again — it will work right away."
+                "⚠️ *Gemini API Quota Exhausted*\n\n"
+                "Please wait 1 minute."
             )
             return
 
@@ -1097,15 +1103,7 @@ class TelegramBotManager:
             return
 
 
-        # ── 2. DRAFT INTERCEPTOR: Parse JSON payload if tool executed ──
-        try:
-            cleaned = re.sub(r'```json|```', '', raw).strip()
-            m       = re.search(r'\{.*\}', cleaned, re.DOTALL)
-            if m:
-                parsed       = json.loads(m.group(0))
-                draft_data   = parsed.get("draft")
-        except Exception:
-            pass
+        # ── 2. DRAFT INTERCEPTOR ──
 
         if uid in self.ai_engine.pending_drafts:
             draft_data = self.ai_engine.pending_drafts.pop(uid)
