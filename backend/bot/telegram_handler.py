@@ -35,7 +35,7 @@ from db.memory import memory_manager
 from bot.ai_engine import ai_engine
 from bot.gmail_client import GmailClient
 from bot.voice_handler import voice_handler
-from bot.contact_manager import contact_manager
+from db.contacts import contact_manager
 
 logging.basicConfig(level=logging.INFO)
 # Hide spammy API logs
@@ -809,8 +809,6 @@ class TelegramBotManager:
                 bot_response=raw[:500] if raw else "",
                 interaction_type="chat",
             ))
-            # Trigger background contact extraction from conversation
-            # DISABLED (CRITICAL): self._bg(self.contacts.extract_and_save_contacts(uid, text))
         except Exception as e:
             logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
             await self._edit(msg,

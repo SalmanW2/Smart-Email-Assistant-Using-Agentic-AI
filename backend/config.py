@@ -22,8 +22,7 @@ class Settings(BaseSettings):
     MAX_CONTEXT_MESSAGES: int = 5
     SUMMARY_GENERATION_THRESHOLD: int = 10
     GEMINI_MODEL: str = "gemini-2.5-flash"
-
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     def get_utc_now(self) -> str:
         return datetime.utcnow().replace(tzinfo=None).isoformat() + "Z"

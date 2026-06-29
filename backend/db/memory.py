@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from cachetools import TTLCache
 from config import settings
 from db.models import db_manager
+from utils.embeddings import generate_embedding
 
 class MemoryManager:
     def __init__(self):
@@ -22,7 +23,7 @@ class MemoryManager:
 
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("conversation_summaries")
-                                         .select("*")
+                                         .select("id, telegram_id, summary_text, key_facts, current_topic, created_at")
                                          .eq("telegram_id", telegram_id)
                                          .order("created_at", desc=True)
                                          .limit(limit)
@@ -135,6 +136,10 @@ class MemoryManager:
                          subject: str, preview: str, received_at: str) -> bool:
         """Cache recent email for context. UPSERT added to prevent Duplicate Key Errors (23505)."""
         try:
+            # Generate semantic embedding for the subject + preview
+            content_to_embed = f"Subject: {subject}\n\n{preview}"
+            embedding = await generate_embedding(content_to_embed)
+            
             await self.db.db.run(lambda: self.db.db.client.table("email_cache").upsert({
                 "telegram_id": telegram_id,
                 "gmail_message_id": gmail_message_id,
@@ -142,7 +147,8 @@ class MemoryManager:
                 "sender_email": sender_email,
                 "subject": subject,
                 "preview": preview,
-                "received_at": received_at
+                "received_at": received_at,
+                "embedding": embedding
             }, on_conflict="telegram_id,gmail_message_id").execute())
             
             # Invalidate cache for this user
@@ -164,7 +170,7 @@ class MemoryManager:
 
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("email_cache")
-                                         .select("*")
+                                         .select("id, telegram_id, gmail_message_id, sender, sender_email, subject, preview, received_at, cached_at")
                                          .eq("telegram_id", telegram_id)
                                          .order("received_at", desc=True)
                                          .limit(limit)
@@ -180,7 +186,7 @@ class MemoryManager:
         """NEW: Flexible search for AI to find cached emails by topic, sender, or date without fetching all."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("email_cache")
-                                         .select("*")
+                                         .select("id, telegram_id, gmail_message_id, sender, sender_email, subject, preview, received_at, cached_at")
                                          .eq("telegram_id", telegram_id)
                                          .or_(f"sender.ilike.%{query}%,sender_email.ilike.%{query}%,subject.ilike.%{query}%,preview.ilike.%{query}%")
                                          .order("received_at", desc=True)
@@ -189,6 +195,22 @@ class MemoryManager:
             return self._safe_data(result) or []
         except Exception as e:
             print(f"DB Error in search_cached_emails: {e}")
+            return []
+
+    async def semantic_search_emails(self, telegram_id: int, query_embedding: List[float], match_threshold: float = 0.5, limit: int = 5) -> List[Dict[str, Any]]:
+        """Perform a pgvector semantic search using the `match_emails` Supabase RPC."""
+        if not query_embedding:
+            return []
+        try:
+            result = await self.db.db.run(lambda: self.db.db.client.rpc("match_emails", {
+                "query_embedding": query_embedding,
+                "match_threshold": match_threshold,
+                "match_count": limit,
+                "user_telegram_id": telegram_id
+            }).execute())
+            return self._safe_data(result) or []
+        except Exception as e:
+            print(f"DB Error in semantic_search_emails: {e}")
             return []
 
 memory_manager = MemoryManager()

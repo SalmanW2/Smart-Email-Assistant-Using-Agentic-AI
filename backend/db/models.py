@@ -36,7 +36,7 @@ class DBManager:
     # ==========================================
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("users").select("*").eq("telegram_id", telegram_id).maybe_single().execute())
+            result = await self.db.run(lambda: self.db.client.table("users").select("id, telegram_id, email, first_name, username, is_verified").eq("telegram_id", telegram_id).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             logger.error(f"DB Error in get_user: {e}")
@@ -91,7 +91,7 @@ class DBManager:
         if use_cache and "all_users" in self.cache:
             return self.cache["all_users"]
         try:
-            result = await self.db.run(lambda: self.db.client.table("users").select("*").order("created_at", desc=True).execute())
+            result = await self.db.run(lambda: self.db.client.table("users").select("telegram_id, email, first_name, username, is_verified, created_at").order("created_at", desc=True).execute())
             data = self._safe_data(result) or []
             self.cache["all_users"] = data
             return data
@@ -101,7 +101,7 @@ class DBManager:
 
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("users").select("*").eq("email", email).execute())
+            result = await self.db.run(lambda: self.db.client.table("users").select("telegram_id, email, first_name, username, is_verified").eq("email", email).execute())
             data = self._safe_data(result)
             return data[0] if data else None
         except Exception as e:
@@ -132,7 +132,7 @@ class DBManager:
         if "active_auto_check_users" in self.cache:
             return self.cache["active_auto_check_users"]
         try:
-            users_res = await self.db.run(lambda: self.db.client.table("users").select("*").eq("is_verified", True).execute())
+            users_res = await self.db.run(lambda: self.db.client.table("users").select("telegram_id, auth_token").eq("is_verified", True).execute())
             verified_users = self._safe_data(users_res) or []
             
             prefs_res = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, auto_check_enabled").execute())
@@ -194,7 +194,7 @@ class DBManager:
 
     async def get_all_auth_sessions(self) -> List[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("*").execute())
+            result = await self.db.run(lambda: self.db.client.table("auth_sessions").select("state_uuid, telegram_id, email, created_at, expires_at").execute())
             return self._safe_data(result) or []
         except Exception as e:
             logger.error(f"DB Error in get_all_auth_sessions: {e}")
@@ -205,7 +205,7 @@ class DBManager:
     # ==========================================
     async def get_user_preferences(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("user_preferences").select("*").eq("telegram_id", telegram_id).maybe_single().execute())
+            result = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, ai_mode_enabled, voice_preference, auto_check_enabled, pagination_limit").eq("telegram_id", telegram_id).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             logger.error(f"DB Error in get_user_preferences: {e}")

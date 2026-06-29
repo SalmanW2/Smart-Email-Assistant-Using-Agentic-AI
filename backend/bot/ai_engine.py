@@ -88,8 +88,9 @@ from google.genai import types
 
 from config import settings
 from db.memory import memory_manager
-from bot.contact_manager import contact_manager
+from db.contacts import contact_manager
 from db.models import db_manager
+from utils.embeddings import generate_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -344,15 +345,27 @@ class AIEngine:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
         
+        # Get up to 6 recent turns to inject as memory into Groq
+        chat_history = self.active_chats.get(telegram_id, [])[-6:]
+        history_str = ""
+        for turn in chat_history:
+            if not hasattr(turn, 'role'): continue
+            role = getattr(turn, 'role', '')
+            parts = getattr(turn, 'parts', [])
+            text = parts[0].text if parts and hasattr(parts[0], 'text') else ""
+            if text:
+                history_str += f"{role.capitalize()}: {text}\n"
+
         system_prompt = (
-            "You are an intent classification router for an Email Assistant.\n"
+            "You are a highly intelligent, natural-sounding Smart Email Assistant. Respond directly and conversationally in the exact language the user is speaking (English or Roman Urdu). CRITICAL: DO NOT echo, repeat, or translate the user's prompt. Answer logically based on the chat history.\n"
             "Analyze the user's message and strictly output valid JSON with no markdown wrapping or additional text.\n\n"
             "Valid intents:\n"
             "1. 'chit_chat' - General greetings, small talk, gratitude. (Include 'response': <string> with your reply).\n"
             "2. 'send_email' - Requesting to send or compose an email. (Include 'name': <extracted_name_or_empty>, 'context': <subject_or_body_or_empty>).\n"
             "3. 'complex_search' - Any query asking to search, find, read, summarize, or manage emails.\n"
             "4. 'read_attachment' - Explicitly asking to read, summarize, or open an attached file (Include 'file_id': <string_if_provided>).\n\n"
-            "Example 1: {\"intent\": \"chit_chat\", \"response\": \"Hello! How can I help you?\"}\n"
+            f"Recent Chat History:\n{history_str}\n\n"
+            "Example 1: {\"intent\": \"chit_chat\", \"response\": \"Main theek hoon! Apko inbox mein kya madad chahiye?\"}\n"
             "Example 2: {\"intent\": \"send_email\", \"name\": \"Abdullah\", \"context\": \"Friday party\"}\n"
             "Example 3: {\"intent\": \"complex_search\"}\n\n"
             "Respond ONLY with JSON."
@@ -431,6 +444,10 @@ class AIEngine:
         """
         Main Conversational AI loop for interacting with the Smart Email Assistant.
         """
+        # Clear lingering UI sentinels from previous turns to prevent state leaks
+        _module_pending_drafts.pop(telegram_id, None)
+        _module_pending_searches.pop(telegram_id, None)
+
         _GREETINGS = {"hi", "hello", "hey", "start", "/start", "help", "who are you"}
         if message.strip().lower() in _GREETINGS:
             return self._unify_agent_response(
@@ -455,16 +472,15 @@ class AIEngine:
                 name = route.get("name", "")
                 context_str = route.get("context", "")
                 
-                # Resolve recipient
+                # Resolve recipient using advanced DB search
                 to_clean = "[Specify Recipient Email]"
                 if name:
-                    contacts_list = await contact_manager.get_contacts(telegram_id)
-                    for c in contacts_list:
-                        c_name = c.get('contact_name', '').lower()
-                        c_alias = c.get('contact_alias', '').lower()
-                        if name.lower() in c_name or name.lower() in c_alias:
-                            to_clean = c.get('email_address', to_clean)
-                            break
+                    try:
+                        matches = await contact_manager.find_contacts_by_name(telegram_id, name)
+                        if matches:
+                            to_clean = matches[0].get('email_address', to_clean)
+                    except Exception as e:
+                        logger.error(f"Error fetching DB contacts for email drafting: {e}")
                 
                 draft = {
                     "action": "prepare_draft",
@@ -476,7 +492,11 @@ class AIEngine:
                 return self._unify_agent_response(telegram_id, message, "I have prepared the draft.")
 
             # ── 2. GEMINI AFC PIPELINE (Complex Search) ──
-            contacts_list = await contact_manager.get_contacts(telegram_id)
+            try:
+                contacts_list = await contact_manager.get_user_contacts(telegram_id)
+            except Exception as e:
+                logger.error(f"Error fetching DB contacts: {e}")
+                contacts_list = []
             contacts_context = "\n".join([
                 f"- {c.get('contact_alias')} ({c.get('contact_name')}): {c.get('email_address')}"
                 for c in contacts_list
@@ -494,6 +514,21 @@ class AIEngine:
             # Detect the user's script/language for mirroring
             detected_script = self._detect_user_script(message)
 
+            # ── SEMANTIC CACHE SEARCH (pgvector) ──
+            semantic_context = ""
+            try:
+                query_embed = await generate_embedding(message)
+                if query_embed:
+                    # Fetch top 3 semantically relevant cached emails
+                    semantic_matches = await memory_manager.semantic_search_emails(telegram_id, query_embed, match_threshold=0.6, limit=3)
+                    if semantic_matches:
+                        semantic_context = "\n".join([
+                            f"- {m.get('sender')} ({m.get('received_at')}): Subj: {m.get('subject')} - {m.get('preview')}"
+                            for m in semantic_matches
+                        ])
+            except Exception as e:
+                logger.error(f"Semantic search failed: {e}")
+
             system_instructions = (
                 "You are the direct native user interface dashboard engine for Gmail.\n"
                 "NEVER speak as a conversational middleman (avoid phrases like 'The sender is saying...', 'This email states...', 'The email is about...').\n"
@@ -505,7 +540,8 @@ class AIEngine:
 
                 f"UTC Time: {utc_now}\n"
                 f"Address Book:{chr(10) + contacts_context if contacts_context else ' (empty)'}\n"
-                f"Memory:{chr(10) + history_context if history_context else ' (none)'}\n\n"
+                f"Memory:{chr(10) + history_context if history_context else ' (none)'}\n"
+                f"Semantic Search Matches (Cached Emails):{chr(10) + semantic_context if semantic_context else ' (none)'}\n\n"
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
                 "Rule A (Natural Reply): If the user asks a conversational question or wants a summary (e.g., 'Did I get an email from Ayesha?'), use the search tool and reply NATURALLY in text. DO NOT output UI sentinel tags.\n"

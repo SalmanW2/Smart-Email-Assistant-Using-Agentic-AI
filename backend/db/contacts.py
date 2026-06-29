@@ -15,7 +15,7 @@ class ContactManager:
         """Get all contacts for a user."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
-                                         .select("*")
+                                         .select("id, contact_name, contact_alias, email_address")
                                          .eq("telegram_id", telegram_id)
                                          .order("contact_name")
                                          .execute())
@@ -69,7 +69,7 @@ class ContactManager:
         """Find contacts by email address."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
-                                         .select("*")
+                                         .select("id, contact_name, contact_alias, email_address")
                                          .eq("telegram_id", telegram_id)
                                          .ilike("email_address", f"%{email}%")
                                          .execute())
@@ -82,7 +82,7 @@ class ContactManager:
         """Find contacts by name."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
-                                         .select("*")
+                                         .select("id, contact_name, contact_alias, email_address")
                                          .eq("telegram_id", telegram_id)
                                          .ilike("contact_name", f"%{name}%")
                                          .execute())
@@ -95,7 +95,7 @@ class ContactManager:
         """Get a specific contact by ID."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
-                                         .select("*")
+                                         .select("id, contact_name, contact_alias, email_address")
                                          .eq("id", contact_id)
                                          .maybe_single()
                                          .execute())
@@ -160,7 +160,7 @@ class ContactManager:
         """Search contacts by name, email, or company."""
         try:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
-                                         .select("*")
+                                         .select("id, contact_name, contact_alias, email_address")
                                          .eq("telegram_id", telegram_id)
                                          .or_(
                                              f"contact_name.ilike.%{query}%,email_address.ilike.%{query}%,company.ilike.%{query}%"
