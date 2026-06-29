@@ -154,14 +154,16 @@ def kb_main_menu(has_draft: bool = False) -> InlineKeyboardMarkup:
     rows = []
     if has_draft:
         rows.append([
-            InlineKeyboardButton("📝 Resume Draft", callback_data="resume_draft"),
+            InlineKeyboardButton("📝 Resume Draft", callback_data="resume_draft")
+        ])
+        rows.append([
             InlineKeyboardButton("🗑️ Discard", callback_data="cancel")
         ])
     rows.extend([
-        [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0)),
-         InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
-        [InlineKeyboardButton("🔍 Search", callback_data="search_prompt"),
-         InlineKeyboardButton("⚙️ Settings",       callback_data="settings")],
+        [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0))],
+        [InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
+        [InlineKeyboardButton("🔍 Search", callback_data="search_prompt")],
+        [InlineKeyboardButton("⚙️ Settings",       callback_data="settings")],
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -432,7 +434,7 @@ class TelegramBotManager:
     async def _prompt_reauth(self, msg_obj, uid: int):
         state = await self.db.create_auth_session(uid)
         url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
-        text  = "⚠️ *Google Connection Lost*\n\nYour session has expired. Please reconnect your Google Workspace account using the link below to restore access."
+        text  = "⚠️ Your Google session has expired or been revoked. Please use reconnect through button. "
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         await self._edit(msg_obj, text, markup)
 
@@ -440,10 +442,7 @@ class TelegramBotManager:
         await self.db.update_user_preferences(uid, {"auto_check_enabled": False})
         state = await self.db.create_auth_session(uid)
         url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
-        text  = ("⚠️ *Connection Broken:*\n"
-                 "Your Google Workspace token has expired or been revoked.\n\n"
-                 "Please reconnect your account to restore inbox syncing.\n"
-                 "_(Background polling has been temporarily paused to prevent spam)._")
+        text  = "⚠️ Your Google session has expired or been revoked. Please use reconnect through button. "
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         try:
             await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=markup)

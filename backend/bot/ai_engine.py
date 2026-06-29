@@ -35,55 +35,20 @@ try:
 except ImportError:
     _GenAIClientError = None  # type: ignore
 
-# Meaningless generic AI responses that should be suppressed.
-# When AFC or Groq runs a tool but the model returns one of these placeholders
-# as its final text, we replace it with a proper system-level status notice.
-_MEANINGLESS_RESPONSES = frozenset([
-    "i processed your request",
-    "i have processed your request",
-    "i've processed your request",
-    "your request has been processed",
-    "request processed",
-    "i completed the action",
-    "i completed that",
-    "action completed",
-    "i will do that",
-    "done",
-    "processing your request",
-    "i completed the action successfully",
-    "i have completed the action",
-    "task done",
-    "understood",
-    "okay, i'll do that",
-    "got it",
-    "sure",
-])
-
 def _sanitize_final_text(final_text: str) -> str:
     """
-    Surgical output sanitizer: intercepts raw tool call syntax leaks AND
-    meaningless AI meta-responses that provide zero value to the end user.
+    Surgical output sanitizer: intercepts raw tool call syntax leaks securely.
     """
     if not final_text or not final_text.strip():
-        return "✅ Action completed successfully."
-
-    # Filter known meaningless single-line AI meta-responses.
-    # Compare lowercase stripped version (strip trailing punctuation for robustness).
-    stripped_lower = final_text.strip().lower().rstrip('.!')
-    if stripped_lower in _MEANINGLESS_RESPONSES:
-        return "✅ Action completed successfully."
-
-    # ONLY intercept actual raw function call syntax patterns leaking into text output.
-    if re.search(r'\b\w+tool\s*\(', final_text, re.IGNORECASE):
-        return "✅ Action completed successfully."
-
-    # Catch snake_case function-call patterns like prepare_email_draft_tool(to=...)
-    if re.search(r'\b[a-z]+_[a-z]+_[a-z]+\s*\(', final_text):
-        return "✅ Action completed successfully."
-
-    return final_text
-
-    return final_text
+        return "✅ Processing complete."
+        
+    # Clean up leaked function syntax but keep the rest of the text
+    cleaned_text = re.sub(r'\b\w+tool\s*\(.*?\)', '', final_text, flags=re.IGNORECASE).strip()
+    
+    if not cleaned_text:
+        return "✅ Processing complete."
+        
+    return cleaned_text
 
 
 def _is_quota_error(exc: Exception) -> bool:
@@ -161,37 +126,54 @@ def _get_gmail_client():
 # These functions are module-level to prevent deep-copy pickling errors
 # when passed to types.GenerateContentConfig(tools=[...]).
 
-async def search_gmail_tool(query: str, *, user_id: int) -> str:
+from typing import Union, List
+
+async def search_gmail_tool(query: Union[str, list], max_results: int = 10, *, user_id: int) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
+    Accepts a single query string or a list of query strings for parallel hypothesis testing.
     """
-    logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with query: {query}")
-    _module_pending_searches[user_id] = {"query": query}
+    queries = [query] if isinstance(query, str) else query
+    logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with queries: {queries}")
+    _module_pending_searches[user_id] = {"query": ", ".join(queries)}
+    
     gmail = _get_gmail_client()
-    results = await gmail.search_emails(user_id, query, max_results=5)
-    if not results:
+    all_results = {}
+    
+    import asyncio
+    tasks = [gmail.search_emails(user_id, q, max_results=max_results) for q in queries]
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for res in results_list:
+        if isinstance(res, list):
+            for email in res:
+                if isinstance(email, dict) and "id" in email:
+                    all_results[email["id"]] = email
+                    
+    if not all_results:
         _module_pending_searches.pop(user_id, None)
         return "No emails found matching the search query parameters."
 
     # Truncate email bodies aggressively to prevent TPM exhaustion.
-    # 300 chars is enough for the model to understand the email topic.
-    # Full body is fetched separately when user taps 'Read Full Email'.
     optimized_results = []
-    for email in results:
-        if isinstance(email, dict):
-            body = email.get("body", "")
-            # Strip all whitespace/newlines from body before truncating to maximize signal density
-            compact_body = " ".join(body.split())
-            opt_email = {
-                "id":      email.get("id", ""),
-                "subject": email.get("subject", ""),
-                "sender":  email.get("sender", ""),
-                "date":    email.get("date", ""),
-                "body":    compact_body[:300] + ("..." if len(compact_body) > 300 else ""),
-            }
-            optimized_results.append(opt_email)
-        else:
-            optimized_results.append(email)
+    deduped = list(all_results.values())[:max_results]
+    
+    for email in deduped:
+        body = email.get("body", "")
+        # Strip all whitespace/newlines from body before truncating to maximize signal density
+        compact_body = " ".join(body.split())
+        opt_email = {
+            "Message ID":      email.get("id", ""),
+            "Thread ID":       email.get("threadId", ""),
+            "Sender Name & Email": email.get("sender", ""),
+            "Subject":         email.get("subject", ""),
+            "Date":            email.get("date", ""),
+            "Snippet":         email.get("snippet", ""),
+            "Has_Attachment":  email.get("has_attachment", False),
+            "body":            compact_body[:300] + ("..." if len(compact_body) > 300 else ""),
+        }
+        optimized_results.append(opt_email)
+        
     return json.dumps(optimized_results)
 
 
@@ -520,7 +502,7 @@ class AIEngine:
         self.active_chats.setdefault(telegram_id, []).append(user_content)
 
         # 2. Check for Search Sentinel (INSPECT only, do NOT pop)
-        if telegram_id in _module_pending_searches:
+        if "__SHOW_SEARCH_LIST__" in raw_text and telegram_id in _module_pending_searches:
             self.active_chats[telegram_id].append(
                 types.Content(role="model", parts=[types.Part.from_text(text="Search executed and results displayed to user.")])
             )
@@ -535,8 +517,13 @@ class AIEngine:
             import json as _json
             return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
 
-        # 4. Standard conversational/text response
-        resolved_text = _sanitize_final_text(raw_text)
+        # 4. Limit Exhaustion Fail-Safe
+        if not raw_text.strip() and telegram_id not in _module_pending_searches and telegram_id not in _module_pending_drafts:
+            resolved_text = "⚠️ Apologies, your request required too many complex steps and hit the safety limit. Could you please break it down into a simpler question?"
+        else:
+            # Standard conversational/text response
+            resolved_text = _sanitize_final_text(raw_text)
+            
         self.active_chats[telegram_id].append(
             types.Content(role="model", parts=[types.Part.from_text(text=resolved_text)])
         )
@@ -587,13 +574,16 @@ class AIEngine:
                 f"Memory:{chr(10) + history_context if history_context else ' (none)'}\n\n"
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
-                "1. SEARCH: User asks to find/read/check/list emails → call search_gmail_tool immediately.\n"
-                "2. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
-                "3. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
-                "4. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
-                "5. PLAIN CHAT: Only respond conversationally for general questions not requiring email actions. Keep responses direct and native, avoiding middleman preambles.\n"
-                "6. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
-                "7. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
+                "Rule A (Natural Reply): If the user asks a conversational question or wants a summary (e.g., 'Did I get an email from Ayesha?'), use the search tool and reply NATURALLY in text. DO NOT output UI sentinel tags.\n"
+                "Rule B (UI Card Rendering): If the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards.\n"
+                "Rule C (Smart Time Filters): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests.\n"
+                "Rule D (Parallel Hypothesis Testing): If a user's request is ambiguous (e.g., 'Did I get an invite from an organization?'), pass multiple search queries to the search tool simultaneously (e.g., [\"invite organization\", \"subject:invitation\"]) to guarantee you find the target email in one turn.\n"
+                "Rule E (Mandatory Confirmation): You must NEVER return an empty text response. After any tool call executes successfully (e.g., sending an email, saving a draft), you MUST generate a natural language confirmation for the user in the same language they spoke (e.g., 'I have successfully sent the email to Ayesha.').\n"
+                "5. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
+                "6. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
+                "7. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
+                "8. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
+                "9. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
                 "Never output raw JSON, function names, or code in your text response."
             )
 
@@ -632,7 +622,7 @@ class AIEngine:
             # prompt's instruction to call tools sequentially in separate user turns.
             afc_config = types.AutomaticFunctionCallingConfig(
                 disable=False,
-                maximum_remote_calls=1,
+                maximum_remote_calls=3,
             )
             config = types.GenerateContentConfig(
                 system_instruction=system_instructions,

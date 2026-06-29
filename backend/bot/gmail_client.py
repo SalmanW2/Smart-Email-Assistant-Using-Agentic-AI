@@ -424,9 +424,15 @@ class GmailClient:
             
             subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
             sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), 'Unknown Sender')
+            date_str = next((h['value'] for h in headers if h['name'].lower() == 'date'), 'Unknown Date')
             
             body = self._extract_body(payload)
             snippet = msg.get('snippet', '')
+            thread_id = msg.get('threadId', '')
+            
+            def check_attach(p):
+                return bool(p.get('filename')) or any(check_attach(sp) for sp in p.get('parts', []))
+            has_attachment = check_attach(payload)
             
             # Truncate body for UI/API payload efficiency — full content is still
             # available for display, but prevents massive chain emails from
@@ -436,10 +442,13 @@ class GmailClient:
 
             return {
                 "id": msg_id,
+                "threadId": thread_id,
                 "sender": sender,
                 "subject": subject,
+                "date": date_str,
                 "snippet": snippet,
-                "body": body
+                "body": body,
+                "has_attachment": has_attachment
             }
         except GmailAuthException:
             self.clear_cache(user_id)
@@ -591,6 +600,16 @@ class GmailClient:
             if data:
                 body_data = base64.urlsafe_b64decode(data).decode('utf-8')
                 
+        if body_data and '<' in body_data and '>' in body_data:
+            try:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(body_data, 'html.parser')
+                for tag in soup(["style", "script"]):
+                    tag.decompose()
+                body_data = soup.get_text(separator='\n', strip=True)
+            except ImportError:
+                pass
+
         return body_data.strip()
 
     # ==========================================
