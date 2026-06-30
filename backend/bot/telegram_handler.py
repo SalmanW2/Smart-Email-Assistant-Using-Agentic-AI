@@ -577,8 +577,10 @@ class TelegramBotManager:
         webhook_url = ""
         if base_url:
             base_url = base_url.rstrip('/')
-            if not base_url.endswith("/webhook/telegram"):
-                webhook_url = f"{base_url}/webhook/telegram"
+            if not base_url.endswith("/api/webhook/telegram") and not base_url.endswith("/webhook/telegram"):
+                webhook_url = f"{base_url}/api/webhook/telegram"
+            elif base_url.endswith("/webhook/telegram"):
+                webhook_url = base_url.replace("/webhook/telegram", "/api/webhook/telegram")
             else:
                 webhook_url = base_url
             

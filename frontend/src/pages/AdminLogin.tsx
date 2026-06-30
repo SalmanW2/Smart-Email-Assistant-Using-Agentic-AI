@@ -33,7 +33,7 @@ const AdminLogin = () => {
       const response = await fetch(`${backendUrl}/api/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData,
+        body: formData.toString(),
       });
       if (response.ok) {
         const data = await response.json();
