@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     
     # --- MISSING VARIABLES ADDED HERE ---
     WEBHOOK_URL: str | None = None
-    RENDER_EXTERNAL_URL: str | None = None
     SUPABASE_KEY: str | None = None
     
     MAX_CONTEXT_MESSAGES: int = 5
