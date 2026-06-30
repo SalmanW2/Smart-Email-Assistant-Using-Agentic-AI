@@ -239,6 +239,7 @@ class DBManager:
             return self.cache.get("all_admins", [])
 
     async def check_admin(self, email: str) -> bool:
+        email = email.strip().lower()
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("id, email, role").eq("email", email).execute())
             data = self._safe_data(result)
@@ -248,6 +249,7 @@ class DBManager:
             return False
 
     async def get_admin_role(self, email: str) -> str:
+        email = email.strip().lower()
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("role").eq("email", email).execute())
             data = self._safe_data(result)
@@ -284,6 +286,7 @@ class DBManager:
             return False
 
     async def verify_admin_password(self, email: str, password: str) -> bool:
+        email = email.strip().lower()
         try:
             result = await self.db.run(lambda: self.db.client.table("admin_users").select("password_hash").eq("email", email).execute())
             data = self._safe_data(result)
@@ -302,6 +305,7 @@ class DBManager:
             return False
 
     async def set_admin_password(self, email: str, password: str) -> bool:
+        email = email.strip().lower()
         try:
             salt = os.urandom(16)
             pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
