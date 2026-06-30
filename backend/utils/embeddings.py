@@ -32,6 +32,7 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
         # In the new google-genai SDK, response is typically an EmbedContentResponse
         # containing a list of Embeddings.
         if response and getattr(response, "embeddings", None):
+            logger.debug(f"Successfully generated {len(response.embeddings[0].values)}-dimensional vector embedding.")
             return response.embeddings[0].values
         return None
     except Exception as e:

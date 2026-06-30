@@ -214,6 +214,7 @@ class VoiceHandler:
         )
 
         output_file = Path(tempfile.gettempdir()) / f"smart_email_voice_{uuid.uuid4().hex}.ogg"
+        logger.debug(f"Writing Google TTS audio to DO compatible temp path: {output_file}")
         output_file.write_bytes(response.audio_content)
         return str(output_file)
     def _convert_mp3_to_ogg(self, mp3_path: str) -> str:
