@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize a separate genai client for embeddings 
 try:
-    _gemini_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+    _gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 except Exception as e:
     logger.error(f"Failed to initialize Gemini Client for embeddings: {e}")
     _gemini_client = None

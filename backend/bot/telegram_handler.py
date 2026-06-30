@@ -433,7 +433,7 @@ class TelegramBotManager:
 
     async def _prompt_reauth(self, msg_obj, uid: int):
         state = await self.db.create_auth_session(uid)
-        url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
+        url   = f"{settings.APP_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
         text  = "⚠️ Your Google session has expired or been revoked. Please use reconnect through button. "
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         await self._edit(msg_obj, text, markup)
@@ -441,7 +441,7 @@ class TelegramBotManager:
     async def _send_reauth_direct(self, context, uid: int):
         await self.db.update_user_preferences(uid, {"auto_check_enabled": False})
         state = await self.db.create_auth_session(uid)
-        url   = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
+        url   = f"{settings.APP_URL}/api/auth/telegram_login?state={state}&telegram_id={uid}"
         text  = "⚠️ Your Google session has expired or been revoked. Please use reconnect through button. "
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Reconnect", url=url)]])
         try:
@@ -504,7 +504,7 @@ class TelegramBotManager:
             
         if status == "unauthenticated":
             state = await self.db.create_auth_session(uid)
-            url   = (f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login"
+            url   = (f"{settings.APP_URL}/api/auth/telegram_login"
                      f"?state={state}&telegram_id={uid}")
             await self._send(update,
                 "⚠️ *Gmail Not Connected*\nLink your Google account to start:",
@@ -573,7 +573,7 @@ class TelegramBotManager:
             self.application.job_queue.run_repeating(self.job_scheduled, interval=60,  first=30)
             self.application.job_queue.run_repeating(self.job_ping,      interval=840, first=60)
             
-        base_url = settings.WEBHOOK_URL or settings.RENDER_EXTERNAL_URL or settings.RENDER_WEB_SERVICE_URL
+        base_url = settings.WEBHOOK_URL or settings.APP_URL
         webhook_url = ""
         if base_url:
             base_url = base_url.rstrip('/')
@@ -583,8 +583,21 @@ class TelegramBotManager:
                 webhook_url = base_url
             
         if webhook_url and not webhook_url.startswith("http://localhost"):
-            await self.application.bot.set_webhook(url=webhook_url)
-            logger.info(f"✅ Bot webhook bound successfully to: {webhook_url}")
+            import asyncio
+            retries = 3
+            backoff = 2
+            for attempt in range(1, retries + 1):
+                try:
+                    await self.application.bot.set_webhook(url=webhook_url)
+                    logger.info(f"✅ Bot webhook bound successfully to: {webhook_url}")
+                    break
+                except Exception as e:
+                    if attempt == retries:
+                        logger.error(f"❌ Failed to bind webhook after {retries} attempts: {e}")
+                    else:
+                        logger.warning(f"⚠️ Webhook bind failed (attempt {attempt}/{retries}), retrying in {backoff}s...")
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
         else:
             logger.info("⚠️ Local development cluster context detected.")
             
@@ -2039,7 +2052,7 @@ class TelegramBotManager:
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                await c.get(f"{settings.RENDER_WEB_SERVICE_URL}/health")
+                await c.get(f"{settings.APP_URL}/health")
         except Exception:
             pass
 

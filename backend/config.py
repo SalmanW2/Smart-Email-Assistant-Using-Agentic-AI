@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
     GROQ_API_KEY: str | None = None
     
-    # --- RENDER SPECIFIC VARIABLES (MADE OPTIONAL TO PREVENT DEPLOYMENT CRASHES) ---
-    RENDER_WEB_SERVICE_URL: str | None = None
+    # --- DIGITALOCEAN DEPLOYMENT URL ---
+    APP_URL: str | None = None
     
     # --- ADDITIONAL ENVIRONMENT VARIABLES ---
     WEBHOOK_URL: str | None = None

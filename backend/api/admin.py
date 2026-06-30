@@ -236,7 +236,7 @@ async def update_user_permissions(telegram_id: int, payload: PermissionPayload, 
             else:
                 msg = f"🎉 *Account Approved!*\nYour application is accepted. Please link your Gmail account to start using the assistant.\n\n👤 *Action by:* {admin_email}"
                 state_uuid = await db_manager.create_auth_session(telegram_id)
-                login_url = f"{settings.RENDER_WEB_SERVICE_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={telegram_id}"
+                login_url = f"{settings.APP_URL}/api/auth/telegram_login?state={state_uuid}&telegram_id={telegram_id}"
                 reply_markup = {"inline_keyboard": [[{"text": "🔗 Connect Google Workspace", "url": login_url}]]}
                 
             if not payload.ai_allowed or not payload.voice_allowed:

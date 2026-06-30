@@ -128,12 +128,16 @@ def _get_gmail_client():
 # when passed to types.GenerateContentConfig(tools=[...]).
 
 from typing import Union, List
+import contextvars
 
-async def search_gmail_tool(query: Union[str, list], max_results: int = 10, *, user_id: int) -> str:
+current_telegram_id = contextvars.ContextVar("current_telegram_id")
+
+async def search_gmail_tool(query: Union[str, list], max_results: int = 10) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
     Accepts a single query string or a list of query strings for parallel hypothesis testing.
     """
+    user_id = current_telegram_id.get()
     queries = [query] if isinstance(query, str) else query
     logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with queries: {queries}")
     _module_pending_searches[user_id] = {"query": ", ".join(queries)}
@@ -178,11 +182,12 @@ async def search_gmail_tool(query: Union[str, list], max_results: int = 10, *, u
     return json.dumps(optimized_results)
 
 
-async def prepare_email_draft_tool(to_email: str, subject: str, body: str, *, user_id: int) -> str:
+async def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
     """
     Tool: Prepares and stages an immediate email draft.
     HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
+    user_id = current_telegram_id.get()
     logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
 
     # Perform dynamic validation for missing address constraints
@@ -202,11 +207,12 @@ async def prepare_email_draft_tool(to_email: str, subject: str, body: str, *, us
     return json.dumps({"status": "success", "draft": draft})
 
 
-async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str, *, user_id: int) -> str:
+async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str) -> str:
     """
     Tool: Schedules an email for future automated dispatch.
     HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
+    user_id = current_telegram_id.get()
     logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
 
     to_clean = to_email.strip() if to_email else ""
@@ -242,10 +248,11 @@ async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_
     })
 
 
-async def save_contact_tool(name: str, email: str, *, user_id: int) -> str:
+async def save_contact_tool(name: str, email: str) -> str:
     """
     Tool: Saves or updates an address book contact in the user's Supabase contacts table.
     """
+    user_id = current_telegram_id.get()
     logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
 
     clean_email = str(email).strip().lower()
@@ -441,9 +448,11 @@ class AIEngine:
         return resolved_text
 
     async def agent_chat(self, message: str, telegram_id: int) -> str:
-        """
-        Main Conversational AI loop for interacting with the Smart Email Assistant.
-        """
+        current_telegram_id.set(telegram_id)
+        
+        # Fast HITL (Human In The Loop) Interceptors
+        # Check if user is confirming or modifying a pending draft Email Assistant.
+        
         # Clear lingering UI sentinels from previous turns to prevent state leaks
         _module_pending_drafts.pop(telegram_id, None)
         _module_pending_searches.pop(telegram_id, None)
@@ -558,21 +567,13 @@ class AIEngine:
                 "Never output raw JSON, function names, or code in your text response."
             )
 
-            # Build the tools map referencing standalone module-level functions.
-            tools_map = {}
-            for name, func in {
+            # Build the tools list referencing standalone module-level functions.
+            tools_map = {
                 "search_gmail_tool": search_gmail_tool,
                 "prepare_email_draft_tool": prepare_email_draft_tool,
                 "schedule_email_tool": schedule_email_tool,
                 "save_contact_tool": save_contact_tool,
-            }.items():
-                p_func = functools.partial(func, user_id=telegram_id)
-                p_func.__name__ = name
-                p_func.__doc__ = func.__doc__
-                sig = inspect.signature(p_func)
-                new_params = [p for pname, p in sig.parameters.items() if pname != 'user_id']
-                p_func.__signature__ = sig.replace(parameters=new_params)
-                tools_map[name] = p_func
+            }
 
             # Safety settings — OFF for email content (may contain flagged words)
             _safety_off = [
