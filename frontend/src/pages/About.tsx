@@ -6,7 +6,7 @@ import {
   ChevronRight, Phone, Send, Lock, CheckCircle2 
 } from 'lucide-react';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
 const About = () => {
   const location = useLocation();

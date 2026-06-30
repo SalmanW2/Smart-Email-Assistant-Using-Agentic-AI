@@ -16,7 +16,7 @@ interface STTUsage { id: string; duration_seconds: number; method: string; creat
 interface ScheduledEmail { id: string; to_email: string; status: string; scheduled_time: string; }
 interface ContactMessage { id: string; sender_email: string; message_text: string; status: string; created_at: string; reviewed_by?: string; }
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
 // ── Confirm Modal ──────────────────────────────────────────────────────────────
 const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: { isOpen: boolean; title: string; message: string; onConfirm: () => void; onCancel: () => void; }) => {

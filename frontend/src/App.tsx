@@ -61,7 +61,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         setIsValid(true);
 
         // 4. Background verification with server (Silently signs out ONLY on definite 401)
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_BACKEND || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
         const res = await fetch(`${backendUrl}/api/admin/get_current_admin`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });

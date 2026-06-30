@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Lock, Mail, ShieldCheck, AlertCircle, Info } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
 const AdminLogin = () => {
   const [searchParams] = useSearchParams();

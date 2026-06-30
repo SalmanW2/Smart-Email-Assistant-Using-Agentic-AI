@@ -8,17 +8,27 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     REDIRECT_URI: str
-    FRONTEND_URL: str
     PORT: int = 10000
     DEBUG: bool = False
-    CORS_ORIGINS: list[str] = ["*"]
+    
+    # --- DIGITALOCEAN DEPLOYMENT URL ---
+    APP_URL: str | None = None
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        origins = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"]
+        if self.APP_URL:
+            origins.append(self.APP_URL.rstrip("/"))
+        return origins
+
+    @property
+    def FRONTEND_URL(self) -> str:
+        return self.APP_URL.rstrip("/") if self.APP_URL else "http://localhost:5173"
+
     GOOGLE_TTS_API_KEY: str | None = None
     GOOGLE_OAUTH_CLIENT_ID: str | None = None
     GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
     GROQ_API_KEY: str | None = None
-    
-    # --- DIGITALOCEAN DEPLOYMENT URL ---
-    APP_URL: str | None = None
     
     # --- ADDITIONAL ENVIRONMENT VARIABLES ---
     WEBHOOK_URL: str | None = None

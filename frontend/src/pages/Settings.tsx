@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Lock, Save, ArrowLeft, CheckCircle } from 'lucide-react';
 import Navbar from '../components/Navbar';
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_BACKEND || 'https://smart-email-assistant-using-agentic-ai.onrender.com';
+const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
 const Settings = () => {
   const navigate = useNavigate();
