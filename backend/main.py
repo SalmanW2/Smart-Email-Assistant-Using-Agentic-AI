@@ -85,7 +85,7 @@ async def root():
     </html>
     """
 
-@app.get("/api/callback")
+@app.get("/callback")
 async def google_callback_forwarder(request: Request):
     """
     Legacy Forwarder: Prevents Google OAuth from breaking if the Google Cloud 
@@ -99,7 +99,7 @@ async def google_callback_forwarder(request: Request):
     
     return RedirectResponse(url="/api/auth/callback")
 
-@app.get("/api/health")
+@app.get("/health")
 async def health_check():
     """Health check for Render/Deployment monitoring."""
     return {
@@ -107,7 +107,7 @@ async def health_check():
         "timestamp": settings.get_utc_now()
     }
 
-@app.post("/api/webhook/telegram")
+@app.post("/webhook/telegram")
 async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handles real-time updates from Telegram."""
     try:
@@ -126,7 +126,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.error(f"🔥 Telegram Webhook Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
-@app.post("/api/webhook/oauth/callback")
+@app.post("/webhook/oauth/callback")
 async def oauth_callback_webhook(request: Request):
     """Fallback handler for Google OAuth webhooks."""
     try:
@@ -136,7 +136,7 @@ async def oauth_callback_webhook(request: Request):
         print(f"🔥 OAuth Callback Error: {e}")
         raise HTTPException(status_code=500, detail="OAuth processing failed")
 
-@app.get("/api/voice/status")
+@app.get("/voice/status")
 async def voice_status():
     """Check voice processing availability."""
     try:
