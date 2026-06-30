@@ -92,22 +92,24 @@ async def get_current_admin(
 
 # --- Authentication Endpoints ---
 
+from fastapi.security import OAuth2PasswordRequestForm
+
 @router.post("/login")
-async def admin_login(payload: AdminLoginPayload):
-    is_valid = await db_manager.verify_admin_password(payload.email, payload.password)
+async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
+    is_valid = await db_manager.verify_admin_password(form_data.username, form_data.password)
     if not is_valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    role = await db_manager.get_admin_role(payload.email)
+    role = await db_manager.get_admin_role(form_data.username)
     
     expire = datetime.utcnow() + timedelta(hours=24)
-    to_encode = {"sub": payload.email, "role": role, "exp": expire}
+    to_encode = {"sub": form_data.username, "role": role, "exp": expire}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
     return {
         "status": "success", 
         "token": token,  
-        "email": payload.email, 
+        "email": form_data.username, 
         "role": role
     }
 
