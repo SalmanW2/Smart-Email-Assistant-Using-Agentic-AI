@@ -63,9 +63,9 @@ app.add_middleware(
 
 # --- REGISTER ROUTERS ---
 # All logic is smoothly delegated to modular routers
-app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
-app.include_router(user_router, prefix="/api/user", tags=["User"])
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+app.include_router(admin_router, prefix="/admin", tags=["Admin"])
+app.include_router(user_router, prefix="/user", tags=["User"])
 
 # --- CORE SYSTEM ENDPOINTS ---
 
