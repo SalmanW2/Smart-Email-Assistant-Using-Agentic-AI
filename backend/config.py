@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str | None = None
     
     # --- MISSING VARIABLES ADDED HERE ---
+    WEBHOOK_URL: str | None = None
+    RENDER_EXTERNAL_URL: str | None = None
+    SUPABASE_KEY: str | None = None
+    
     MAX_CONTEXT_MESSAGES: int = 5
     SUMMARY_GENERATION_THRESHOLD: int = 10
     GEMINI_MODEL: str = "gemini-2.5-flash"
