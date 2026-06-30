@@ -612,7 +612,7 @@ class TelegramBotManager:
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
-        if update.message and update.message.date.timestamp() < self.startup_time: return
+
 
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -636,7 +636,7 @@ class TelegramBotManager:
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
-        if update.message and update.message.date.timestamp() < self.startup_time: return
+
 
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -773,55 +773,55 @@ class TelegramBotManager:
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
-        if update.message and update.message.date.timestamp() < self.startup_time: return
 
-        acc = await self._check_access(u.id, u.first_name or "", u.username or "")
-        
-        uid  = u.id
-        text = update.message.text
-
-        # ── Active Hotfix Token Interceptor ──
-        text_lower = text.lower()
-        if any(k in text_lower for k in ["login", "re-authenticate", "reauthenticate", "expired token", "reconnect", "auth link", "authentication"]):
-            await self._prompt_reauth(update.message, uid)
-            return
-
-        # Fast-track bypass for menu commands
-        if text_lower.strip() in ["/menu", "/start", "menu", "dashboard"]:
-            await self.cmd_menu(update, context)
-            return
-
-        if await self._gate(update, u.id, acc["status"]):
-            return
-
-        if uid in self.compose_states and self.compose_states[uid].get("step") != "PAUSED":
-            await self._compose_step(update, uid, text)
-            return
-
-        if self.search_states.get(uid) == "AWAIT_QUERY":
-            self.search_states.pop(uid)
-            self.current_queries[uid] = text
-            wait = await update.message.reply_text(f"🔍 Searching `{_safe_md(text)}`...")
-            found = await self.contacts.find_contacts_by_name(uid, text)
-            if found:
-                extra = " OR ".join(f"from:{c['email_address']}" for c in found)
-                self.current_queries[uid] = f"({extra}) OR {text}"
-                
-            await self._show_list(wait, uid, offset=0, is_search=True)
-            return
-
-        if not acc["user"].get("ai_allowed", True):
-            await update.message.reply_text("🚫 *AI access restricted* for your account.",
-                                             parse_mode="Markdown")
-            return
-
-        msg = await update.message.reply_text("✨ *Thinking...*", parse_mode="Markdown")
-        await context.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
-
-        # Cache query so the [🔄 Retry] button can re-submit it after a failure
-        self.last_user_queries[uid] = {"type": "text", "content": text}
 
         try:
+            acc = await self._check_access(u.id, u.first_name or "", u.username or "")
+            
+            uid  = u.id
+            text = update.message.text
+
+            # ── Active Hotfix Token Interceptor ──
+            text_lower = text.lower()
+            if any(k in text_lower for k in ["login", "re-authenticate", "reauthenticate", "expired token", "reconnect", "auth link", "authentication"]):
+                await self._prompt_reauth(update.message, uid)
+                return
+
+            # Fast-track bypass for menu commands
+            if text_lower.strip() in ["/menu", "/start", "menu", "dashboard"]:
+                await self.cmd_menu(update, context)
+                return
+
+            if await self._gate(update, u.id, acc["status"]):
+                return
+
+            if uid in self.compose_states and self.compose_states[uid].get("step") != "PAUSED":
+                await self._compose_step(update, uid, text)
+                return
+
+            if self.search_states.get(uid) == "AWAIT_QUERY":
+                self.search_states.pop(uid)
+                self.current_queries[uid] = text
+                wait = await update.message.reply_text(f"🔍 Searching `{_safe_md(text)}`...")
+                found = await self.contacts.find_contacts_by_name(uid, text)
+                if found:
+                    extra = " OR ".join(f"from:{c['email_address']}" for c in found)
+                    self.current_queries[uid] = f"({extra}) OR {text}"
+                    
+                await self._show_list(wait, uid, offset=0, is_search=True)
+                return
+
+            if not acc["user"].get("ai_allowed", True):
+                await update.message.reply_text("🚫 *AI access restricted* for your account.",
+                                                 parse_mode="Markdown")
+                return
+
+            msg = await update.message.reply_text("✨ *Thinking...*", parse_mode="Markdown")
+            await context.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
+
+            # Cache query so the [🔄 Retry] button can re-submit it after a failure
+            self.last_user_queries[uid] = {"type": "text", "content": text}
+
             raw = await self.ai_engine.agent_chat(text, uid)
             await self._dispatch_ai(update, context, msg, raw, uid, await self._prefs(uid))
             # Log conversation asynchronously in the background — does NOT block the response
@@ -832,11 +832,13 @@ class TelegramBotManager:
                 interaction_type="chat",
             ))
         except Exception as e:
-            logger.error(f"Unhandled error in handle_text for user {uid}: {e}", exc_info=True)
-            await self._edit(msg,
-                "⚠️ *System temporarily unavailable.*\n"
-                "An unexpected error occurred. Please try again or tap Retry.",
-                InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Retry", callback_data="retry_last_query")]]))
+            logger.error(f"Unhandled error in handle_text for user {u.id}: {e}", exc_info=True)
+            if update.message:
+                await update.message.reply_text(
+                    "⚠️ *System temporarily unavailable.*\n"
+                    "An unexpected error occurred. Please try again later.",
+                    parse_mode="Markdown"
+                )
 
     async def _compose_step(self, update: Update, uid: int, text: str):
         state = self.compose_states[uid]
@@ -924,7 +926,7 @@ class TelegramBotManager:
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
-        if update.message and update.message.date.timestamp() < self.startup_time: return
+
 
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
@@ -1006,7 +1008,7 @@ class TelegramBotManager:
 
     async def handle_attachment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
-        if update.message and update.message.date.timestamp() < self.startup_time: return
+
 
         acc = await self._check_access(u.id, u.first_name or "", u.username or "")
         if await self._gate(update, u.id, acc["status"]):
