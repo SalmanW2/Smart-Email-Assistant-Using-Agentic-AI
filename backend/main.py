@@ -101,9 +101,21 @@ async def google_callback_forwarder(request: Request):
 
 @app.get("/health")
 async def health_check():
-    """Health check for Render/Deployment monitoring."""
+    """Health check for Deployment monitoring."""
+    from db.models import db_manager
+    
+    db_status = "disconnected"
+    try:
+        # Simple DB check
+        await db_manager.get_admin_users(use_cache=False)
+        db_status = "connected"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = f"error: {str(e)}"
+        
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "database": db_status,
         "timestamp": settings.get_utc_now()
     }
 
