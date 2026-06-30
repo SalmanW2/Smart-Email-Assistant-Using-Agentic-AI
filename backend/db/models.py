@@ -15,7 +15,7 @@ class SupabaseDB:
         self.client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
     async def run(self, action):
-        return await asyncio.to_thread(action)
+        return await asyncio.wait_for(asyncio.to_thread(action), timeout=10.0)
 
 class DBManager:
     def __init__(self) -> None:

@@ -1,12 +1,15 @@
 import os
 import asyncio
+import logging
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 import uvicorn
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 # --- MODULAR IMPORTS ---
 from api.auth import router as auth_router
@@ -101,14 +104,22 @@ async def health_check():
     }
 
 @app.post("/webhook/telegram")
-async def telegram_webhook(request: Request):
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handles real-time updates from Telegram."""
     try:
         update_data = await request.json()
-        await telegram_handler.process_webhook(update_data)
+        logger.info(f"Received webhook payload: {update_data}")
+        
+        async def process_update():
+            try:
+                await telegram_handler.process_webhook(update_data)
+            except Exception as inner_e:
+                logger.error(f"🔥 Background Webhook Error: {inner_e}", exc_info=True)
+                
+        background_tasks.add_task(process_update)
         return {"status": "ok"}
     except Exception as e:
-        print(f"🔥 Telegram Webhook Error: {e}")
+        logger.error(f"🔥 Telegram Webhook Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 @app.post("/webhook/oauth/callback")
