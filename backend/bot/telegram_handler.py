@@ -573,9 +573,18 @@ class TelegramBotManager:
             self.application.job_queue.run_repeating(self.job_scheduled, interval=60,  first=30)
             self.application.job_queue.run_repeating(self.job_ping,      interval=840, first=60)
             
-        if settings.RENDER_WEB_SERVICE_URL and not settings.RENDER_WEB_SERVICE_URL.startswith("http://localhost"):
-            await self.application.bot.set_webhook(url=f"{settings.RENDER_WEB_SERVICE_URL}/webhook/telegram")
-            logger.info("✅ Bot webhook bound successfully.")
+        base_url = settings.WEBHOOK_URL or settings.RENDER_EXTERNAL_URL or settings.RENDER_WEB_SERVICE_URL
+        webhook_url = ""
+        if base_url:
+            base_url = base_url.rstrip('/')
+            if not base_url.endswith("/webhook/telegram"):
+                webhook_url = f"{base_url}/webhook/telegram"
+            else:
+                webhook_url = base_url
+            
+        if webhook_url and not webhook_url.startswith("http://localhost"):
+            await self.application.bot.set_webhook(url=webhook_url)
+            logger.info(f"✅ Bot webhook bound successfully to: {webhook_url}")
         else:
             logger.info("⚠️ Local development cluster context detected.")
             

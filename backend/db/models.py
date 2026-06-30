@@ -230,7 +230,7 @@ class DBManager:
         if use_cache and "all_admins" in self.cache:
             return self.cache["all_admins"]
         try:
-            result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").order("created_at", desc=True).execute())
+            result = await self.db.run(lambda: self.db.client.table("admin_users").select("id, email, role, password_hash, added_by, created_at").order("created_at", desc=True).execute())
             data = self._safe_data(result) or []
             self.cache["all_admins"] = data
             return data
@@ -240,7 +240,7 @@ class DBManager:
 
     async def check_admin(self, email: str) -> bool:
         try:
-            result = await self.db.run(lambda: self.db.client.table("admin_users").select("*").eq("email", email).execute())
+            result = await self.db.run(lambda: self.db.client.table("admin_users").select("id, email, role").eq("email", email).execute())
             data = self._safe_data(result)
             return len(data) > 0 if data else False
         except Exception as e:
