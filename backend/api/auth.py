@@ -44,9 +44,10 @@ def _get_client_config() -> dict:
     Loads Google OAuth client configuration.
     Priority: GOOGLE_CREDENTIALS_JSON env var -> local credentials.json file.
     """
-    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-    if raw:
-        return json.loads(raw)
+    if settings.GOOGLE_CREDENTIALS_JSON:
+        import base64
+        return json.loads(base64.b64decode(settings.GOOGLE_CREDENTIALS_JSON).decode('utf-8'))
+    
     cred_path = os.path.join(os.path.dirname(__file__), "..", "credentials.json")
     cred_path = os.path.normpath(cred_path)
     if os.path.exists(cred_path):

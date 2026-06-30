@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # --- ADDITIONAL ENVIRONMENT VARIABLES ---
     WEBHOOK_URL: str | None = None
     SUPABASE_KEY: str | None = None
+    GOOGLE_CREDENTIALS_JSON: str | None = None
     
     MAX_CONTEXT_MESSAGES: int = 5
     SUMMARY_GENERATION_THRESHOLD: int = 10

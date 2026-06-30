@@ -166,10 +166,10 @@ class VoiceHandler:
 
         # Build credentials from multiple sources with graceful fallback
         credentials = None
-        raw_creds = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-        if raw_creds:
+        if settings.GOOGLE_CREDENTIALS_JSON:
+            import base64
             from google.oauth2 import service_account
-            cred_dict = json.loads(raw_creds)
+            cred_dict = json.loads(base64.b64decode(settings.GOOGLE_CREDENTIALS_JSON).decode('utf-8'))
             credentials = service_account.Credentials.from_service_account_info(cred_dict)
         else:
             cred_path = os.path.join(os.path.dirname(__file__), "..", "credentials.json")
