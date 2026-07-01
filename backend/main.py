@@ -1,4 +1,8 @@
 import os
+import sys
+# Inject the current backend directory into sys.path to bulletproof imports for DO
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -25,24 +29,24 @@ from bot.voice_handler import voice_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager - Initializes bot and voice on startup."""
-    print("🚀 Starting AI Email Assistant Backend...")
+    logger.info("Starting AI Email Assistant Backend...")
 
     # Initialize Telegram bot
     try:
         await telegram_handler.setup_bot()
-        print("✅ Telegram bot initialized")
+        logger.info("Telegram bot initialized successfully.")
     except Exception as e:
-        print(f"❌ Failed to initialize Telegram bot: {e}")
+        logger.error(f"Failed to initialize Telegram bot: {e}")
 
     # Check voice capabilities
     try:
         voice_status = await voice_handler.get_voice_status()
-        print(f"🎙️ Voice capabilities: {voice_status}")
+        logger.info(f"Voice capabilities: {voice_status}")
     except Exception as e:
-        print(f"⚠️ Voice initialization failed: {e}")
+        logger.warning(f"Voice initialization failed: {e}")
 
     yield
-    print("🛑 Shutting down AI Email Assistant...")
+    logger.info("Shutting down AI Email Assistant...")
 
 # Create FastAPI app
 app = FastAPI(
