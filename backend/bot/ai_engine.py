@@ -132,54 +132,77 @@ import contextvars
 
 current_telegram_id = contextvars.ContextVar("current_telegram_id")
 
-async def search_gmail_tool(query: Union[str, list], max_results: int = 10) -> str:
+async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
-    Accepts a single query string or a list of query strings for parallel hypothesis testing.
+    Accepts a list of query strings for parallel hypothesis testing (e.g. ["exam schedule", "subject:exam"]).
     """
-    user_id = current_telegram_id.get()
-    queries = [query] if isinstance(query, str) else query
-    logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with queries: {queries}")
-    _module_pending_searches[user_id] = {"query": ", ".join(queries)}
-    
-    gmail = _get_gmail_client()
-    all_results = {}
-    
-    import asyncio
-    tasks = [gmail.search_emails(user_id, q, max_results=max_results) for q in queries]
-    results_list = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    for res in results_list:
-        if isinstance(res, list):
-            for email in res:
-                if isinstance(email, dict) and "id" in email:
-                    all_results[email["id"]] = email
-                    
-    if not all_results:
-        _module_pending_searches.pop(user_id, None)
-        return "No emails found matching the search query parameters."
-
-    # Truncate email bodies aggressively to prevent TPM exhaustion.
-    optimized_results = []
-    deduped = list(all_results.values())[:max_results]
-    
-    for email in deduped:
-        body = email.get("body", "")
-        # Strip all whitespace/newlines from body before truncating to maximize signal density
-        compact_body = " ".join(body.split())
-        opt_email = {
-            "Message ID":      email.get("id", ""),
-            "Thread ID":       email.get("threadId", ""),
-            "Sender Name & Email": email.get("sender", ""),
-            "Subject":         email.get("subject", ""),
-            "Date":            email.get("date", ""),
-            "Snippet":         email.get("snippet", ""),
-            "Has_Attachment":  email.get("has_attachment", False),
-            "body":            compact_body[:300] + ("..." if len(compact_body) > 300 else ""),
-        }
-        optimized_results.append(opt_email)
+    try:
+        user_id = current_telegram_id.get()
+        import json
         
-    return json.dumps(optimized_results)
+        # Robust auto-parsing for hallucinated JSON strings
+        if isinstance(query, str):
+            try:
+                parsed = json.loads(query)
+                query = parsed if isinstance(parsed, list) else [query]
+            except json.JSONDecodeError:
+                query = [query]
+        elif not isinstance(query, list):
+            query = [str(query)]
+            
+        queries = query
+        logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with queries: {queries}")
+        _module_pending_searches[user_id] = {"query": ", ".join(queries)}
+        
+        gmail = _get_gmail_client()
+        all_results = {}
+        
+        import asyncio
+        tasks = [gmail.search_emails(user_id, q, max_results=int(max_results)) for q in queries]
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for res in results_list:
+            if isinstance(res, list):
+                for email in res:
+                    if isinstance(email, dict) and "id" in email:
+                        all_results[email["id"]] = email
+                        
+        if not all_results:
+            _module_pending_searches.pop(user_id, None)
+            return "No emails found matching the search query parameters."
+
+        # Truncate email bodies aggressively to prevent TPM exhaustion.
+        optimized_results = []
+        deduped = list(all_results.values())[:int(max_results)]
+        
+        for email in deduped:
+            body = email.get("body", "")
+            # Strip all whitespace/newlines from body before truncating to maximize signal density
+            compact_body = " ".join(body.split())
+            opt_email = {
+                "Message ID":      email.get("id", ""),
+                "Thread ID":       email.get("threadId", ""),
+                "Sender Name & Email": email.get("sender", ""),
+                "Subject":         email.get("subject", ""),
+                "Date":            email.get("date", ""),
+                "Snippet":         email.get("snippet", ""),
+                "Has_Attachment":  email.get("has_attachment", False),
+                "body":            compact_body[:300] + ("..." if len(compact_body) > 300 else ""),
+            }
+            optimized_results.append(opt_email)
+            
+        return json.dumps(optimized_results)
+    
+    except KeyError as e:
+        logger.error(f"search_gmail_tool KeyError: {e}", exc_info=True)
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: Missing expected key {str(e)}. Please autocorrect the JSON format and retry."})
+    except json.JSONDecodeError as e:
+        logger.error(f"search_gmail_tool JSONDecodeError: {e}", exc_info=True)
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: JSON Decode Error - {str(e)}. Please correct your arguments format and retry."})
+    except Exception as e:
+        logger.error(f"search_gmail_tool Exception: {e}", exc_info=True)
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check arguments and retry."})
 
 
 async def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
@@ -187,24 +210,31 @@ async def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> st
     Tool: Prepares and stages an immediate email draft.
     HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
-    user_id = current_telegram_id.get()
-    logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
+    try:
+        user_id = current_telegram_id.get()
+        import json
+        logger.info(f"[Tool Execution] Preparing Draft | To: {to_email} for User: {user_id}")
 
-    # Perform dynamic validation for missing address constraints
-    to_clean = to_email.strip() if to_email else ""
-    if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
-        to_clean = "[Specify Recipient Email]"
+        # Perform dynamic validation for missing address constraints
+        to_clean = to_email.strip() if to_email else ""
+        if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
+            to_clean = "[Specify Recipient Email]"
 
-    draft = {
-        "action": "prepare_draft",
-        "to": to_clean,
-        "subject": subject or "No Subject",
-        "body": body or ""
-    }
+        draft = {
+            "action": "prepare_draft",
+            "to": to_clean,
+            "subject": subject or "No Subject",
+            "body": body or ""
+        }
 
-    # Cache draft in module-level pending_drafts for Telegram Handler retrieval
-    _module_pending_drafts[user_id] = draft
-    return json.dumps({"status": "success", "draft": draft})
+        # Cache draft in module-level pending_drafts for Telegram Handler retrieval
+        _module_pending_drafts[user_id] = draft
+        return json.dumps({"status": "success", "draft": draft})
+        
+    except Exception as e:
+        logger.error(f"prepare_email_draft_tool Exception: {e}", exc_info=True)
+        import json
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check your arguments and retry."})
 
 
 async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str) -> str:
@@ -212,69 +242,83 @@ async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_
     Tool: Schedules an email for future automated dispatch.
     HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
-    user_id = current_telegram_id.get()
-    logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
-
-    to_clean = to_email.strip() if to_email else ""
-    if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
-        to_clean = "[Specify Recipient Email]"
-
-    schedule_details = {
-        "to_email": to_clean,
-        "subject": subject or "No Subject",
-        "body": body or "",
-        "scheduled_time": scheduled_time,
-        "status": "pending"
-    }
-
-    # Persist immediately to the scheduled_emails schema using Supabase DB Manager
     try:
-        await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
-            "telegram_id": user_id,
+        user_id = current_telegram_id.get()
+        import json
+        logger.info(f"[Tool Execution] Scheduling Email | To: {to_email} | Time: {scheduled_time} for User: {user_id}")
+
+        to_clean = to_email.strip() if to_email else ""
+        if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
+            to_clean = "[Specify Recipient Email]"
+
+        schedule_details = {
             "to_email": to_clean,
             "subject": subject or "No Subject",
             "body": body or "",
             "scheduled_time": scheduled_time,
             "status": "pending"
-        }).execute())
-        logger.info("Successfully registered scheduled email in database")
-    except Exception as db_err:
-        logger.error(f"Database error writing scheduled task: {db_err}")
-        return json.dumps({"status": "error", "message": f"Database failure: {str(db_err)}"})
+        }
 
-    return json.dumps({
-        "action": "schedule_email",
-        "schedule_details": schedule_details
-    })
+        # Persist immediately to the scheduled_emails schema using Supabase DB Manager
+        try:
+            await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
+                "telegram_id": user_id,
+                "to_email": to_clean,
+                "subject": subject or "No Subject",
+                "body": body or "",
+                "scheduled_time": scheduled_time,
+                "status": "pending"
+            }).execute())
+            logger.info("Successfully registered scheduled email in database")
+        except Exception as db_err:
+            logger.error(f"Database error writing scheduled task: {db_err}")
+            return json.dumps({"error": f"Database failure: {str(db_err)}. Please notify the user."})
+
+        return json.dumps({
+            "action": "schedule_email",
+            "schedule_details": schedule_details
+        })
+        
+    except Exception as e:
+        logger.error(f"schedule_email_tool Exception: {e}", exc_info=True)
+        import json
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check your arguments and retry."})
 
 
 async def save_contact_tool(name: str, email: str) -> str:
     """
     Tool: Saves or updates an address book contact in the user's Supabase contacts table.
     """
-    user_id = current_telegram_id.get()
-    logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
-
-    clean_email = str(email).strip().lower()
-    clean_name = str(name).strip()[:200]
-    safe_uid = int(user_id)
-
-    # Allow valid complex subdomains e.g. test@sub.domain.com
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not clean_email or not re.match(email_regex, clean_email):
-        return "Error: Invalid email format provided. Contact not saved."
-
     try:
-        await db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
-            "telegram_id": safe_uid,
-            "contact_alias": clean_name,
-            "email_address": clean_email,
-            "contact_name": clean_name
-        }, on_conflict="telegram_id,email_address").execute())
-        return f"Contact '{clean_name}' with email '{clean_email}' saved successfully."
+        user_id = current_telegram_id.get()
+        import json
+        logger.info(f"[Tool Execution] Saving Contact | Name: {name} | Email: {email} for User: {user_id}")
+
+        clean_email = str(email).strip().lower()
+        clean_name = str(name).strip()[:200]
+        safe_uid = int(user_id)
+
+        # Allow valid complex subdomains e.g. test@sub.domain.com
+        email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not clean_email or not re.match(email_regex, clean_email):
+            return json.dumps({"error": "Invalid email format provided. Contact not saved. Please autocorrect and retry."})
+
+        try:
+            await db_manager.db.run(lambda: db_manager.db.client.table("contacts").upsert({
+                "telegram_id": safe_uid,
+                "contact_alias": clean_name,
+                "email_address": clean_email,
+                "contact_name": clean_name
+            }, on_conflict="telegram_id,email_address").execute())
+            return json.dumps({"status": "success", "message": f"Contact '{clean_name}' with email '{clean_email}' saved successfully."})
+        except Exception as e:
+            logger.error(f"Failed to upsert contact via Tool call: {e}")
+            return json.dumps({"error": f"Contact could not be saved to DB due to a technical constraint: {str(e)}"})
+            
     except Exception as e:
-        logger.error(f"Failed to upsert contact via Tool call: {e}")
-        return f"Error: Contact could not be saved to DB due to a technical constraint: {str(e)}"
+        logger.error(f"save_contact_tool Exception: {e}", exc_info=True)
+        import json
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check your arguments and retry."})
 
 
 # ==========================================
