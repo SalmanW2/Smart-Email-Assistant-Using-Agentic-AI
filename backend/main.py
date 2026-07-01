@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 from config import settings
 
@@ -71,7 +72,12 @@ app.include_router(user_router, prefix="/user", tags=["User"])
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint with basic UI."""
+    """Root endpoint. Serves frontend if available, else basic UI."""
+    frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+    index_path = os.path.join(frontend_dist, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+        
     return """
     <html>
         <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 100px; background-color: #f4f6f8;">
@@ -160,6 +166,31 @@ async def voice_status():
 async def admin_logout():
     """Admin logout endpoint fallback."""
     return {"message": "Logged out successfully"}
+
+# --- FRONTEND STATIC & CATCH-ALL ROUTING ---
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    # Mount the 'assets' directory to serve JS, CSS, etc.
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    # Catch-all route for client-side routing (must be the LAST route before error handlers)
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        potential_path = os.path.join(frontend_dist, full_path)
+        # Prevent directory traversal
+        if not os.path.abspath(potential_path).startswith(os.path.abspath(frontend_dist)):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+            
+        if os.path.isfile(potential_path):
+            return FileResponse(potential_path)
+            
+        index_path = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+            
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
 # --- GLOBAL ERROR HANDLER ---
 
