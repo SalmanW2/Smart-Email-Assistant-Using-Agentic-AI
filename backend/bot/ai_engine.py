@@ -591,9 +591,23 @@ class AIEngine:
 
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            # User Preferences (Voice/Text)
+            # Fetch user and preferences
+            user_record = await db_manager.get_user(telegram_id)
             user_prefs = await db_manager.get_user_preferences(telegram_id)
+            
+            # Admin Penalty Overrides
+            ai_allowed = user_record.get("ai_allowed", True) if user_record else True
+            voice_allowed_admin = user_record.get("voice_allowed", True) if user_record else True
+            
+            if not ai_allowed:
+                return "⚠️ Your AI access has been temporarily restricted by an administrator."
+                
             voice_preference = user_prefs.get("voice_preference", "text") if user_prefs else "text"
+            if not voice_allowed_admin:
+                voice_preference = "text" # Force text if admin penalized voice
+                
+            draft_style = user_prefs.get("draft_style", "Detailed") if user_prefs else "Detailed"
+            
             voice_instruction = "VOICE TAG: Append '[VOICE]' at the very end of your response because the user prefers audio responses.\n\n" if voice_preference == "audio" else "VOICE TAG: Do NOT append '[VOICE]' unless the user explicitly asks for audio in this specific message.\n\n"
 
             # Detect the user's script/language for mirroring
@@ -631,8 +645,8 @@ class AIEngine:
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
                 "Rule A (Mandatory Search for Queries): If the user asks ANY question about whether an email arrived, what an email says, or requests a summary (e.g., 'Did I get an email?', 'Exam schedule aa gaya?', 'Check my email'), you MUST invoke the search_gmail_tool FIRST to fetch the data. NEVER answer conversationally without querying the data first.\n"
                 "Rule B (UI Card Rendering): If the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards.\n"
-                "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
-                "Rule D (Parallel Hypothesis Testing): If a user's request is ambiguous (e.g., 'Did I get an invite from an organization?'), pass multiple search queries to the search tool simultaneously (e.g., [\"invite organization\", \"subject:invitation\"]) to guarantee you find the target email in one turn.\n"
+                "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. For queries targeting 'yesterday', strictly enforce the exact date format `after:YYYY-MM-DD before:YYYY-MM-DD`. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
+                "Rule D (Parallel Hypothesis Testing): Whenever there is slight doubt, ambiguity, or potential for missing emails, you should freely generate multiple parallel search queries in the array (e.g., both broad `exam` and narrow `subject:\"final exam schedule\"`). Do not force parallel searching for simple, explicit requests.\n"
                 "Rule E (Mandatory Confirmation): You must NEVER return an empty text response. After any tool call executes successfully (e.g., sending an email, saving a draft), you MUST generate a natural language confirmation for the user in the same language they spoke (e.g., 'I have successfully sent the email to Ayesha.').\n"
                 "Rule F (Result Limit Enforcement): If the user asks for a specific number of emails (e.g., 'last 7 emails'), you MUST map that exact number to the `max_results` integer parameter in the search tool.\n"
                 "5. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
@@ -640,6 +654,7 @@ class AIEngine:
                 "7. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
                 "8. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
                 "9. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
+                f"10. DRAFT FORMATTING: Always prioritize any explicit formatting instructions provided in the user's current prompt. If the user does not specify a format, strictly fall back to their database draft_style setting: {draft_style}.\n"
                 "Never output raw JSON, function names, or code in your text response."
             )
 

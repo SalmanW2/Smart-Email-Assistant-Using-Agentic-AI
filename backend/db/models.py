@@ -36,7 +36,7 @@ class DBManager:
     # ==========================================
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("users").select("id, telegram_id, email, first_name, username, is_verified, auth_token").eq("telegram_id", telegram_id).maybe_single().execute())
+            result = await self.db.run(lambda: self.db.client.table("users").select("id, telegram_id, email, first_name, username, is_verified, auth_token, ai_allowed, voice_allowed").eq("telegram_id", telegram_id).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             logger.error(f"DB Error in get_user: {e}")
@@ -62,7 +62,8 @@ class DBManager:
                     "ai_mode_enabled": True,
                     "voice_preference": "text",
                     "auto_check_enabled": True,
-                    "pagination_limit": 2
+                    "pagination_limit": 2,
+                    "draft_style": "Detailed"
                 }
                 await self.db.run(lambda: self.db.client.table("user_preferences").insert(prefs_data).execute())
             except Exception as pref_e:
@@ -212,7 +213,7 @@ class DBManager:
     # ==========================================
     async def get_user_preferences(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, ai_mode_enabled, voice_preference, auto_check_enabled, pagination_limit").eq("telegram_id", telegram_id).maybe_single().execute())
+            result = await self.db.run(lambda: self.db.client.table("user_preferences").select("telegram_id, ai_mode_enabled, voice_preference, auto_check_enabled, pagination_limit, draft_style").eq("telegram_id", telegram_id).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             logger.error(f"DB Error in get_user_preferences: {e}")

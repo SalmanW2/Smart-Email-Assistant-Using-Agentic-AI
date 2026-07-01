@@ -25,7 +25,7 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
         # Run the synchronous embed_content in an asyncio thread to avoid blocking the event loop
         response = await asyncio.to_thread(
             _gemini_client.models.embed_content,
-            model='text-embedding-004',
+            model='embedding-001',
             contents=text
         )
         

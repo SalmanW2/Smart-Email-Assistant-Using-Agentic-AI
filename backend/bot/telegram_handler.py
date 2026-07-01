@@ -277,15 +277,17 @@ def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
         
     return InlineKeyboardMarkup(rows)
 
-def kb_settings(ai_on: bool, voice: str, auto_on: bool, pag_limit: int = 2) -> InlineKeyboardMarkup:
+def kb_settings(ai_on: bool, voice: str, auto_on: bool, pag_limit: int = 2, draft_style: str = "Detailed") -> InlineKeyboardMarkup:
     """User preferences keyboard."""
-    v_map = {"text": "📝 Text Only", "voice": "🔊 Voice Only", "both": "📝+🔊 Both"}
+    v_map = {"text": "📝 Text Only", "voice": "🎙️ Voice Only", "both": "📝+🎙️ Both"}
     pag_label = "📄 View: Compact (2/pg)" if pag_limit == 2 else "📄 View: Standard (5/pg)"
+    draft_label = "✍️ Draft: Detailed" if draft_style == "Detailed" else "✍️ Draft: Concise"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{'✅' if ai_on   else '❌'} AI Mode",          callback_data="toggle_ai")],
         [InlineKeyboardButton(v_map.get(voice, "📝 Text Only"),                callback_data="cycle_voice")],
         [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Check", callback_data="toggle_auto")],
         [InlineKeyboardButton(pag_label,                                       callback_data="cycle_pagination")],
+        [InlineKeyboardButton(draft_label,                                     callback_data="cycle_draft")],
         [InlineKeyboardButton("🚪 Logout",                             callback_data="logout")],
         kb_back_step(),
     ])
@@ -1614,10 +1616,11 @@ class TelegramBotManager:
                     prefs.get("ai_mode_enabled", True),
                     prefs.get("voice_preference", "text"),
                     prefs.get("auto_check_enabled", True),
-                    prefs.get("pagination_limit", 2)))
+                    prefs.get("pagination_limit", 2),
+                    prefs.get("draft_style", "Detailed")))
             return
 
-        if action in ["toggle_ai", "cycle_voice", "toggle_auto", "cycle_pagination"]:
+        if action in ["toggle_ai", "cycle_voice", "toggle_auto", "cycle_pagination", "cycle_draft"]:
             prefs   = await self._prefs(uid)
             if action == "toggle_ai":
                 await self.db.update_user_preferences(uid, {"ai_mode_enabled": not prefs.get("ai_mode_enabled", True)})
@@ -1630,6 +1633,10 @@ class TelegramBotManager:
                 current_limit = prefs.get("pagination_limit", 2)
                 new_limit = 5 if current_limit == 2 else 2
                 await self.db.update_user_preferences(uid, {"pagination_limit": new_limit})
+            elif action == "cycle_draft":
+                current_style = prefs.get("draft_style", "Detailed")
+                new_style = "Concise" if current_style == "Detailed" else "Detailed"
+                await self.db.update_user_preferences(uid, {"draft_style": new_style})
             
             prefs = await self._prefs(uid)
             await query.edit_message_text(
@@ -1638,7 +1645,8 @@ class TelegramBotManager:
                     prefs.get("ai_mode_enabled", True), 
                     prefs.get("voice_preference", "text"), 
                     prefs.get("auto_check_enabled", True),
-                    prefs.get("pagination_limit", 2)))
+                    prefs.get("pagination_limit", 2),
+                    prefs.get("draft_style", "Detailed")))
             return
 
         if action == "logout":
