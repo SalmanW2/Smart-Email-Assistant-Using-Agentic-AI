@@ -110,6 +110,7 @@ logger = logging.getLogger(__name__)
 _module_gmail_client = None
 _module_pending_drafts: Dict[int, Dict[str, Any]] = {}
 _module_pending_searches: Dict[int, Dict[str, Any]] = {}
+_module_last_search_results: Dict[int, str] = {}
 
 
 def _get_gmail_client():
@@ -135,7 +136,10 @@ current_telegram_id = contextvars.ContextVar("current_telegram_id")
 async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
-    Accepts a list of query strings for parallel hypothesis testing (e.g. ["exam schedule", "subject:exam"]).
+    Accepts a list of query strings for parallel hypothesis testing.
+    STRATEGY RULES:
+    1. NEVER append date filters (like `newer_than:7d` or `1d`) UNLESS the user explicitly specifies a timeframe (e.g., "today", "last week").
+    2. Parallel searches MUST be diverse keyword splits, not just syntax permutations. If the intent is "exam schedule", the array MUST look like: `["exam", "schedule", "\"exam schedule\""]` to maximize the hit rate.
     """
     try:
         user_id = current_telegram_id.get()
@@ -201,7 +205,8 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
                         
         if not all_results:
             _module_pending_searches.pop(user_id, None)
-            return "No emails found matching the search query parameters."
+            _module_last_search_results[user_id] = "No emails found for previous search."
+            return json.dumps({"status": "empty", "tried": queries})
 
         # Truncate email bodies aggressively to prevent TPM exhaustion.
         optimized_results = []
@@ -223,7 +228,9 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
             }
             optimized_results.append(opt_email)
             
-        return json.dumps(optimized_results)
+        opt_json = json.dumps(optimized_results)
+        _module_last_search_results[user_id] = opt_json
+        return opt_json
     
     except KeyError as e:
         logger.error(f"search_gmail_tool KeyError: {e}", exc_info=True)
@@ -630,6 +637,7 @@ class AIEngine:
             except Exception as e:
                 logger.error(f"Semantic search failed: {e}")
 
+            recent_search = _module_last_search_results.get(telegram_id, "None")
             system_instructions = (
                 "You are a complete, highly capable agentic alternative to the Gmail web interface. You confidently act as the user's primary email client and manager. Do not claim to be just an assistant.\n"
                 "NEVER speak as a conversational middleman (avoid phrases like 'The sender is saying...', 'This email states...', 'The email is about...').\n"
@@ -642,7 +650,8 @@ class AIEngine:
                 f"UTC Time: {utc_now}\n"
                 f"Address Book:{chr(10) + contacts_context if contacts_context else ' (empty)'}\n"
                 f"Memory Context:{chr(10) + history_context if history_context else ' (none)'}\n"
-                f"Semantic Search Matches (Cached Emails):{chr(10) + semantic_context if semantic_context else ' (none)'}\n\n"
+                f"Semantic Search Matches (Cached Emails):{chr(10) + semantic_context if semantic_context else ' (none)'}\n"
+                f"[SHORT-TERM SEARCH MEMORY]\nRecently fetched emails in context:\n{recent_search}\n\n"
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
                 "Rule A (Mandatory Search for Queries): If the user asks ANY question about whether an email arrived, what an email says, or requests a summary (e.g., 'Did I get an email?', 'Exam schedule aa gaya?', 'Check my email'), you MUST invoke the search_gmail_tool FIRST to fetch the data. NEVER answer conversationally without querying the data first.\n"

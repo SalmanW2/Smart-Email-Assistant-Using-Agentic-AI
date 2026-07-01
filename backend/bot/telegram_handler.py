@@ -1100,7 +1100,7 @@ class TelegramBotManager:
 
         # AFC path: ai_engine returns the sentinel string "__SHOW_SEARCH_LIST__" when
         # AFC resolved search_gmail_tool internally and the UI needs to be rendered.
-        if "__SHOW_SEARCH_LIST__" in raw:
+        if raw == "__SHOW_SEARCH_LIST__":
             search_data = self.ai_engine.pending_searches.pop(uid, {})
             query_str = search_data.get("query", self.current_queries.get(uid, "label:INBOX"))
             self.current_queries[uid] = query_str
@@ -1111,7 +1111,7 @@ class TelegramBotManager:
         if uid in self.ai_engine.pending_searches:
             self.ai_engine.pending_searches.pop(uid, None)
 
-        text_content = raw.strip()
+        text_content = raw.replace("__SHOW_SEARCH_LIST__", "").strip()
         draft_data   = None
 
         # ── 1. TAG INTERCEPTOR: Detect and Clean [VOICE] ──
