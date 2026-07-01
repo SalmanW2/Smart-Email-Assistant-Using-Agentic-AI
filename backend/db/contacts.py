@@ -84,7 +84,7 @@ class ContactManager:
             result = await self.db.db.run(lambda: self.db.db.client.table("contacts")
                                          .select("id, contact_name, contact_alias, email_address")
                                          .eq("telegram_id", telegram_id)
-                                         .ilike("contact_name", f"%{name}%")
+                                         .or_(f"contact_name.ilike.%{name}%,contact_alias.ilike.%{name}%")
                                          .execute())
             return self._safe_data(result) or []
         except Exception as e:

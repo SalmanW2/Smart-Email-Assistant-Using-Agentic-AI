@@ -159,14 +159,45 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
         all_results = {}
         
         import asyncio
-        tasks = [gmail.search_emails(user_id, q, max_results=int(max_results)) for q in queries]
-        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        from utils.embeddings import generate_embedding
+        from db.memory import memory_manager
         
-        for res in results_list:
-            if isinstance(res, list):
-                for email in res:
-                    if isinstance(email, dict) and "id" in email:
-                        all_results[email["id"]] = email
+        # 1. RAG Vector Search (Database Cache)
+        rag_found = False
+        for q in queries:
+            try:
+                emb = await generate_embedding(q)
+                if emb:
+                    semantic_matches = await memory_manager.semantic_search_emails(user_id, emb, match_threshold=0.6, limit=int(max_results))
+                    for email in semantic_matches:
+                        if isinstance(email, dict) and "gmail_message_id" in email:
+                            # Map cache format to expected API format
+                            email_id = email["gmail_message_id"]
+                            all_results[email_id] = {
+                                "id": email_id,
+                                "threadId": email.get("gmail_message_id", ""),
+                                "sender": f"{email.get('sender', '')} <{email.get('sender_email', '')}>",
+                                "subject": email.get("subject", ""),
+                                "date": email.get("received_at", ""),
+                                "snippet": email.get("preview", ""),
+                                "has_attachment": False, # Cache doesn't store this, default False
+                                "body": email.get("preview", "") # Use preview as body for cached
+                            }
+                            rag_found = True
+            except Exception as e:
+                logger.error(f"RAG search failed in tool: {e}")
+
+        # 2. Live Gmail API Fallback (Only if RAG missed or we need more)
+        if not rag_found:
+            logger.info("[Tool Execution] RAG missed, falling back to Live Gmail API")
+            tasks = [gmail.search_emails(user_id, q, max_results=int(max_results)) for q in queries]
+            results_list = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for res in results_list:
+                if isinstance(res, list):
+                    for email in res:
+                        if isinstance(email, dict) and "id" in email:
+                            all_results[email["id"]] = email
                         
         if not all_results:
             _module_pending_searches.pop(user_id, None)
@@ -396,8 +427,8 @@ class AIEngine:
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
         
-        # Get up to 6 recent turns to inject as memory into Groq
-        chat_history = self.active_chats.get(telegram_id, [])[-6:]
+        # Get up to 4 recent turns to inject as memory into Groq
+        chat_history = self.active_chats.get(telegram_id, [])[-4:]
         history_str = ""
         for turn in chat_history:
             if not hasattr(turn, 'role'): continue
@@ -555,14 +586,15 @@ class AIEngine:
                 for c in contacts_list
             ])
 
-            raw_summaries = await memory_manager.get_recent_summaries(telegram_id, limit=settings.MAX_CONTEXT_MESSAGES)
-            recent_summaries = raw_summaries[:settings.MAX_CONTEXT_MESSAGES] if raw_summaries else []
-            history_context = "\n".join([
-                f"Topic: {s.get('current_topic')} | Summary: {s.get('summary_text')}"
-                for s in recent_summaries
-            ])
+            # Memory Context (Optimized via key_facts)
+            history_context = await memory_manager.build_memory_prompt(telegram_id)
 
             utc_now = datetime.utcnow().replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+            # User Preferences (Voice/Text)
+            user_prefs = await db_manager.get_user_preferences(telegram_id)
+            voice_preference = user_prefs.get("voice_preference", "text") if user_prefs else "text"
+            voice_instruction = "VOICE TAG: Append '[VOICE]' at the very end of your response because the user prefers audio responses.\n\n" if voice_preference == "audio" else "VOICE TAG: Do NOT append '[VOICE]' unless the user explicitly asks for audio in this specific message.\n\n"
 
             # Detect the user's script/language for mirroring
             detected_script = self._detect_user_script(message)
@@ -583,17 +615,17 @@ class AIEngine:
                 logger.error(f"Semantic search failed: {e}")
 
             system_instructions = (
-                "You are the direct native user interface dashboard engine for Gmail.\n"
+                "You are a complete, highly capable agentic alternative to the Gmail web interface. You confidently act as the user's primary email client and manager. Do not claim to be just an assistant.\n"
                 "NEVER speak as a conversational middleman (avoid phrases like 'The sender is saying...', 'This email states...', 'The email is about...').\n"
                 "Act strictly as a clean native dashboard presentation layer. Serve direct data and complete tasks natively, without conversational introductions.\n"
                 "NEVER say 'As an AI' or 'I cannot access'. You already have full Gmail access via tools. Act immediately.\n\n"
 
                 f"LANGUAGE ENFORCEMENT: You must strictly maintain a Professional English persona at all times. The user is currently writing in: {detected_script}. ONLY respond in Urdu, Roman Urdu, or any other regional language IF the user explicitly demands it in their current message. Otherwise, default to clear, professional English.\n"
-                f"VOICE TAG: Append '[VOICE]' at the very end ONLY if the user explicitly asks for audio (e.g. 'voice', 'sunao', 'speak'). Never add it otherwise.\n\n"
+                f"{voice_instruction}"
 
                 f"UTC Time: {utc_now}\n"
                 f"Address Book:{chr(10) + contacts_context if contacts_context else ' (empty)'}\n"
-                f"Memory:{chr(10) + history_context if history_context else ' (none)'}\n"
+                f"Memory Context:{chr(10) + history_context if history_context else ' (none)'}\n"
                 f"Semantic Search Matches (Cached Emails):{chr(10) + semantic_context if semantic_context else ' (none)'}\n\n"
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
@@ -692,10 +724,10 @@ class AIEngine:
 
     def _get_scoped_history(self, current_prompt: str, history_list: List[Any]) -> List[Any]:
         """
-        Returns a filtered rolling window of the last 6 user/model turns.
+        Returns a filtered rolling window of the last 4 user/model turns.
 
         TOKEN OPTIMIZATION:
-        - Capped at 6 content objects (3 user+model pairs) instead of 8.
+        - Capped at 4 content objects (2 user+model pairs) instead of 6.
         - Tool role and function-call-only model content objects are EXCLUDED.
           They carry the full tool result JSON in their parts, which is extremely
           heavy (5 emails * 300 chars each) but provides zero value in follow-up
@@ -723,8 +755,8 @@ class AIEngine:
             if has_text and not has_only_fn_call:
                 text_only_turns.append(turn)
 
-        # Return the 6 most recent qualifying turns
-        return text_only_turns[-6:]
+        # Return the 4 most recent qualifying turns
+        return text_only_turns[-4:]
 
     @staticmethod
     def _extract_keywords(text: str) -> set:
