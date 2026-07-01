@@ -133,6 +133,43 @@ import contextvars
 
 current_telegram_id = contextvars.ContextVar("current_telegram_id")
 
+async def _summarize_content_with_groq(raw_text: str, context_type="email") -> str:
+    """
+    Modular Agent: Uses Groq (Llama 3) to compress massive raw data dumps into dense, token-light 
+    structured summaries to prevent Gemini AFC quota exhaustion.
+    """
+    if not raw_text or len(raw_text.strip()) < 300:
+        return raw_text
+        
+    prompt = (
+        f"You are an elite Data Extraction Agent. Read the following raw {context_type}s. "
+        "Output a highly compressed, structured list. \n"
+        "CRITICAL RULE: You MUST preserve exact names, dates, times, statuses (e.g., Approved/Rejected), and links. \n"
+        "Format: [Sender/Source] | [Date] | [Subject] | [1-2 sentence dense summary retaining all critical facts].\n\n"
+        f"RAW DATA:\n{raw_text}"
+    )
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 1500,
+    }
+    
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"].get("content", "").strip()
+            return text if text else raw_text[:500] + "... [Data truncated]"
+    except Exception as e:
+        logger.error(f"Groq summarization failed: {e}")
+        # Graceful fallback: return sliced text
+        return raw_text[:500] + "... [Data truncated to prevent quota exhaustion]"
+
 async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
@@ -238,8 +275,12 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
             optimized_results.append(opt_email)
             
         opt_json = json.dumps(optimized_results)
-        _module_last_search_results[user_id] = opt_json
-        return opt_json
+        
+        # Intercept and summarize to prevent Gemini AFC Context Bloat
+        compressed_summary = await _summarize_content_with_groq(opt_json, context_type="email")
+        
+        _module_last_search_results[user_id] = compressed_summary
+        return compressed_summary
     
     except KeyError as e:
         logger.error(f"search_gmail_tool KeyError: {e}", exc_info=True)
@@ -368,6 +409,51 @@ async def save_contact_tool(name: str, email: str) -> str:
         logger.error(f"save_contact_tool Exception: {e}", exc_info=True)
         import json
         return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check your arguments and retry."})
+
+
+async def trash_email_tool(msg_id: str) -> str:
+    """
+    Tool: Moves a specific email to the trash bin based on its unique msg_id.
+    """
+    try:
+        user_id = current_telegram_id.get()
+        import json
+        logger.info(f"[Tool Execution] Trashing Email | ID: {msg_id} for User: {user_id}")
+        
+        gmail_client = _get_gmail_client()
+        result = await gmail_client.delete_email(int(user_id), msg_id)
+        if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return json.dumps({"error": "TOKEN_EXPIRED_REAUTH_REQUIRED"})
+        elif result is True:
+            return json.dumps({"status": "success", "message": f"Email {msg_id} moved to trash successfully."})
+        else:
+            return json.dumps({"error": f"Failed to trash email {msg_id}."})
+    except Exception as e:
+        logger.error(f"trash_email_tool Exception: {e}", exc_info=True)
+        import json
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check arguments and retry."})
+
+async def untrash_email_tool(msg_id: str) -> str:
+    """
+    Tool: Restores a specific email from the trash bin based on its unique msg_id.
+    """
+    try:
+        user_id = current_telegram_id.get()
+        import json
+        logger.info(f"[Tool Execution] Restoring Email | ID: {msg_id} for User: {user_id}")
+        
+        gmail_client = _get_gmail_client()
+        result = await gmail_client.untrash_email(int(user_id), msg_id)
+        if result == "TOKEN_EXPIRED_REAUTH_REQUIRED":
+            return json.dumps({"error": "TOKEN_EXPIRED_REAUTH_REQUIRED"})
+        elif result is True:
+            return json.dumps({"status": "success", "message": f"Email {msg_id} restored from trash successfully."})
+        else:
+            return json.dumps({"error": f"Failed to restore email {msg_id}."})
+    except Exception as e:
+        logger.error(f"untrash_email_tool Exception: {e}", exc_info=True)
+        import json
+        return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check arguments and retry."})
 
 
 # ==========================================
@@ -671,10 +757,12 @@ class AIEngine:
                 "Rule F (Result Limit Enforcement): If the user asks for a specific number of emails (e.g., 'last 7 emails'), you MUST map that exact number to the `max_results` integer parameter in the search tool.\n"
                 "5. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
                 "6. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"
-                "7. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
-                "8. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
-                "9. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
-                f"10. DRAFT FORMATTING: Always prioritize any explicit formatting instructions provided in the user's current prompt. If the user does not specify a format, strictly fall back to their database draft_style setting: {draft_style}.\n"
+                "7. TRASH/DELETE: User asks to delete, trash, or remove an email → call trash_email_tool using the target message ID.\n"
+                "8. UNTRASH/RESTORE: User asks to restore, undo delete, or untrash an email → call untrash_email_tool.\n"
+                "9. RECIPIENT UNKNOWN: If you don't know the recipient's email → use '[Specify Recipient Email]' as to_email. Never guess.\n"
+                "10. SHOW EMAIL: To show a specific email from results, include [SHOW_EMAIL:<message_id>] in your response.\n"
+                "11. READ FULL HTML: The email detail card includes a 'Read Full' button allowing users to download the email as an interactive HTML document.\n"
+                f"12. DRAFT FORMATTING: Always prioritize any explicit formatting instructions provided in the user's current prompt. If the user does not specify a format, strictly fall back to their database draft_style setting: {draft_style}.\n"
                 "Never output raw JSON, function names, or code in your text response."
             )
 
@@ -684,6 +772,8 @@ class AIEngine:
                 "prepare_email_draft_tool": prepare_email_draft_tool,
                 "schedule_email_tool": schedule_email_tool,
                 "save_contact_tool": save_contact_tool,
+                "trash_email_tool": trash_email_tool,
+                "untrash_email_tool": untrash_email_tool,
             }
 
             # Safety settings — OFF for email content (may contain flagged words)
@@ -788,7 +878,16 @@ class AIEngine:
                 for p in parts
             ) if parts else False
             if has_text and not has_only_fn_call:
-                text_only_turns.append(turn)
+                # TRUNCATION: aggressively slice text to max 800 chars to avoid AFC crash loop
+                safe_parts = []
+                from google.genai import types
+                for p in parts:
+                    if hasattr(p, 'text') and p.text:
+                        sliced_text = p.text[:800] + ("..." if len(p.text) > 800 else "")
+                        safe_parts.append(types.Part.from_text(text=sliced_text))
+                    else:
+                        safe_parts.append(p)
+                text_only_turns.append(types.Content(role=role, parts=safe_parts))
 
         # Return the 4 most recent qualifying turns
         return text_only_turns[-4:]
