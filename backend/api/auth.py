@@ -61,8 +61,9 @@ def _get_client_config() -> dict:
 def _make_flow(state: Optional[str] = None) -> Flow:
     """Creates a configured OAuth flow instance."""
     redirect_uri = settings.REDIRECT_URI
-    if settings.APP_URL:
-        base = settings.APP_URL.rstrip('/')
+    base_url = settings.APP_URL or settings.WEBHOOK_URL
+    if base_url:
+        base = base_url.rstrip('/')
         redirect_uri = f"{base}/api/auth/callback"
 
     flow = Flow.from_client_config(

@@ -23,7 +23,8 @@ class Settings(BaseSettings):
 
     @property
     def FRONTEND_URL(self) -> str:
-        return self.APP_URL.rstrip("/") if self.APP_URL else "http://localhost:5173"
+        base = self.APP_URL or self.WEBHOOK_URL
+        return base.rstrip("/") if base else "http://localhost:5173"
 
     GOOGLE_TTS_API_KEY: str | None = None
     GOOGLE_OAUTH_CLIENT_ID: str | None = None
