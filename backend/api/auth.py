@@ -60,10 +60,15 @@ def _get_client_config() -> dict:
 
 def _make_flow(state: Optional[str] = None) -> Flow:
     """Creates a configured OAuth flow instance."""
+    redirect_uri = settings.REDIRECT_URI
+    if settings.APP_URL:
+        base = settings.APP_URL.rstrip('/')
+        redirect_uri = f"{base}/api/auth/callback"
+
     flow = Flow.from_client_config(
         _get_client_config(),
         scopes=SCOPES,
-        redirect_uri=str(settings.REDIRECT_URI),
+        redirect_uri=redirect_uri,
         autogenerate_code_verifier=False,
     )
     return flow
@@ -204,6 +209,13 @@ async def callback(code: str, state: str):
             await db_manager.upsert_user_token(telegram_id, user_email, auth_token)
         else:
             await db_manager.create_user(telegram_id, email=user_email, auth_token=auth_token)
+
+        # Clear active RAM cache in gmail_client to enforce immediate token propagation
+        try:
+            from bot.ai_engine import _get_gmail_client
+            _get_gmail_client().clear_cache(telegram_id)
+        except Exception as cache_err:
+            logger.warning(f"Failed to clear Gmail client cache for user {telegram_id}: {cache_err}")
 
         # Remove used session entries
         try:

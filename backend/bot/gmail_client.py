@@ -62,6 +62,10 @@ class GmailClient:
         Processes standard HTTP statuses, RefreshErrors, and client auth failures.
         """
         err_str = str(e).lower()
+        if isinstance(e, AttributeError) and "get" in err_str and "str" in err_str:
+            return True
+        if isinstance(e, TypeError) and "string indices must be integers" in err_str:
+            return True
         if isinstance(e, RefreshError) or isinstance(e, GmailAuthException):
             return True
         if any(keyword in err_str for keyword in ["refresh_token", "invalid_grant", "credentials", "unauthorized", "token"]):
@@ -122,6 +126,13 @@ class GmailClient:
                     logger.warning(f"No auth token found for user {user_id}")
                     raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
                 token_data = user["auth_token"]
+                
+            if type(token_data) is str:
+                import json
+                try:
+                    token_data = json.loads(token_data)
+                except json.JSONDecodeError:
+                    raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
 
             # Safely parse expires_at to a timezone-aware UTC datetime object
             expiry = None
