@@ -155,7 +155,16 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
         elif not isinstance(query, list):
             query = [str(query)]
             
-        queries = query
+        # Automatic Parallel Search Expansion
+        expanded_queries = set(query)
+        for q in query:
+            # Split multi-word queries into individual keywords (ignoring short words or standard filters)
+            if " " in q and not any(op in q for op in ["label:", "from:", "to:", "subject:", "newer_than:", "after:", "before:"]):
+                # Split and filter words > 3 chars
+                words = [w for w in q.replace('"', '').replace("'", "").split() if len(w) >= 3]
+                expanded_queries.update(words)
+        
+        queries = list(expanded_queries)
         logger.info(f"[Tool Execution] Searching Gmail for user {user_id} with queries: {queries}")
         _module_pending_searches[user_id] = {"query": ", ".join(queries)}
         
@@ -655,10 +664,10 @@ class AIEngine:
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
                 "Rule A (Mandatory Search for Queries): If the user asks ANY question about whether an email arrived, what an email says, or requests a summary (e.g., 'Did I get an email?', 'Exam schedule aa gaya?', 'Check my email'), you MUST invoke the search_gmail_tool FIRST to fetch the data. NEVER answer conversationally without querying the data first.\n"
-                "Rule B (UI Card Rendering): If the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards.\n"
+                "Rule B (UI Card Rendering): If emails ARE found, or the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards. However, if a search returns 'No results', do NOT output this string.\n"
                 "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. For queries targeting 'yesterday', strictly enforce the exact date format `after:YYYY-MM-DD before:YYYY-MM-DD`. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
                 "Rule D (Parallel Hypothesis Testing): Whenever there is slight doubt, ambiguity, or potential for missing emails, you should freely generate multiple parallel search queries in the array (e.g., both broad `exam` and narrow `subject:\"final exam schedule\"`). Do not force parallel searching for simple, explicit requests.\n"
-                "Rule E (Mandatory Confirmation): You must NEVER return an empty text response. After any tool call executes successfully (e.g., sending an email, saving a draft), you MUST generate a natural language confirmation for the user in the same language they spoke (e.g., 'I have successfully sent the email to Ayesha.').\n"
+                "Rule E (Natural Language on Misses & Confirmations): If a tool returns 'No results', you MUST respond in a natural, conversational manner explaining that nothing was found (e.g., 'I couldn't find any emails about that'). Do not dump raw tool output. Conversely, after successful task executions (e.g., saving a draft), provide a natural confirmation while still ensuring UI triggers are appended if applicable.\n"
                 "Rule F (Result Limit Enforcement): If the user asks for a specific number of emails (e.g., 'last 7 emails'), you MUST map that exact number to the `max_results` integer parameter in the search tool.\n"
                 "5. DRAFT/SEND/REPLY: User asks to write/send/reply → call prepare_email_draft_tool immediately. Never write draft as plain text.\n"
                 "6. SCHEDULE: User asks to schedule an email → call schedule_email_tool immediately.\n"

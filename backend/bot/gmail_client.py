@@ -42,6 +42,7 @@ class GmailAuthException(Exception):
 
 class GmailClient:
     _token_cache: Dict[int, dict] = {}
+    _user_locks: Dict[int, asyncio.Lock] = {}
     cache_hits: int = 0
     cache_misses: int = 0
 
@@ -66,24 +67,17 @@ class GmailClient:
             return True
         if isinstance(e, TypeError) and "string indices must be integers" in err_str:
             return True
-        if isinstance(e, RefreshError) or isinstance(e, GmailAuthException):
+        if hasattr(e, "resp") and getattr(e.resp, "status", 200) in (401, 403):
             return True
-        if any(keyword in err_str for keyword in ["refresh_token", "invalid_grant", "credentials", "unauthorized", "token"]):
+        if "invalid_grant" in err_str or "unauthorized_client" in err_str or "token has been expired" in err_str or "token is invalid" in err_str or "authentication_error" in err_str:
             return True
-        if isinstance(e, HttpError):
-            if e.resp.status in [401, 403]:
-                return True
-        if "status: 401" in err_str or "status: 403" in err_str or "401 unauthorized" in err_str or "403 forbidden" in err_str:
+        if "refresh" in err_str and ("fail" in err_str or "error" in err_str):
             return True
         return False
 
-    def _handle_auth_error(self, e: Exception) -> str:
-        """
-        Translates raw OAuth exceptions into a structured user-friendly Markdown string.
-        """
-        if self._is_auth_error(e):
-            return "❌ *Authentication Expired:* Your Google account access is invalid or expired. Please go to '⚙️ Settings', click **Logout Account**, and reconnect your account."
-        return f"❌ Error executing Gmail API request: {str(e)}"
+    async def _prompt_reauth(self, user_id: int) -> str:
+        """Generates a secure re-authentication redirect message for Telegram."""
+        return "⚠️ *Authentication Expired:* Your Google account access is invalid or expired. Please go to '⚙️ Settings', click **Logout Account**, and reconnect your account."
 
     async def get_service(self, user_id: int) -> Optional[Any]:
         """
@@ -91,15 +85,60 @@ class GmailClient:
         Intercepts expired tokens and attempts an automatic, proactive credentials refresh.
         Raises GmailAuthException if refresh fails or tokens are missing.
         """
-        try:
-            from datetime import datetime, timezone, timedelta
+        # Secure the refresh logic per-user to prevent parallel search race conditions
+        if user_id not in self.__class__._user_locks:
+            self.__class__._user_locks[user_id] = asyncio.Lock()
             
-            # Check RAM cache first
-            token_data = self.__class__._token_cache.get(user_id)
-            cached_valid = False
-            
-            if token_data:
+        async with self.__class__._user_locks[user_id]:
+            try:
+                from datetime import datetime, timezone, timedelta
+                
+                # Check RAM cache first
+                token_data = self.__class__._token_cache.get(user_id)
+                cached_valid = False
+                
+                if token_data:
+                    expires_at = token_data.get("expires_at")
+                    if expires_at:
+                        try:
+                            if expires_at.endswith("Z"):
+                                expires_at = expires_at[:-1] + "+00:00"
+                            dt = datetime.fromisoformat(expires_at)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            else:
+                                dt = dt.astimezone(timezone.utc)
+                            
+                            # Cache is valid if expiration is in the future beyond 5 minutes
+                            if dt > datetime.now(timezone.utc) + timedelta(minutes=5):
+                                cached_valid = True
+                        except ValueError:
+                            pass
+                
+                if cached_valid and token_data:
+                    self.__class__.cache_hits += 1
+                else:
+                    self.__class__.cache_misses += 1
+                    user = await db_manager.get_user(user_id)
+                    if not user or not user.get('auth_token'):
+                        raise GmailAuthException("User lacks Google Authentication context")
+                    
+                    token_data = user['auth_token']
+                    self.__class__._token_cache[user_id] = token_data
+                
+                # Handle potential string-serialized JSON from DB
+                if isinstance(token_data, str):
+                    import json
+                    try:
+                        token_data = json.loads(token_data)
+                    except json.JSONDecodeError:
+                        raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
+
+                # Safely parse expires_at to a timezone-aware UTC datetime object
+                expiry = None
                 expires_at = token_data.get("expires_at")
+                needs_refresh = False
+
                 if expires_at:
                     try:
                         if expires_at.endswith("Z"):
@@ -109,113 +148,74 @@ class GmailClient:
                             dt = dt.replace(tzinfo=timezone.utc)
                         else:
                             dt = dt.astimezone(timezone.utc)
-                        
-                        # Cache is valid if expiration is in the future beyond 5 minutes
-                        if datetime.now(timezone.utc) + timedelta(seconds=300) < dt:
-                            cached_valid = True
-                    except Exception:
-                        pass
-
-            if cached_valid:
-                self.__class__.cache_hits += 1
-            else:
-                self.__class__.cache_misses += 1
-                # Fetch from Supabase (DB) on cache miss or expiration
-                user = await db_manager.get_user(user_id)
-                if not user or not user.get("auth_token"):
-                    logger.warning(f"No auth token found for user {user_id}")
-                    raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
-                token_data = user["auth_token"]
-                
-            if type(token_data) is str:
-                import json
-                try:
-                    token_data = json.loads(token_data)
-                except json.JSONDecodeError:
-                    raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
-
-            # Safely parse expires_at to a timezone-aware UTC datetime object
-            expiry = None
-            expires_at = token_data.get("expires_at")
-            needs_refresh = False
-
-            if expires_at:
-                try:
-                    if expires_at.endswith("Z"):
-                        expires_at = expires_at[:-1] + "+00:00"
-                    dt = datetime.fromisoformat(expires_at)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    else:
-                        dt = dt.astimezone(timezone.utc)
                     
-                    # Convert to naive for google-auth compatibility
-                    expiry = dt.replace(tzinfo=None)
+                        # Convert to naive for google-auth compatibility
+                        expiry = dt.replace(tzinfo=None)
                     
-                    # Implement strict 5-minute safety buffer
-                    if datetime.now(timezone.utc) + timedelta(seconds=300) >= dt:
+                        # Implement strict 5-minute safety buffer
+                        if datetime.now(timezone.utc) + timedelta(seconds=300) >= dt:
+                            needs_refresh = True
+                    except Exception as parse_err:
+                        logger.warning(f"Failed to parse expires_at timestamp '{expires_at}' for user {user_id}: {parse_err}")
                         needs_refresh = True
-                except Exception as parse_err:
-                    logger.warning(f"Failed to parse expires_at timestamp '{expires_at}' for user {user_id}: {parse_err}")
+                else:
                     needs_refresh = True
-            else:
-                needs_refresh = True
 
-            credentials = Credentials(
-                token=token_data.get("token"),
-                refresh_token=token_data.get("refresh_token"),
-                token_uri=token_data.get("token_uri"),
-                client_id=token_data.get("client_id"),
-                client_secret=token_data.get("client_secret"),
-                scopes=token_data.get("scopes"),
-                expiry=expiry
-            )
+                credentials = Credentials(
+                    token=token_data.get("token"),
+                    refresh_token=token_data.get("refresh_token"),
+                    token_uri=token_data.get("token_uri"),
+                    client_id=token_data.get("client_id"),
+                    client_secret=token_data.get("client_secret"),
+                    scopes=token_data.get("scopes"),
+                    expiry=expiry
+                )
 
-            # Proactively refresh the access token if expired or within 5-min buffer
-            if (credentials.expired or needs_refresh) and credentials.refresh_token:
-                try:
-                    logger.info(f"Proactively refreshing Google OAuth token for user {user_id}")
-                    await asyncio.to_thread(credentials.refresh, GoogleRequest())
+                # Proactively refresh the access token if expired or within 5-min buffer
+                if (credentials.expired or needs_refresh) and credentials.refresh_token:
+                    try:
+                        logger.info(f"Proactively refreshing Google OAuth token for user {user_id}")
+                        await asyncio.to_thread(credentials.refresh, GoogleRequest())
                     
-                    # Persist only if the token actually changed to prevent needless DB loops
-                    if credentials.token and credentials.token != token_data.get("token"):
-                        new_expiry_str = None
-                        if credentials.expiry:
-                            expiry_aware = credentials.expiry.replace(tzinfo=timezone.utc)
-                            new_expiry_str = expiry_aware.isoformat()
+                        # Persist only if the token actually changed to prevent needless DB loops
+                        if credentials.token and credentials.token != token_data.get("token"):
+                            new_expiry_str = None
+                            if credentials.expiry:
+                                expiry_aware = credentials.expiry.replace(tzinfo=timezone.utc)
+                                new_expiry_str = expiry_aware.isoformat()
                         
-                        updated_token_data = {
-                            **token_data, 
-                            "token": credentials.token,
-                            "expires_at": new_expiry_str
-                        }
-                        await db_manager.db.run(
-                            lambda: db_manager.db.client.table("users")
-                            .update({"auth_token": updated_token_data})
-                            .eq("telegram_id", user_id).execute()
-                        )
-                        logger.info(f"Refreshed token successfully saved to Supabase for user {user_id}")
-                        token_data = updated_token_data
-                except Exception as refresh_err:
-                    logger.error(f"Failed auto-refreshing OAuth token for user {user_id}: {refresh_err}")
+                            updated_token_data = {
+                                **token_data, 
+                                "token": credentials.token,
+                                "expires_at": new_expiry_str
+                            }
+                            await db_manager.db.run(
+                                lambda: db_manager.db.client.table("users")
+                                .update({"auth_token": updated_token_data})
+                                .eq("telegram_id", user_id).execute()
+                            )
+                            logger.info(f"Refreshed token successfully saved to Supabase for user {user_id}")
+                            token_data = updated_token_data
+                    except Exception as refresh_err:
+                        logger.error(f"Failed auto-refreshing OAuth token for user {user_id}: {refresh_err}")
+                        self.clear_cache(user_id)
+                        raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
+
+                # Update/populate the RAM cache
+                self.__class__._token_cache[user_id] = token_data
+
+                # Build the discovery service
+                service = await asyncio.to_thread(build, 'gmail', 'v1', credentials=credentials, cache_discovery=False)
+                return service
+            except GmailAuthException as auth_e:
+                self.clear_cache(user_id)
+                raise auth_e
+            except Exception as e:
+                if self._is_auth_error(e):
                     self.clear_cache(user_id)
                     raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
-
-            # Update/populate the RAM cache
-            self.__class__._token_cache[user_id] = token_data
-
-            # Build the discovery service
-            service = await asyncio.to_thread(build, 'gmail', 'v1', credentials=credentials, cache_discovery=False)
-            return service
-        except GmailAuthException as auth_e:
-            self.clear_cache(user_id)
-            raise auth_e
-        except Exception as e:
-            if self._is_auth_error(e):
-                self.clear_cache(user_id)
-                raise GmailAuthException("TOKEN_EXPIRED_REAUTH_REQUIRED")
-            logger.error(f"Failed to build Gmail service for user {user_id}: {e}")
-            return None
+                logger.error(f"Failed to build Gmail service for user {user_id}: {e}")
+                return None
 
     # ==========================================
     # ATTACHMENT STAGING MANAGEMENT
