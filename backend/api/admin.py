@@ -113,6 +113,11 @@ async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
         "role": role
     }
 
+@router.get("/get_current_admin")
+async def get_current_admin_endpoint(admin: Dict = Depends(get_current_admin)):
+    """Validates the current admin token and returns the admin session profile."""
+    return admin
+
 @router.post("/set-password")
 async def set_admin_password(payload: SetPasswordPayload, admin: Dict = Depends(get_current_admin)):
     if admin.get("email") != payload.email and admin.get("role") != "super_admin":
