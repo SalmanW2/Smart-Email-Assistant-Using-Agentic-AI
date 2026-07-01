@@ -15,9 +15,9 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
         return None
         
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={settings.GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={settings.GEMINI_API_KEY}"
         payload = {
-            "model": "models/text-embedding-004",
+            "model": "models/gemini-embedding-2",
             "content": {
                 "parts": [{"text": text}]
             }
