@@ -798,8 +798,9 @@ class TelegramBotManager:
                 return
 
             if uid in self.compose_states and self.compose_states[uid].get("step") != "PAUSED":
-                await self._compose_step(update, uid, text)
-                return
+                handled = await self._compose_step(update, uid, text)
+                if handled is not False:
+                    return
 
             if self.search_states.get(uid) == "AWAIT_QUERY":
                 self.search_states.pop(uid)
@@ -849,6 +850,12 @@ class TelegramBotManager:
         if step == "AWAIT_TO":
             email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
             clean_text = text.strip()
+            
+            # Graceful Intent Exit: If the text is conversational (>3 words) and not an email
+            if len(clean_text.split()) > 3 and not re.match(email_regex, clean_text):
+                self.compose_states.pop(uid, None)
+                return False
+
             if not re.match(email_regex, clean_text):
                 # Search contacts for potential name matches
                 found = await self.contacts.find_contacts_by_name(uid, clean_text)

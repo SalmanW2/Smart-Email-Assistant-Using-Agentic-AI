@@ -368,13 +368,13 @@ class AIEngine:
             "Analyze the user's message and strictly output valid JSON with no markdown wrapping or additional text.\n\n"
             "Valid intents:\n"
             "1. 'chit_chat' - General greetings, small talk, gratitude. (Include 'response': <string> with your reply).\n"
-            "2. 'send_email' - Requesting to send or compose an email. (Include 'name': <extracted_name_or_empty>, 'context': <subject_or_body_or_empty>).\n"
-            "3. 'complex_search' - Any query asking to search, find, read, summarize, or manage emails.\n"
+            "2. 'send_email' - Requesting to compose and send a NEW email to someone else. Do NOT use this if the user is asking you to show, read, or send an existing email to themselves (use complex_search for that).\n"
+            "3. 'complex_search' - Any query asking to search, find, read, summarize, or manage emails. Use this if the user says 'send it to me', 'show me the email', or 'forward it to me'.\n"
             "4. 'read_attachment' - Explicitly asking to read, summarize, or open an attached file (Include 'file_id': <string_if_provided>).\n\n"
             f"Recent Chat History:\n{history_str}\n\n"
             "Example 1: {\"intent\": \"chit_chat\", \"response\": \"Main theek hoon! Apko inbox mein kya madad chahiye?\"}\n"
             "Example 2: {\"intent\": \"send_email\", \"name\": \"Abdullah\", \"context\": \"Friday party\"}\n"
-            "Example 3: {\"intent\": \"complex_search\"}\n\n"
+            "Example 3: {\"intent\": \"complex_search\"} (for 'send it to me', 'show me the email', 'check exam schedule')\n\n"
             "Respond ONLY with JSON."
         )
 
@@ -553,7 +553,7 @@ class AIEngine:
                 f"Semantic Search Matches (Cached Emails):{chr(10) + semantic_context if semantic_context else ' (none)'}\n\n"
 
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
-                "Rule A (Natural Reply): If the user asks a conversational question or wants a summary (e.g., 'Did I get an email from Ayesha?'), use the search tool and reply NATURALLY in text. DO NOT output UI sentinel tags.\n"
+                "Rule A (Mandatory Search for Queries): If the user asks ANY question about whether an email arrived, what an email says, or requests a summary (e.g., 'Did I get an email?', 'Exam schedule aa gaya?', 'Check my email'), you MUST invoke the search_gmail_tool FIRST to fetch the data. NEVER answer conversationally without querying the data first.\n"
                 "Rule B (UI Card Rendering): If the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards.\n"
                 "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
                 "Rule D (Parallel Hypothesis Testing): If a user's request is ambiguous (e.g., 'Did I get an invite from an organization?'), pass multiple search queries to the search tool simultaneously (e.g., [\"invite organization\", \"subject:invitation\"]) to guarantee you find the target email in one turn.\n"
