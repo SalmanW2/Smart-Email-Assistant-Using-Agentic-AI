@@ -958,58 +958,6 @@ class AIEngine:
                 break
         return "Email abstractive summary failed due to internal analytical errors."
 
-    async def generate_tts_summary(self, email_body: str) -> str:
-        """
-        Generates a 2-3 sentence spoken summary optimized for text-to-speech delivery.
-        Uses a direct single-turn call — does NOT update active_chats history.
-        """
-        prompt = (
-            "You are a voice assistant. Read the following email and write a natural, spoken summary "
-            "in exactly 2-3 sentences. Use simple, clear language suitable for text-to-speech playback. "
-            "Do not use bullet points, markdown symbols, or special characters.\n\n"
-            f"Email:\n{email_body[:3000]}"
-        )
-        # ── Attempt via Groq first to save Gemini quota ─────────────────────────
-        if settings.GROQ_API_KEY:
-            try:
-                url = "https://api.groq.com/openai/v1/chat/completions"
-                headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": 120,
-                }
-                async with httpx.AsyncClient(timeout=20.0) as client:
-                    resp = await client.post(url, headers=headers, json=payload)
-                    resp.raise_for_status()
-                    text = resp.json()["choices"][0]["message"].get("content", "").strip()
-                    if text:
-                        return text
-            except Exception as groq_err:
-                logger.warning(f"Groq generate_tts_summary failed, falling back to Gemini: {groq_err}")
-
-        # ── Gemini fallback (only if Groq is not configured or failed) ────────────
-        for attempt in range(2):
-            try:
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt
-                )
-                return response.text.strip() if response.text else "Unable to generate audio summary."
-            except Exception as e:
-                if _is_quota_error(e):
-                    logger.warning(f"Gemini quota exhausted on generate_tts_summary for attempt {attempt + 1}.")
-                    return "Audio summary temporarily unavailable. Please try again in a moment."
-                err_str = str(e)
-                if "503" in err_str or "UNAVAILABLE" in err_str:
-                    logger.warning(f"Gemini 503 UNAVAILABLE on generate_tts_summary attempt {attempt + 1}. Retrying...")
-                    if attempt == 0:
-                        await asyncio.sleep(1)
-                        continue
-                logger.error(f"TTS summary generation error: {e}")
-                break
-        return "Audio summary generation failed."
 
 
 
