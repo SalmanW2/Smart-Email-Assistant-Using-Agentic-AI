@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize a separate genai client for embeddings 
 try:
-    _gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    _gemini_client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options={'api_version': 'v1alpha'}
+    )
 except Exception as e:
     logger.error(f"Failed to initialize Gemini Client for embeddings: {e}")
     _gemini_client = None
@@ -25,7 +28,7 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
         # Run the synchronous embed_content in an asyncio thread to avoid blocking the event loop
         response = await asyncio.to_thread(
             _gemini_client.models.embed_content,
-            model='embedding-001',
+            model='text-embedding-004',
             contents=text
         )
         

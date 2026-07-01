@@ -239,6 +239,8 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
 async def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> str:
     """
     Tool: Prepares and stages an immediate email draft.
+    CRITICAL INSTRUCTION: You MUST expand the user's short prompt into a fully formed, professional, and natural email body. 
+    DO NOT just output a terse, exact-match string (e.g. if the user says "exam paper preparation", expand it into a complete message).
     HITL Guardrail: If the explicit target email is unknown, the AI MUST output '[Specify Recipient Email]'.
     """
     try:

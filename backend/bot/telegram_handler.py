@@ -1248,20 +1248,36 @@ class TelegramBotManager:
     # ── Button handler ─────────────────────────────────────────────────────────
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query  = update.callback_query
-        uid    = query.from_user.id
-        data   = query.data
+        query = update.callback_query
+        uid = query.from_user.id
+        data = query.data
+        
         try:
             await query.answer()
         except Exception:
             pass
 
-        # Intercept and append to deep navigation history array.
-        # Exclude ephemeral/destructive actions that must never be replayed by Back.
         _NO_HISTORY_ACTIONS = {"cancel", "menu_main", "logout", "retry_last_query",
                                 "attach_hint", "clear_att", "send_draft", "force_send_draft"}
+        pushed = False
         if not data.startswith("history_back") and data not in _NO_HISTORY_ACTIONS:
             self._push_history(uid, data)
+            pushed = True
+            
+        try:
+            await self._handle_button_internal(update, context, data, uid)
+        except Exception as e:
+            logger.error(f"Error handling button '{data}' for user {uid}: {e}", exc_info=True)
+            if pushed and uid in self.navigation_history and self.navigation_history[uid]:
+                self.navigation_history[uid].pop() # Rollback the corrupted state
+            try:
+                await query.answer("⚠️ An error occurred. Please try again.", show_alert=True)
+            except Exception:
+                pass
+            raise e
+
+    async def _handle_button_internal(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str, uid: int):
+        query = update.callback_query
 
         action, args = _parse_cb(data)
 
