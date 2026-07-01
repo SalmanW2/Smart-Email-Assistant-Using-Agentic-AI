@@ -36,7 +36,7 @@ class DBManager:
     # ==========================================
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         try:
-            result = await self.db.run(lambda: self.db.client.table("users").select("id, telegram_id, email, first_name, username, is_verified").eq("telegram_id", telegram_id).maybe_single().execute())
+            result = await self.db.run(lambda: self.db.client.table("users").select("id, telegram_id, email, first_name, username, is_verified, auth_token").eq("telegram_id", telegram_id).maybe_single().execute())
             return self._safe_data(result)
         except Exception as e:
             logger.error(f"DB Error in get_user: {e}")
@@ -76,14 +76,21 @@ class DBManager:
 
     async def upsert_user_token(self, telegram_id: int, email: str, auth_token: Dict) -> bool:
         try:
-            await self.db.run(lambda: self.db.client.table("users").update({
+            result = await self.db.run(lambda: self.db.client.table("users").upsert({
+                "telegram_id": telegram_id,
                 "email": email,
                 "auth_token": auth_token
-            }).eq("telegram_id", telegram_id).execute())
+            }, on_conflict="telegram_id").execute())
+            
+            if not getattr(result, 'data', None):
+                logger.warning(f"Supabase upsert returned empty data for telegram_id {telegram_id}. Potential RLS issue.")
+            else:
+                logger.info(f"Successfully upserted token for telegram_id {telegram_id}")
+                
             self._invalidate_cache(["all_users", "active_auto_check_users"])
             return True
         except Exception as e:
-            logger.error(f"DB Error in upsert_user_token: {e}")
+            logger.error(f"DB Error in upsert_user_token: {e}", exc_info=True)
             return False
 
     async def get_all_users(self, use_cache: bool = True) -> List[Dict[str, Any]]:
