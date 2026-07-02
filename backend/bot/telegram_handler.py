@@ -900,12 +900,13 @@ class TelegramBotManager:
                     
             if self.settings_states.get(uid) == "AWAIT_TIMEZONE":
                 # Fallback text parsing for timezone
-                tz_str = None
-                query_clean = text.lower().strip().replace(" ", "_")
-                for tz in pytz.all_timezones:
-                    if query_clean in tz.lower():
-                        tz_str = tz
-                        break
+                tz_str = await self.ai_engine.parse_timezone_with_groq(text)
+                if not tz_str:
+                    query_clean = text.lower().strip().replace(" ", "_")
+                    for tz in pytz.all_timezones:
+                        if query_clean in tz.lower():
+                            tz_str = tz
+                            break
                 if tz_str:
                     await self.db.update_user_preferences(uid, {"timezone": tz_str})
                     self.settings_states.pop(uid, None)
@@ -1616,25 +1617,83 @@ class TelegramBotManager:
                 tasks = getattr(res, "data", []) or []
                 if not tasks:
                     await self._edit(query, 
-                        "📭 *No Scheduled Emails*\\n\\nYou have no pending scheduled emails.",
+                        "📭 *No Scheduled Emails*\n\nYou have no pending scheduled emails.",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]])
                     )
                     return
                 
-                text = "📅 *Your Scheduled Emails:*\\n\\n"
+                text = "📅 *Your Scheduled Emails:*\n\n"
                 kb_rows = []
                 for idx, task in enumerate(tasks, 1):
-                    t_time = task.get('scheduled_time', 'Unknown')
+                    # Convert to user timezone for display
+                    try:
+                        t_utc = datetime.strptime(task.get('scheduled_time', '1970-01-01 00:00:00'), "%Y-%m-%d %H:%M:%S").replace(tzinfo=pytz.utc)
+                        prefs = await self._prefs(uid)
+                        user_tz = pytz.timezone(prefs.get("timezone", "UTC"))
+                        t_local = t_utc.astimezone(user_tz).strftime("%Y-%m-%d %I:%M %p")
+                    except Exception:
+                        t_local = task.get('scheduled_time', 'Unknown')
+
                     t_sub = task.get('subject', 'No Subject')
-                    text += f"*{idx}.* `{t_time}`\\n    _Sub:_ {t_sub}\\n\\n"
-                    kb_rows.append([InlineKeyboardButton(f"❌ Cancel #{idx}", callback_data=f"cancel_sch:{task['id']}")])
+                    text += f"*{idx}.* `{t_local}`\n    _Sub:_ {t_sub}\n\n"
                 
+                kb_rows.append([InlineKeyboardButton("✏️ Edit Scheduled Email", callback_data="select_sch_edit")])
                 kb_rows.append([InlineKeyboardButton("🔙 Menu", callback_data="menu_main")])
                 await self._edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows))
             except Exception as e:
                 logger.error(f"Failed to list scheduled emails: {e}")
                 await query.answer("❌ Failed to retrieve scheduled emails.", show_alert=True)
+            return
+            
+        if action == "select_sch_edit":
+            try:
+                res = await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").select("id, subject").eq("telegram_id", uid).eq("status", "pending").order("scheduled_time", desc=False).execute())
+                tasks = getattr(res, "data", []) or []
+                if not tasks:
+                    await query.answer("No pending emails to edit.", show_alert=True)
+                    return
+                kb_rows = []
+                for idx, task in enumerate(tasks, 1):
+                    kb_rows.append([InlineKeyboardButton(f"Email {idx}: {task.get('subject', 'No Subject')[:15]}...", callback_data=f"manage_sch:{task['id']}")])
+                kb_rows.append([InlineKeyboardButton("🔙 Back", callback_data="list_sch")])
+                await self._edit(query, "✏️ *Which email do you want to modify?*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows))
+            except Exception as e:
+                logger.error(f"Failed to select sch edit: {e}")
+                await query.answer("❌ Failed to fetch emails.", show_alert=True)
+            return
+
+        if action == "manage_sch":
+            sch_id = args[0] if args else ""
+            if not sch_id: return
+            try:
+                res = await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").select("*").eq("id", sch_id).execute())
+                tasks = getattr(res, "data", []) or []
+                if not tasks:
+                    await query.answer("Email not found.", show_alert=True)
+                    return
+                task = tasks[0]
+                to_field = _safe_md(task.get("to_email", "Unknown"))
+                subj_field = _safe_md(task.get("subject", "No Subject"))
+                time_field = _safe_md(task.get("scheduled_time", "Unknown"))
+                
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Confirm Schedule", callback_data=f"confirm_sch:{sch_id}")],
+                    [InlineKeyboardButton("⏳ Edit Time", callback_data=f"edit_sch_time:{sch_id}"),
+                     InlineKeyboardButton("✏️ Edit Draft/Subject", callback_data=f"edit_sch_draft:{sch_id}")],
+                    [InlineKeyboardButton("❌ Cancel Schedule", callback_data=f"cancel_sch:{sch_id}")]
+                ])
+                await self._edit(query,
+                    f"📅 *Manage Scheduled Email*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 *To:* `{to_field}`\n"
+                    f"📝 *Subject:* `{subj_field}`\n"
+                    f"⏳ *UTC Time:* `{time_field}`\n",
+                    parse_mode="Markdown",
+                    reply_markup=kb)
+            except Exception as e:
+                logger.error(f"Failed to manage sch {sch_id}: {e}")
+                await query.answer("❌ Failed to load schedule.", show_alert=True)
             return
 
         if action == "confirm_sch":

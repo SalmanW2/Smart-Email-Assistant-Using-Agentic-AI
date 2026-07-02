@@ -172,6 +172,42 @@ async def _summarize_content_with_groq(raw_text: str, context_type="email") -> s
         # Graceful fallback: return sliced text
         return raw_text[:500] + "... [Data truncated to prevent quota exhaustion]"
 
+async def parse_timezone_with_groq(location_text: str) -> str:
+    """
+    Uses Groq to quickly map a user's vaguely typed location string (e.g. 'Washington', 'Pakistan')
+    into a strict IANA timezone format (e.g. 'America/New_York', 'Asia/Karachi').
+    """
+    if not settings.GROQ_API_KEY:
+        return ""
+        
+    prompt = (
+        f"You are a timezone translation API. "
+        f"Convert the following user input into a strict IANA timezone string (e.g. 'Asia/Karachi', 'America/New_York'). "
+        f"If the input is ambiguous but maps to a known major timezone (e.g., 'Washington' -> 'America/New_York'), use that. "
+        f"Output ONLY the IANA string, nothing else. If you completely fail to recognize it, output 'UNKNOWN'.\n\n"
+        f"Input: {location_text}"
+    )
+    
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "max_tokens": 10
+    }
+    
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"].get("content", "").strip()
+            return text if text != "UNKNOWN" else ""
+    except Exception as e:
+        logger.error(f"Groq Timezone API Error: {e}")
+        return ""
+
 async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
     """
     Tool: Searches the user's Gmail inbox for specific threads or messages.
