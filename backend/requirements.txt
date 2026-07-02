@@ -34,4 +34,5 @@ email-validator
 
 # Security & Auth Handling (Clean & Native)
 PyJWT
-beautifulsoup4dateparser>=1.2.0
+beautifulsoup4
+dateparser>=1.2.0
