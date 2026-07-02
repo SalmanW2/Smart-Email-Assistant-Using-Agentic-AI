@@ -562,6 +562,7 @@ class TelegramBotManager:
         self.application = ApplicationBuilder().token(settings.BOT_TOKEN).build()
         self.application.add_error_handler(self.error_handler)
         self.application.add_handler(CommandHandler("start", self.cmd_start))
+        self.application.add_handler(CommandHandler("clear", self.cmd_clear))
         self.application.add_handler(CommandHandler("menu",  self.cmd_menu))
         self.application.add_handler(CallbackQueryHandler(self.handle_button))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
@@ -637,6 +638,14 @@ class TelegramBotManager:
             "🎛️ *Smart Email Assistant Dashboard*\n"
             "Select an action below to manage your inbox:",
             kb_main_menu(has_draft))
+
+    async def cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        u = update.effective_user
+        self.ai.clear_chat_session(u.id)
+        self._clear_history(u.id)
+        _module_pending_drafts.pop(u.id, None)
+        _module_pending_searches.pop(u.id, None)
+        await self._send(update, "🧹 Session history and memory have been fully cleared.")
 
     async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         u   = update.effective_user
@@ -1136,7 +1145,28 @@ class TelegramBotManager:
             return
 
 
-        # ── 2. DRAFT INTERCEPTOR ──
+        # 🚀 2. SCHEDULE INTERCEPTOR 🚀
+
+        if uid in self.ai_engine.pending_schedules:
+            schedule_data = self.ai_engine.pending_schedules.pop(uid)
+            sch_id = schedule_data.get("schedule_id", "UNKNOWN")
+            to_field = _safe_md(schedule_data.get("to_email", "Unknown"))
+            subj_field = _safe_md(schedule_data.get("subject", "No Subject"))
+            time_field = _safe_md(schedule_data.get("scheduled_time", "Unknown"))
+            
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel Schedule", callback_data=f"cancel_sch:{sch_id}")]
+            ])
+            await self._edit(msg_obj,
+                f"🕒 *Email Scheduled Successfully!*\n"
+                f"──────────────────\n"
+                f"✉️ *To:* `{to_field}`\n"
+                f"📝 *Subject:* `{subj_field}`\n"
+                f"⏳ *Time:* `{time_field}`\n",
+                kb)
+            return
+
+        # 🚀 3. DRAFT INTERCEPTOR 🚀
 
         if uid in self.ai_engine.pending_drafts:
             draft_data = self.ai_engine.pending_drafts.pop(uid)
@@ -1442,6 +1472,20 @@ class TelegramBotManager:
                 "🚫 *Canceled.*\n\nReturning to dashboard.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]]))
+            return
+
+        if action == "cancel_sch":
+            sch_id = args[0] if args else ""
+            if sch_id:
+                try:
+                    await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").delete().eq("id", sch_id).execute())
+                    await query.edit_message_text(
+                        "🚫 *Scheduled Email Canceled.*\n\nThe email will not be sent.",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
+                except Exception as e:
+                    logger.error(f"Failed to cancel schedule {sch_id}: {e}")
+                    await query.answer("❌ Failed to cancel schedule.", show_alert=True)
             return
 
         # ── Edit Draft Hub Integration ──

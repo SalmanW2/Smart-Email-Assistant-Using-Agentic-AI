@@ -110,6 +110,7 @@ logger = logging.getLogger(__name__)
 _module_gmail_client = None
 _module_pending_drafts: Dict[int, Dict[str, Any]] = {}
 _module_pending_searches: Dict[int, Dict[str, Any]] = {}
+_module_pending_schedules: Dict[int, Dict[str, Any]] = {}
 _module_last_search_results: Dict[int, str] = {}
 
 
@@ -164,6 +165,7 @@ async def _summarize_content_with_groq(raw_text: str, context_type="email") -> s
             resp = await client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
             text = resp.json()["choices"][0]["message"].get("content", "").strip()
+            logger.info(f"Groq extracted data from {len(raw_text)} chars of raw text successfully.")
             return text if text else raw_text[:500] + "... [Data truncated]"
     except Exception as e:
         logger.error(f"Groq summarization failed: {e}")
@@ -327,7 +329,7 @@ async def prepare_email_draft_tool(to_email: str, subject: str, body: str) -> st
         return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check your arguments and retry."})
 
 
-async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str) -> str:
+async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_time: str, attachment_ids: list[str] = None) -> str:
     """
     Tool: Schedules an email for future automated dispatch.
     HITL Guardrail: If the target email is unknown, the AI MUST output '[Specify Recipient Email]'.
@@ -341,31 +343,39 @@ async def schedule_email_tool(to_email: str, subject: str, body: str, scheduled_
         if not to_clean or "@" not in to_clean or "[Specify" in to_clean:
             to_clean = "[Specify Recipient Email]"
 
+        attachments = attachment_ids if attachment_ids else []
+
         schedule_details = {
             "to_email": to_clean,
             "subject": subject or "No Subject",
             "body": body or "",
             "scheduled_time": scheduled_time,
+            "attachments": attachments,
             "status": "pending"
         }
 
         # Persist immediately to the scheduled_emails schema using Supabase DB Manager
         try:
-            await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
+            res = await db_manager.db.run(lambda: db_manager.db.client.table("scheduled_emails").insert({
                 "telegram_id": user_id,
                 "to_email": to_clean,
                 "subject": subject or "No Subject",
                 "body": body or "",
                 "scheduled_time": scheduled_time,
+                "attachments": attachments,
                 "status": "pending"
             }).execute())
+            schedule_id = res.data[0]["id"] if getattr(res, "data", None) else "UNKNOWN_ID"
             logger.info("Successfully registered scheduled email in database")
         except Exception as db_err:
             logger.error(f"Database error writing scheduled task: {db_err}")
             return json.dumps({"error": f"Database failure: {str(db_err)}. Please notify the user."})
 
+        _module_pending_schedules[user_id] = {"schedule_id": schedule_id, **schedule_details}
+
         return json.dumps({
             "action": "schedule_email",
+            "schedule_id": schedule_id,
             "schedule_details": schedule_details
         })
         
@@ -456,6 +466,21 @@ async def untrash_email_tool(msg_id: str) -> str:
         return json.dumps({"error": f"TOOL EXECUTION FAILED: {str(e)}. Please check arguments and retry."})
 
 
+async def parse_attachment_tool(attachment_id: str) -> str:
+    """
+    Tool: [STUB] Parses the content of a specific attachment.
+    """
+    import json
+    return json.dumps({"status": "not_implemented", "message": "Parsing attachments is currently a stub."})
+
+async def summarize_long_thread_tool(thread_id: str) -> str:
+    """
+    Tool: [STUB] Summarizes a long email thread.
+    """
+    import json
+    return json.dumps({"status": "not_implemented", "message": "Thread summarization is currently a stub."})
+
+
 # ==========================================
 # AI ENGINE CLASS
 # ==========================================
@@ -472,6 +497,7 @@ class AIEngine:
         # This lets TelegramBotManager pop drafts via ai_engine.pending_drafts (backward compat).
         self.pending_drafts = _module_pending_drafts
         self.pending_searches = _module_pending_searches
+        self.pending_schedules = _module_pending_schedules
 
         # Multi-user conversation history cache for persistent stateful chat sessions
         self.active_chats: Dict[int, List[types.Content]] = {}
@@ -526,7 +552,7 @@ class AIEngine:
         Orchestrator Gatekeeper. Analyzes intent and returns STRICT JSON.
         """
         if not settings.GROQ_API_KEY:
-            return {"intent": "complex_search"}
+            return {"intent": "EMAIL_ACTION"}
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
@@ -543,17 +569,15 @@ class AIEngine:
                 history_str += f"{role.capitalize()}: {text}\n"
 
         system_prompt = (
-            "You are a highly intelligent, natural-sounding Smart Email Assistant. Respond directly and conversationally in the exact language the user is speaking (English or Roman Urdu). CRITICAL: DO NOT echo, repeat, or translate the user's prompt. Answer logically based on the chat history.\n"
-            "Analyze the user's message and strictly output valid JSON with no markdown wrapping or additional text.\n\n"
+            "You are an Intent Classification Router. Analyze the user's message and strictly output valid JSON.\n\n"
             "Valid intents:\n"
-            "1. 'chit_chat' - General greetings, small talk, gratitude. (Include 'response': <string> with your reply).\n"
-            "2. 'send_email' - Requesting to compose and send a NEW email to someone else. Do NOT use this if the user is asking you to show, read, or send an existing email to themselves (use complex_search for that).\n"
-            "3. 'complex_search' - Any query asking to search, find, read, summarize, or manage emails. Use this if the user says 'send it to me', 'show me the email', or 'forward it to me'.\n"
-            "4. 'read_attachment' - Explicitly asking to read, summarize, or open an attached file (Include 'file_id': <string_if_provided>).\n\n"
+            "1. 'CHITCHAT' - General greetings, small talk, gratitude. (Include 'response': <string> with your reply natively).\n"
+            "2. 'HISTORY_RECALL' - Asking 'what did you say?', 'repeat that', or recalling previous conversation.\n"
+            "3. 'EMAIL_ACTION' - Any query asking to search, send, schedule, delete, read attachments, or manage emails.\n\n"
             f"Recent Chat History:\n{history_str}\n\n"
-            "Example 1: {\"intent\": \"chit_chat\", \"response\": \"Main theek hoon! Apko inbox mein kya madad chahiye?\"}\n"
-            "Example 2: {\"intent\": \"send_email\", \"name\": \"Abdullah\", \"context\": \"Friday party\"}\n"
-            "Example 3: {\"intent\": \"complex_search\"} (for 'send it to me', 'show me the email', 'check exam schedule')\n\n"
+            "Example 1: {\"intent\": \"CHITCHAT\", \"response\": \"Main theek hoon! Apko inbox mein kya madad chahiye?\"}\n"
+            "Example 2: {\"intent\": \"HISTORY_RECALL\"}\n"
+            "Example 3: {\"intent\": \"EMAIL_ACTION\"}\n\n"
             "Respond ONLY with JSON."
         )
 
@@ -580,10 +604,54 @@ class AIEngine:
             if e.response.status_code == 429:
                 return {"intent": "__GROQ_QUOTA_ERROR__"}
             logger.error(f"Groq router HTTP error {e.response.status_code}: {e.response.text}")
-            return {"intent": "complex_search"}
+            return {"intent": "EMAIL_ACTION"}
         except Exception as e:
             logger.error(f"Groq router failed: {e}")
-            return {"intent": "complex_search"}
+            return {"intent": "EMAIL_ACTION"}
+
+    async def _search_history_with_groq(self, message: str, telegram_id: int) -> str:
+        """
+        Sub-Agent: Reads session history and answers history recall queries natively using Groq, 
+        saving Gemini AFC quota.
+        """
+        if not settings.GROQ_API_KEY:
+            return "I don't have access to your history at the moment."
+            
+        chat_history = self.active_chats.get(telegram_id, [])[-10:]
+        history_str = ""
+        for turn in chat_history:
+            if not hasattr(turn, 'role'): continue
+            role = getattr(turn, 'role', '')
+            parts = getattr(turn, 'parts', [])
+            text = parts[0].text if parts and hasattr(parts[0], 'text') else ""
+            if text:
+                history_str += f"{role.capitalize()}: {text}\n"
+
+        prompt = (
+            "You are a helpful AI assistant. The user is asking you to recall or summarize something you recently said or discussed. "
+            "Read the following recent chat history and answer their query accurately based ONLY on this history.\n\n"
+            f"CHAT HISTORY:\n{history_str}"
+        )
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message}
+            ],
+            "temperature": 0.2
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"History Recall Sub-Agent failed: {e}")
+            return "I apologize, but I couldn't access my recent memory right now."
 
     # ==========================================
     # CORE AGENT REASONING ENGINE
@@ -608,14 +676,23 @@ class AIEngine:
         # 3. Check for Draft Sentinel (INSPECT only, do NOT pop)
         if telegram_id in _module_pending_drafts:
             self.active_chats[telegram_id].append(
-                types.Content(role="model", parts=[types.Part.from_text(text="Draft/schedule prepared and displayed to user.")])
+                types.Content(role="model", parts=[types.Part.from_text(text="Draft prepared and displayed to user.")])
             )
             draft_payload = _module_pending_drafts[telegram_id]
             import json as _json
             return _json.dumps({"action": "prepare_draft", "draft": draft_payload})
 
+        # 3.5 Check for Schedule Sentinel
+        if telegram_id in _module_pending_schedules:
+            self.active_chats[telegram_id].append(
+                types.Content(role="model", parts=[types.Part.from_text(text="Email scheduled and displayed to user.")])
+            )
+            schedule_payload = _module_pending_schedules[telegram_id]
+            import json as _json
+            return _json.dumps({"action": "schedule_email", **schedule_payload})
+
         # 4. Limit Exhaustion Fail-Safe
-        if not raw_text.strip() and telegram_id not in _module_pending_searches and telegram_id not in _module_pending_drafts:
+        if not raw_text.strip() and telegram_id not in _module_pending_searches and telegram_id not in _module_pending_drafts and telegram_id not in _module_pending_schedules:
             resolved_text = "⚠️ Apologies, your request required too many complex steps and hit the safety limit. Could you please break it down into a simpler question?"
         else:
             # Standard conversational/text response
@@ -645,41 +722,23 @@ class AIEngine:
             )
 
         try:
-            # ── 1. GROQ GATEKEEPER ROUTING ──
+            # 🚀 1. GROQ GATEKEEPER ROUTING 🚀
             route = await self._groq_intent_router(message, telegram_id)
-            intent = route.get("intent", "complex_search")
+            intent = route.get("intent", "EMAIL_ACTION")
 
             if intent == "__GROQ_QUOTA_ERROR__":
                 return "__GROQ_QUOTA_ERROR__"
 
-            if intent == "chit_chat":
-                response_text = route.get("response", "Hello! How can I help you?")
+            if intent == "CHITCHAT":
+                response_text = route.get("response", "Hello! How can I help you with your emails today?")
                 return self._unify_agent_response(telegram_id, message, response_text)
                 
-            if intent == "send_email":
-                name = route.get("name", "")
-                context_str = route.get("context", "")
-                
-                # Resolve recipient using advanced DB search
-                to_clean = "[Specify Recipient Email]"
-                if name:
-                    try:
-                        matches = await contact_manager.find_contacts_by_name(telegram_id, name)
-                        if matches:
-                            to_clean = matches[0].get('email_address', to_clean)
-                    except Exception as e:
-                        logger.error(f"Error fetching DB contacts for email drafting: {e}")
-                
-                draft = {
-                    "action": "prepare_draft",
-                    "to": to_clean,
-                    "subject": "No Subject" if not context_str else context_str,
-                    "body": context_str
-                }
-                _module_pending_drafts[telegram_id] = draft
-                return self._unify_agent_response(telegram_id, message, "I have prepared the draft.")
+            if intent == "HISTORY_RECALL":
+                # Fire the isolated History Recall Agent
+                response_text = await self._search_history_with_groq(message, telegram_id)
+                return self._unify_agent_response(telegram_id, message, response_text)
 
-            # ── 2. GEMINI AFC PIPELINE (Complex Search) ──
+            # 🚀 2. GEMINI AFC PIPELINE (Email Action) 🚀
             try:
                 contacts_list = await contact_manager.get_user_contacts(telegram_id)
             except Exception as e:
@@ -774,6 +833,8 @@ class AIEngine:
                 "save_contact_tool": save_contact_tool,
                 "trash_email_tool": trash_email_tool,
                 "untrash_email_tool": untrash_email_tool,
+                "parse_attachment_tool": parse_attachment_tool,
+                "summarize_long_thread_tool": summarize_long_thread_tool,
             }
 
             # Safety settings — OFF for email content (may contain flagged words)
@@ -889,8 +950,8 @@ class AIEngine:
                         safe_parts.append(p)
                 text_only_turns.append(types.Content(role=role, parts=safe_parts))
 
-        # Return the 4 most recent qualifying turns
-        return text_only_turns[-4:]
+        # Return the 3 most recent qualifying turns
+        return text_only_turns[-3:]
 
     @staticmethod
     def _extract_keywords(text: str) -> set:
