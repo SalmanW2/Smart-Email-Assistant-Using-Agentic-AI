@@ -36,3 +36,5 @@ email-validator
 PyJWT
 beautifulsoup4
 dateparser>=1.2.0
+
+timezonefinder>=6.0.0

@@ -19,6 +19,8 @@ import tempfile
 import uuid
 import re
 import dateparser
+import pytz
+from timezonefinder import TimezoneFinder
 from datetime import datetime, timedelta
 import json
 from datetime import datetime, timezone
@@ -292,6 +294,7 @@ def kb_settings(ai_on: bool, voice: str, auto_on: bool, pag_limit: int = 2, draf
         [InlineKeyboardButton(f"{'✅' if auto_on else '❌'} Auto Check", callback_data="toggle_auto")],
         [InlineKeyboardButton(pag_label,                                       callback_data="cycle_pagination")],
         [InlineKeyboardButton(draft_label,                                     callback_data="cycle_draft")],
+        [InlineKeyboardButton("🌍 Set Timezone",                               callback_data="set_timezone")],
         [InlineKeyboardButton("🚪 Logout",                             callback_data="logout")],
         kb_back_step(),
     ])
@@ -326,6 +329,7 @@ class TelegramBotManager:
 
         self.compose_states:    dict = {}   # uid -> {step, to, subj, body, attachments}
         self.search_states:     dict = {}   # uid -> 'AWAIT_QUERY'
+        self.settings_states:   dict = {}   # uid -> 'AWAIT_TIMEZONE'
         self.current_queries:   dict = {}   # uid -> last search query string
         self._mid_cache:        dict = {}   # short_id[:16] -> full Gmail message ID
         self.notified_emails:    set = set()
@@ -372,7 +376,35 @@ class TelegramBotManager:
         except Exception as e:
             logger.debug(f"Preference fetch fallback error: {e}")
             pass
-        return {"ai_mode_enabled": True, "voice_preference": "text", "auto_check_enabled": True, "pagination_limit": 2}
+        return {"ai_mode_enabled": True, "voice_preference": "text", "auto_check_enabled": True, "pagination_limit": 2, "timezone": "UTC"}
+
+    async def _db_push_nav_stack(self, uid: int, state_str: str) -> None:
+        """Pushes a UI state (like 'menu_main' or 'inbox:0') to the user's DB nav stack."""
+        try:
+            user = await self.db.get_user(uid)
+            stack = user.get("ui_nav_stack") if user and isinstance(user.get("ui_nav_stack"), list) else []
+            if stack and stack[-1] == state_str: return # Avoid duplicate adjacent states
+            stack.append(state_str)
+            # Keep stack size manageable
+            if len(stack) > 15: stack = stack[-15:]
+            await self.db.db.run(lambda: self.db.db.client.table("users").update({"ui_nav_stack": stack}).eq("telegram_id", uid).execute())
+        except Exception as e:
+            logger.error(f"Error pushing nav stack: {e}")
+
+    async def _db_pop_nav_stack(self, uid: int) -> str:
+        """Pops and returns the previous UI state. Defaults to 'menu_main' if empty."""
+        try:
+            user = await self.db.get_user(uid)
+            stack = user.get("ui_nav_stack") if user and isinstance(user.get("ui_nav_stack"), list) else []
+            if len(stack) > 1:
+                stack.pop() # Remove current state
+                prev_state = stack[-1] # Peak at previous
+                await self.db.db.run(lambda: self.db.db.client.table("users").update({"ui_nav_stack": stack}).eq("telegram_id", uid).execute())
+                return prev_state
+            return "menu_main"
+        except Exception as e:
+            logger.error(f"Error popping nav stack: {e}")
+            return "menu_main"
 
     async def _send(self, update: Update, text: str,
                     markup: InlineKeyboardMarkup | None = None,
@@ -380,7 +412,7 @@ class TelegramBotManager:
         """Sends a completely new message or edits existing based on update context."""
         try:
             if update.callback_query:
-                await update.callback_query.edit_message_text(
+                await update.callback_query.edit_message_text( 
                     text, parse_mode=parse_mode, reply_markup=markup,
                     disable_web_page_preview=True)
             elif update.message:
@@ -388,7 +420,10 @@ class TelegramBotManager:
                     text, parse_mode=parse_mode, reply_markup=markup,
                     disable_web_page_preview=True)
         except Exception as e:
-            logger.debug(f"_send error execution: {e}")
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                logger.debug(f"_send error execution: {e}")
 
     async def _edit(self, obj, text: str,
                     markup: InlineKeyboardMarkup | None = None,
@@ -406,7 +441,10 @@ class TelegramBotManager:
                 else:
                     await obj.reply_text(text, parse_mode=parse_mode, reply_markup=markup, disable_web_page_preview=True)
         except Exception as e:
-            logger.debug(f"_edit error execution: {e}")
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                logger.debug(f"_edit error execution: {e}")
 
     # ── True Dynamic Navigation Stack ──────────────────────────────────────────
 
@@ -572,6 +610,7 @@ class TelegramBotManager:
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
         self.application.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
         self.application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO | filters.AUDIO | filters.VIDEO, self.handle_attachment))
+        self.application.add_handler(MessageHandler(filters.LOCATION, self.handle_location))
             
         await self.application.initialize()
         
@@ -819,10 +858,20 @@ class TelegramBotManager:
 
             
             if uid in self.compose_states and self.compose_states[uid].get("step") == "AWAIT_SCHEDULE_TIME":
-                parsed = dateparser.parse(text, settings={'PREFER_DATES_FROM': 'future'})
+                prefs = await self._prefs(uid)
+                user_tz_str = prefs.get("timezone", "UTC")
+                try:
+                    user_tz = pytz.timezone(user_tz_str)
+                except Exception:
+                    user_tz = pytz.utc
+                
+                parsed = dateparser.parse(text, settings={'PREFER_DATES_FROM': 'future', 'TIMEZONE': user_tz_str, 'RETURN_AS_TIMEZONE_AWARE': True})
                 if not parsed:
-                    await update.message.reply_text("I couldn't understand that time format. Please try again (e.g., 'tomorrow at 3pm' or '2026-07-03 15:00').")
+                    await update.message.reply_text("I couldn't understand that time format. Please try again (e.g., 'tomorrow at 3pm').")
                     return
+                
+                # Convert to UTC for database storage
+                parsed_utc = parsed.astimezone(pytz.utc)
                     
                 state = self.compose_states[uid]
                 try:
@@ -831,7 +880,7 @@ class TelegramBotManager:
                         "to_email": state["to"],
                         "subject": state.get("subj", "No Subject"),
                         "body": state.get("body", ""),
-                        "scheduled_time": parsed.strftime("%Y-%m-%d %H:%M:%S")
+                        "scheduled_time": parsed_utc.strftime("%Y-%m-%d %H:%M:%S")
                     }).execute())
                     self.compose_states.pop(uid, None)
                     await update.message.reply_text("✅ *Email Scheduled Successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
@@ -848,6 +897,22 @@ class TelegramBotManager:
                 if found:
                     extra = " OR ".join(f"from:{c['email_address']}" for c in found)
                     self.current_queries[uid] = f"({extra}) OR {text}"
+                    
+            if self.settings_states.get(uid) == "AWAIT_TIMEZONE":
+                # Fallback text parsing for timezone
+                tz_str = None
+                query_clean = text.lower().strip().replace(" ", "_")
+                for tz in pytz.all_timezones:
+                    if query_clean in tz.lower():
+                        tz_str = tz
+                        break
+                if tz_str:
+                    await self.db.update_user_preferences(uid, {"timezone": tz_str})
+                    self.settings_states.pop(uid, None)
+                    await update.message.reply_text(f"🌍 *Timezone set to {tz_str} successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+                else:
+                    await update.message.reply_text("❌ *Could not find that timezone.* Please try typing a major city (e.g. 'London', 'Karachi', 'New York') or send a Location pin.", parse_mode="Markdown")
+                return
                     
                 await self._show_list(wait, uid, offset=0, is_search=True)
                 return
@@ -1161,6 +1226,22 @@ class TelegramBotManager:
         if uid in self.ai_engine.pending_searches:
             self.ai_engine.pending_searches.pop(uid, None)
 
+    async def handle_location(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        u = update.effective_user
+        uid = u.id
+        if self.settings_states.get(uid) == "AWAIT_TIMEZONE" and update.message.location:
+            lat = update.message.location.latitude
+            lng = update.message.location.longitude
+            tf = TimezoneFinder()
+            tz_str = tf.timezone_at(lng=lng, lat=lat)
+            if tz_str:
+                await self.db.update_user_preferences(uid, {"timezone": tz_str})
+                self.settings_states.pop(uid, None)
+                await update.message.reply_text(f"🌍 *Timezone set to {tz_str} successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]]))
+            else:
+                await update.message.reply_text("❌ *Could not determine timezone.* Please try typing your City/Country.", parse_mode="Markdown")
+            return
+
         text_content = raw.replace("__SHOW_SEARCH_LIST__", "").strip()
         draft_data   = None
 
@@ -1243,13 +1324,20 @@ class TelegramBotManager:
             return
 
         # ── 3. VOICE / TEXT ROUTING ──
-        # Routing logic:
-        #   - is_voice_type (AI tagged [VOICE]) OR voice_pref='voice': send audio only, delete Thinking msg.
-        #   - voice_pref='both': send full text bubble AND audio note.
-        #   - voice_pref='text' (default): send text only.
+        # Strict logic based on user testing:
         voice_pref = prefs.get("voice_preference", "text")
+        
+        trigger_voice = False
+        if voice_pref == "voice":
+            trigger_voice = True
+        elif voice_pref == "smart" and is_voice_type:
+            trigger_voice = True
+            
+        # Hard text block
+        if voice_pref == "text":
+            trigger_voice = False
 
-        if is_voice_type or voice_pref in ("voice", "both"):
+        if trigger_voice:
             await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
             # Remove markdown symbols to prevent TTS engine from reading punctuation aloud
             clean_tts = re.sub(r'[*_#`]', '', text_content)
@@ -1266,8 +1354,8 @@ class TelegramBotManager:
                 if audio and os.path.exists(audio):
                     with open(audio, "rb") as f:
                         try:
-                            if voice_pref == "both":
-                                await self._edit(msg_obj, text_content)
+                            if is_voice_type:
+                                # When AI explicitly wanted voice (Smart Routing), it acts like voice only.
                                 await context.bot.send_voice(chat_id=uid, voice=f)
                             else:
                                 await context.bot.send_voice(chat_id=uid, voice=f)
@@ -1332,18 +1420,18 @@ class TelegramBotManager:
             pass
 
         _NO_HISTORY_ACTIONS = {"cancel", "menu_main", "logout", "retry_last_query",
-                                "attach_hint", "clear_att", "send_draft", "force_send_draft"}
+                                "attach_hint", "clear_att", "send_draft", "force_send_draft", "set_timezone"}
         pushed = False
         if not data.startswith("history_back") and data not in _NO_HISTORY_ACTIONS:
-            self._push_history(uid, data)
+            await self._db_push_nav_stack(uid, data)
             pushed = True
             
         try:
             await self._handle_button_internal(update, context, data, uid)
         except Exception as e:
             logger.error(f"Error handling button '{data}' for user {uid}: {e}", exc_info=True)
-            if pushed and uid in self.navigation_history and self.navigation_history[uid]:
-                self.navigation_history[uid].pop() # Rollback the corrupted state
+            if pushed:
+                await self._db_pop_nav_stack(uid) # Rollback the corrupted state
             try:
                 await query.answer("⚠️ An error occurred. Please try again.", show_alert=True)
             except Exception:
@@ -1356,8 +1444,8 @@ class TelegramBotManager:
         action, args = _parse_cb(data)
 
         if action == "history_back":
-            prev_state = self._pop_history(uid)
-            if not prev_state:
+            prev_state = await self._db_pop_nav_stack(uid)
+            if not prev_state or prev_state == "menu_main":
                 # History empty or expired — safe fallback to Dashboard.
                 return await self.cmd_menu(update, context)
 
@@ -1367,7 +1455,6 @@ class TelegramBotManager:
             _prev_action, _prev_args = _parse_cb(prev_state)
             _prev_ctx = _prev_args[1] if len(_prev_args) > 1 else ""
             if _prev_ctx == "notif":
-                self._clear_history(uid)
                 return await self.cmd_menu(update, context)
 
             # Replay the previous screen state via the normal routing below.
@@ -1412,19 +1499,19 @@ class TelegramBotManager:
             state["step"] = step
             
             if step == "AWAIT_TO":
-                await query.edit_message_text(
+                await self._edit(query, 
                     "✉️ *Compose Email*\n\nEnter the *recipient's email address:*",
                     parse_mode="Markdown", reply_markup=kb_cancel())
             elif step == "AWAIT_SUBJ":
-                await query.edit_message_text(
+                await self._edit(query, 
                     f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
                     parse_mode="Markdown", reply_markup=kb_cancel())
             elif step == "AWAIT_BODY":
-                await query.edit_message_text(
+                await self._edit(query, 
                     "✍️ *Enter message body:*\n_(or send a voice note)_",
                     parse_mode="Markdown", reply_markup=kb_cancel())
             elif step == "AWAIT_ATT":
-                await query.edit_message_text(
+                await self._edit(query, 
                     _draft_text(state), parse_mode="Markdown",
                     reply_markup=kb_draft(bool(state.get("attachments"))))
             return
@@ -1440,7 +1527,7 @@ class TelegramBotManager:
                 return
             
             try:
-                msg = await query.edit_message_text("✨ *Retrying your last request...*", parse_mode="Markdown")
+                msg = await self._edit(query, "✨ *Retrying your last request...*", parse_mode="Markdown")
             except Exception:
                 msg = await context.bot.send_message(chat_id=uid, text="✨ *Retrying your last request...*", parse_mode="Markdown")
             
@@ -1478,7 +1565,7 @@ class TelegramBotManager:
 
         if action == "search_prompt":
             self.search_states[uid] = "AWAIT_QUERY"
-            await query.edit_message_text(
+            await self._edit(query, 
                 "🔍 *Search Emails*\n\n"
                 "Type your Gmail query below:\n"
                 "_(e.g. `from:john`, `invoice`, `is:unread`, `subject:meeting`)_",
@@ -1488,7 +1575,7 @@ class TelegramBotManager:
 
         if action == "compose":
             if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
@@ -1498,7 +1585,7 @@ class TelegramBotManager:
                 )
                 return
             self.compose_states[uid] = {"step": "AWAIT_TO", "attachments": []}
-            await query.edit_message_text(
+            await self._edit(query, 
                 "✉️ *Compose Email*\n\nEnter the *recipient's email address:*",
                 parse_mode="Markdown", reply_markup=kb_cancel())
             return
@@ -1512,7 +1599,7 @@ class TelegramBotManager:
             self.compose_states.pop(uid, None)
             self.search_states.pop(uid, None)
             self._clear_history(uid)
-            await query.edit_message_text(
+            await self._edit(query, 
                 "🚫 *Canceled.*\n\nReturning to dashboard.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]]))
@@ -1528,7 +1615,7 @@ class TelegramBotManager:
                 
                 tasks = getattr(res, "data", []) or []
                 if not tasks:
-                    await query.edit_message_text(
+                    await self._edit(query, 
                         "📭 *No Scheduled Emails*\\n\\nYou have no pending scheduled emails.",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]])
@@ -1544,7 +1631,7 @@ class TelegramBotManager:
                     kb_rows.append([InlineKeyboardButton(f"❌ Cancel #{idx}", callback_data=f"cancel_sch:{task['id']}")])
                 
                 kb_rows.append([InlineKeyboardButton("🔙 Menu", callback_data="menu_main")])
-                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows))
+                await self._edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows))
             except Exception as e:
                 logger.error(f"Failed to list scheduled emails: {e}")
                 await query.answer("❌ Failed to retrieve scheduled emails.", show_alert=True)
@@ -1568,7 +1655,7 @@ class TelegramBotManager:
             if sch_id:
                 try:
                     await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").delete().eq("id", sch_id).execute())
-                    await query.edit_message_text(
+                    await self._edit(query, 
                         "🚫 *Scheduled Email Canceled.*\n\nThe email will not be sent.",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
@@ -1579,7 +1666,7 @@ class TelegramBotManager:
 
         # ── Edit Draft Hub Integration ──
         if action == "edit_draft_hub":
-            await query.edit_message_text(
+            await self._edit(query, 
                 "✏️ *Modify Draft Structure Parameters*\nSelect the attribute component boundary grid to update directly:",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
@@ -1594,7 +1681,7 @@ class TelegramBotManager:
         if action.startswith("edit_field_"):
             # Guard: compose state must exist and be active before mutating
             if uid not in self.compose_states or not self.compose_states.get(uid):
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Draft expired.* Please start a new email.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✍️ Compose", callback_data="compose")]])
@@ -1602,7 +1689,7 @@ class TelegramBotManager:
                 return
             target_field = action.replace("edit_field_", "")
             self.compose_states[uid]["step"] = f"AWAIT_{target_field.upper()}"
-            await query.edit_message_text(
+            await self._edit(query, 
                 f"📝 Input new specifications for *{target_field.upper()}* parameters:",
                 parse_mode="Markdown", reply_markup=kb_cancel()
             )
@@ -1611,13 +1698,13 @@ class TelegramBotManager:
         if action == "restore_draft_view":
             state = self.compose_states.get(uid)
             if not state:
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Draft expired.* Please start a new email.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✍️ Compose", callback_data="compose")]])
                 )
                 return
-            await query.edit_message_text(
+            await self._edit(query, 
                 _draft_text(state),
                 parse_mode="Markdown",
                 reply_markup=kb_draft(bool(state.get("attachments")))
@@ -1626,7 +1713,7 @@ class TelegramBotManager:
 
         if action == "cancel_voice":
             self.active_voice_tasks.discard(args[0] if args else "")
-            await query.edit_message_text(
+            await self._edit(query, 
                 "🚫 *Voice command canceled.*", parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
@@ -1640,7 +1727,7 @@ class TelegramBotManager:
             state = self.compose_states.get(uid)
             if not state:
                 # State expired; go back to menu
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Draft expired.* Returning to dashboard.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]])
@@ -1652,7 +1739,7 @@ class TelegramBotManager:
                 except Exception:
                     pass
             state["attachments"] = []
-            await query.edit_message_text(
+            await self._edit(query, 
                 _draft_text(state), parse_mode="Markdown",
                 reply_markup=kb_draft(False))
             return
@@ -1661,37 +1748,14 @@ class TelegramBotManager:
         if action == "schedule_draft_manual":
             self.compose_states[uid]["step"] = "AWAIT_SCHEDULE_TIME"
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⏳ In 1 Hour", callback_data="sch_time_1h"),
-                 InlineKeyboardButton("🌅 Tomorrow Morning", callback_data="sch_time_tmrw")],
                 [InlineKeyboardButton("🔙 Back to Draft", callback_data="restore_draft_view")]
             ])
-            await query.edit_message_text(
-                "📅 *Schedule Email*\\n\\nWhen would you like to send this? Type a time (e.g. 'tomorrow at 3pm') or use a quick button below:",
+            await self._edit(query, 
+                "📅 *Schedule Email*\n\n"
+                "When would you like to send this? Type a time using natural language:\n"
+                "(e.g., 'tomorrow at 3pm', 'next monday morning', 'in 2 hours')\n\n"
+                "The bot will use your configured timezone to accurately schedule this.",
                 parse_mode="Markdown", reply_markup=kb)
-            return
-            
-        if action.startswith("sch_time_"):
-            if uid not in self.compose_states: return
-            if action == "sch_time_1h":
-                t = datetime.now() + timedelta(hours=1)
-            elif action == "sch_time_tmrw":
-                t = datetime.now() + timedelta(days=1)
-                t = t.replace(hour=9, minute=0, second=0)
-            
-            state = self.compose_states[uid]
-            try:
-                await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").insert({
-                    "telegram_id": uid,
-                    "to_email": state["to"],
-                    "subject": state.get("subj", "No Subject"),
-                    "body": state.get("body", ""),
-                    "scheduled_time": t.strftime("%Y-%m-%d %H:%M:%S")
-                }).execute())
-                self.compose_states.pop(uid, None)
-                await query.edit_message_text("✅ *Email Scheduled Successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
-            except Exception as e:
-                logger.error(f"Manual schedule error: {e}")
-                await query.answer("❌ Failed to schedule.", show_alert=True)
             return
 
         if action == "send_draft":
@@ -1712,12 +1776,12 @@ class TelegramBotManager:
             
             if state.get("body") and state.get("subj"):
                 state["step"] = "AWAIT_ATT"
-                await query.edit_message_text(
+                await self._edit(query, 
                     _draft_text(state), parse_mode="Markdown",
                     reply_markup=kb_draft(bool(state.get("attachments"))))
             else:
                 state["step"] = "AWAIT_SUBJ"
-                await query.edit_message_text(
+                await self._edit(query, 
                     f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
                     parse_mode="Markdown", reply_markup=kb_cancel())
             return
@@ -1726,7 +1790,7 @@ class TelegramBotManager:
             email = args[0] if args else ""
             state = self.compose_states.get(uid)
             if state and state.get("step") == "PAUSED" and _has_draft_content(state):
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
@@ -1757,12 +1821,12 @@ class TelegramBotManager:
                 
             if state.get("body") and state.get("subj"):
                 state["step"] = "AWAIT_ATT"
-                await query.edit_message_text(
+                await self._edit(query, 
                     _draft_text(state), parse_mode="Markdown",
                     reply_markup=kb_draft(bool(state.get("attachments"))))
             else:
                 state["step"] = "AWAIT_SUBJ"
-                await query.edit_message_text(
+                await self._edit(query, 
                     f"✅ *To:* `{_safe_md(state['to'])}`\n\n📝 *Enter Subject:*",
                     parse_mode="Markdown", reply_markup=kb_cancel()
                 )
@@ -1771,7 +1835,7 @@ class TelegramBotManager:
         if action == "compose_to":
             email = args[0] if args else ""
             if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Starting a new email will discard your current draft.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
@@ -1787,7 +1851,7 @@ class TelegramBotManager:
                 "body": "",
                 "attachments": []
             }
-            await query.edit_message_text(
+            await self._edit(query, 
                 f"✅ *To:* `{_safe_md(email)}`\n\n📝 *Enter Subject:*",
                 parse_mode="Markdown", reply_markup=kb_cancel()
             )
@@ -1795,7 +1859,7 @@ class TelegramBotManager:
 
         if action == "settings":
             prefs = await self._prefs(uid)
-            await query.edit_message_text(
+            await self._edit(query, 
                 "⚙️ *Settings*\n\nConfigure your assistant preferences:",
                 parse_mode="Markdown",
                 reply_markup=kb_settings(
@@ -1823,9 +1887,20 @@ class TelegramBotManager:
                 current_style = prefs.get("draft_style", "Detailed")
                 new_style = "Concise" if current_style == "Detailed" else "Detailed"
                 await self.db.update_user_preferences(uid, {"draft_style": new_style})
+            elif action == "set_timezone":
+                self.settings_states[uid] = "AWAIT_TIMEZONE"
+                await self._edit(query, 
+                    "🌍 *Set Your Timezone*\n\n"
+                    "You can update your timezone using either of these methods:\n\n"
+                    "1️⃣ *Type your City/Country* (e.g. 'London', 'Pakistan', 'New York')\n"
+                    "2️⃣ *Send a Location Pin* (📎 Attachment -> Location)\n\n"
+                    "The bot will use this to accurately display times for your scheduled emails.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+                return
             
             prefs = await self._prefs(uid)
-            await query.edit_message_text(
+            await self._edit(query, 
                 "⚙️ *Settings*\n\nConfigure your assistant preferences:", parse_mode="Markdown", 
                 reply_markup=kb_settings(
                     prefs.get("ai_mode_enabled", True), 
@@ -1842,7 +1917,7 @@ class TelegramBotManager:
             self.gmail.clear_cache(uid)
             self.gmail.clear_user_attachments(uid)
             self.compose_states.pop(uid, None)
-            await query.edit_message_text(
+            await self._edit(query, 
                 "✅ *Logged out.*\nSend /start to reconnect your Google account.",
                 parse_mode="Markdown")
             return
@@ -1887,7 +1962,7 @@ class TelegramBotManager:
             if res == "TOKEN_EXPIRED_REAUTH_REQUIRED":
                 return await self._prompt_reauth(query.message, uid)
             if res:
-                await query.edit_message_text(
+                await self._edit(query, 
                     "🗑️ *Email moved to Trash.*",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
@@ -1906,7 +1981,7 @@ class TelegramBotManager:
 
         if action == "reply":
             if uid in self.compose_states and _has_draft_content(self.compose_states[uid]):
-                await query.edit_message_text(
+                await self._edit(query, 
                     "⚠️ *Active Draft Detected*\n\nYou have an unsaved draft in progress. Replying to this email will discard your current draft.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
@@ -1932,7 +2007,7 @@ class TelegramBotManager:
                 "subj":  f"Re: {subj}" if not subj.startswith("Re:") else subj,
                 "attachments": [],
             }
-            await query.edit_message_text(
+            await self._edit(query, 
                 f"↩️ *Reply to:* `{_safe_md(email)}`\n\n✍️ Type your reply:",
                 parse_mode="Markdown", reply_markup=kb_cancel())
             return
@@ -1942,7 +2017,7 @@ class TelegramBotManager:
         # return the user to the Dashboard rather than hanging silently.
         logger.debug(f"handle_button: unrecognised action '{action}' (data='{data}') for user {uid}")
         try:
-            await query.edit_message_text(
+            await self._edit(query, 
                 "🎛️ *Main Dashboard*\n\nSelect an action:",
                 parse_mode="Markdown",
                 reply_markup=kb_main_menu(uid in self.compose_states)
@@ -1961,7 +2036,7 @@ class TelegramBotManager:
         email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
 
         if not skip_validation and (not to_email or "[Specify" in to_email or not re.match(email_regex, to_email)):
-            await query.edit_message_text(
+            await self._edit(query, 
                 "⚠️ *Validation Error:* Cannot process outbound data streams. Recipient address is invalid.", 
                 parse_mode="Markdown", 
                 reply_markup=InlineKeyboardMarkup([
@@ -1973,7 +2048,7 @@ class TelegramBotManager:
 
         self.compose_states.pop(uid, None)
 
-        msg = await query.edit_message_text("⏳ *Sending Email...*", parse_mode="Markdown")
+        msg = await self._edit(query, "⏳ *Sending Email...*", parse_mode="Markdown")
 
         async def _send_immediately():
             try:
@@ -2013,7 +2088,7 @@ class TelegramBotManager:
         asyncio.create_task(_send_immediately())
 
     async def _do_read_html(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
-        await query.edit_message_text("⏳ *Retrieving full HTML layout...*", parse_mode="Markdown")
+        await self._edit(query, "⏳ *Retrieving full HTML layout...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
 
         html_body = await self.gmail.get_email_html(uid, full_mid)
@@ -2021,7 +2096,7 @@ class TelegramBotManager:
             return await self._prompt_reauth(query.message, uid)
 
         if not html_body:
-            await query.edit_message_text("❌ *Failed to fetch full email HTML.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            await self._edit(query, "❌ *Failed to fetch full email HTML.*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
 
         meta = await self.gmail.get_email_metadata(uid, full_mid)
@@ -2059,7 +2134,7 @@ class TelegramBotManager:
                 pass
         except Exception as e:
             logger.error(f"Failed sending HTML fallback document: {e}")
-            await query.edit_message_text("❌ *Failed to transmit HTML document.*", parse_mode="Markdown", reply_markup=back_markup)
+            await self._edit(query, "❌ *Failed to transmit HTML document.*", parse_mode="Markdown", reply_markup=back_markup)
 
     async def _do_summary(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
         # The message that triggered this callback may be a voice/audio message
@@ -2067,7 +2142,7 @@ class TelegramBotManager:
         # We try to edit; if that fails we send a new loader message instead.
         loading_msg = None
         try:
-            await query.edit_message_text("⏳ *Generating AI Summary...*", parse_mode="Markdown")
+            await self._edit(query, "⏳ *Generating AI Summary...*", parse_mode="Markdown")
             loading_msg = query.message
         except Exception:
             try:
@@ -2129,7 +2204,7 @@ class TelegramBotManager:
             await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown", reply_markup=kb)
 
     async def _do_tts(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
-        await query.edit_message_text("🔊 *Generating audio summary...*", parse_mode="Markdown")
+        await self._edit(query, "🔊 *Generating audio summary...*", parse_mode="Markdown")
         await context.bot.send_chat_action(chat_id=uid, action=ChatAction.RECORD_VOICE)
 
         full_mid = self._full_mid(mid_short)
@@ -2142,13 +2217,13 @@ class TelegramBotManager:
             return await self._prompt_reauth(query.message, uid)
 
         if not details or not meta or (isinstance(meta, dict) and "error" in meta):
-            await query.edit_message_text("❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
+            await self._edit(query, "❌ *Email not found.* It may have been deleted.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([kb_back_step()]))
             return
 
         body = details.get("body", "") if details else ""
         # Use the token-efficient TTS summary call — avoids polluting chat history
         # and skips tool-setup tokens. Returns clean text ready for TTS with no markdown.
-        clean_tts = await self.ai_engine.generate_tts_summary(body)
+        clean_tts = await self.ai_engine.summarize_email(body)
 
         prefs = await self._prefs(uid)
         audio = None
@@ -2198,7 +2273,7 @@ class TelegramBotManager:
                     pass
 
     async def _do_attachments(self, query, context, mid_short: str, ctx: str, offset: int, uid: int):
-        await query.edit_message_text("⏳ *Fetching attachments...*", parse_mode="Markdown")
+        await self._edit(query, "⏳ *Fetching attachments...*", parse_mode="Markdown")
         full_mid = self._full_mid(mid_short)
         back_kb  = InlineKeyboardMarkup([kb_nav_for_ctx(ctx)])
 
@@ -2207,7 +2282,7 @@ class TelegramBotManager:
             if meta == "TOKEN_EXPIRED_REAUTH_REQUIRED":
                 return await self._prompt_reauth(query.message, uid)
             if len(meta.get("attachments", [])) > 10:
-                await query.edit_message_text("⚠️ *Download Blocked:* Max 10 files allowed.", parse_mode="Markdown", reply_markup=back_kb)
+                await self._edit(query, "⚠️ *Download Blocked:* Max 10 files allowed.", parse_mode="Markdown", reply_markup=back_kb)
                 return
         except Exception:
             pass
@@ -2217,10 +2292,10 @@ class TelegramBotManager:
             return await self._prompt_reauth(query.message, uid)
 
         if not paths:
-            await query.edit_message_text("📭 *No downloadable attachments found.*", parse_mode="Markdown", reply_markup=back_kb)
+            await self._edit(query, "📭 *No downloadable attachments found.*", parse_mode="Markdown", reply_markup=back_kb)
             return
 
-        await query.edit_message_text(f"📤 *Sending {len(paths)} attachment(s)...*", parse_mode="Markdown")
+        await self._edit(query, f"📤 *Sending {len(paths)} attachment(s)...*", parse_mode="Markdown")
 
         sent = 0
         for att_info in paths:
@@ -2249,7 +2324,7 @@ class TelegramBotManager:
                 except Exception:
                     pass
 
-        await query.edit_message_text(f"✅ *{sent}/{len(paths)} file(s) sent.*", parse_mode="Markdown", reply_markup=back_kb)
+        await self._edit(query, f"✅ *{sent}/{len(paths)} file(s) sent.*", parse_mode="Markdown", reply_markup=back_kb)
 
     # ── Background Jobs ────────────────────────────────────────────────────────
 

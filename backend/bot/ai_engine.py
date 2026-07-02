@@ -548,7 +548,7 @@ class AIEngine:
     # GROQ GATEKEEPER / INTENT ROUTER
     # ==========================================
 
-    async def _groq_intent_router(self, message: str, telegram_id: int) -> dict:
+    async def _groq_intent_router(self, message: str, telegram_id: int, voice_preference: str = "text") -> dict:
         """
         Orchestrator Gatekeeper. Analyzes intent and returns STRICT JSON.
         """
@@ -579,6 +579,7 @@ class AIEngine:
             "Example 1: {\"intent\": \"CHITCHAT\", \"response\": \"Main theek hoon! Apko inbox mein kya madad chahiye?\"}\n"
             "Example 2: {\"intent\": \"HISTORY_RECALL\"}\n"
             "Example 3: {\"intent\": \"EMAIL_ACTION\"}\n\n"
+            f"User Voice Preference: '{voice_preference}'. If the user explicitly asks for an audio/voice response, OR if you are responding with a long readable response (like an email summary), you MUST output the tag <VOICE_REQUIRED> anywhere in your 'response' string.\n"
             "Respond ONLY with JSON."
         )
 
@@ -704,7 +705,7 @@ class AIEngine:
         )
         return resolved_text
 
-    async def agent_chat(self, message: str, telegram_id: int) -> str:
+    async def agent_chat(self, message: str, telegram_id: int, voice_preference: str = "text") -> str:
         current_telegram_id.set(telegram_id)
         
         # Fast HITL (Human In The Loop) Interceptors
@@ -724,7 +725,7 @@ class AIEngine:
 
         try:
             # 🚀 1. GROQ GATEKEEPER ROUTING 🚀
-            route = await self._groq_intent_router(message, telegram_id)
+            route = await self._groq_intent_router(message, telegram_id, voice_preference)
             intent = route.get("intent", "EMAIL_ACTION")
 
             if intent == "__GROQ_QUOTA_ERROR__":
@@ -801,6 +802,8 @@ class AIEngine:
 
                 f"LANGUAGE ENFORCEMENT: You must strictly maintain a Professional English persona at all times. The user is currently writing in: {detected_script}. ONLY respond in Urdu, Roman Urdu, or any other regional language IF the user explicitly demands it in their current message. Otherwise, default to clear, professional English.\n"
                 f"{voice_instruction}"
+                f"Always output markdown format.\n"
+                f"User Voice Preference is '{voice_preference}'. If they explicitly ask for an audio/voice reply, OR if you are providing a long readable response (e.g., an email summary), you MUST output the literal tag <VOICE_REQUIRED> somewhere in your message. This triggers the backend TTS system.\n\n"
 
                 f"UTC Time: {utc_now}\n"
                 f"Address Book:{chr(10) + contacts_context if contacts_context else ' (empty)'}\n"

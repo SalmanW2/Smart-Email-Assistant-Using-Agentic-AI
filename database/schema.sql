@@ -197,18 +197,20 @@ CREATE INDEX IF NOT EXISTS idx_email_cache_sender_email_trgm ON email_cache USIN
 CREATE INDEX IF NOT EXISTS idx_email_cache_subject_trgm ON email_cache USING gin (subject gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_email_cache_preview_trgm ON email_cache USING gin (preview gin_trgm_ops);
 
--- Admin restrictions columns
+-- Admin restrictions & UI Nav Stack
 ALTER TABLE users 
 ADD COLUMN IF NOT EXISTS ai_allowed BOOLEAN DEFAULT TRUE,
-ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE;
+ADD COLUMN IF NOT EXISTS voice_allowed BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS ui_nav_stack JSONB DEFAULT '[]'::jsonb;
 
 -- Temporary suspension for blocked users
 ALTER TABLE blocked_users
 ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL;
 
--- Auto-check preference
+-- Auto-check preference & timezone
 ALTER TABLE user_preferences 
-ADD COLUMN IF NOT EXISTS auto_check_enabled BOOLEAN DEFAULT TRUE;
+ADD COLUMN IF NOT EXISTS auto_check_enabled BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS timezone VARCHAR(50) DEFAULT 'UTC';
 
 -- Unique constraint enforcement
 ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_telegram_id_email_address_key;
