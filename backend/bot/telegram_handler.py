@@ -160,9 +160,10 @@ def kb_main_menu(has_draft: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗑️ Discard", callback_data="cancel")
         ])
     rows.extend([
-        [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0))],
+        [InlineKeyboardButton("📥 Inbox",         callback_data=_cb("inbox", 0)),
+         InlineKeyboardButton("📅 Scheduled",     callback_data="list_sch")],
         [InlineKeyboardButton("✍️ Compose",        callback_data="compose")],
-        [InlineKeyboardButton("🔍 Search", callback_data="search_prompt")],
+        [InlineKeyboardButton("🔍 Search",         callback_data="search_prompt")],
         [InlineKeyboardButton("⚙️ Settings",       callback_data="settings")],
     ])
     return InlineKeyboardMarkup(rows)
@@ -1155,6 +1156,9 @@ class TelegramBotManager:
             time_field = _safe_md(schedule_data.get("scheduled_time", "Unknown"))
             
             kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirm Schedule", callback_data=f"confirm_sch:{sch_id}")],
+                [InlineKeyboardButton("⏳ Edit Time", callback_data=f"edit_sch_time:{sch_id}"),
+                 InlineKeyboardButton("✍️ Edit Draft/Subject", callback_data=f"edit_sch_draft:{sch_id}")],
                 [InlineKeyboardButton("❌ Cancel Schedule", callback_data=f"cancel_sch:{sch_id}")]
             ])
             await self._edit(msg_obj,
@@ -1472,6 +1476,58 @@ class TelegramBotManager:
                 "🚫 *Canceled.*\n\nReturning to dashboard.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]]))
+            return
+
+
+        if action == "list_sch":
+            try:
+                res = await self.db.db.run(
+                    lambda: self.db.db.client.table("scheduled_emails")
+                            .select("*").eq("telegram_id", uid).eq("status", "pending")
+                            .order("scheduled_time", desc=False).execute())
+                
+                tasks = getattr(res, "data", []) or []
+                if not tasks:
+                    await query.edit_message_text(
+                        "📭 *No Scheduled Emails*
+
+You have no pending scheduled emails.",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]])
+                    )
+                    return
+                
+                text = "📅 *Your Scheduled Emails:*
+
+"
+                kb_rows = []
+                for idx, task in enumerate(tasks, 1):
+                    t_time = task.get('scheduled_time', 'Unknown')
+                    t_sub = task.get('subject', 'No Subject')
+                    text += f"*{idx}.* `{t_time}`
+    _Sub:_ {t_sub}
+
+"
+                    kb_rows.append([InlineKeyboardButton(f"❌ Cancel #{idx}", callback_data=f"cancel_sch:{task['id']}")])
+                
+                kb_rows.append([InlineKeyboardButton("🔙 Menu", callback_data="menu_main")])
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb_rows))
+            except Exception as e:
+                logger.error(f"Failed to list scheduled emails: {e}")
+                await query.answer("❌ Failed to retrieve scheduled emails.", show_alert=True)
+            return
+
+        if action == "confirm_sch":
+            await query.edit_message_reply_markup(InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
+            await query.answer("✅ Schedule Confirmed!", show_alert=False)
+            return
+
+        if action == "edit_sch_time":
+            await query.answer("🎙️ To edit the time, simply send a voice note or text saying 'Reschedule it to tomorrow at 5 PM'.", show_alert=True)
+            return
+
+        if action == "edit_sch_draft":
+            await query.answer("🎙️ To edit the draft, just tell me 'Change the subject of my scheduled email to X'.", show_alert=True)
             return
 
         if action == "cancel_sch":
@@ -2262,7 +2318,7 @@ class TelegramBotManager:
                                 lambda t=task, s=status: self.db.db.client.table("scheduled_emails")
                                 .update({"status": s}).eq("id", t["id"]).execute())
 
-                            note = (f"✅ *Scheduled Email Sent!*\n*To:* `{_safe_md(task['to_email'])}`"
+                            note = (f"✅ Your scheduled email to {_safe_md(task['to_email'])} regarding {_safe_md(task.get('subject', ''))} has been successfully sent just now."
                                     if status == "sent"
                                     else f"❌ *Scheduled Email Failed*\n{_safe_md(result)}")
                             await context.bot.send_message(chat_id=uid, text=note, parse_mode="Markdown")

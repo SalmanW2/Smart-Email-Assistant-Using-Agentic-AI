@@ -177,8 +177,9 @@ async def search_gmail_tool(query: list[str], max_results: int = 10) -> str:
     Tool: Searches the user's Gmail inbox for specific threads or messages.
     Accepts a list of query strings for parallel hypothesis testing.
     STRATEGY RULES:
-    1. NEVER append date filters (like `newer_than:7d` or `1d`) UNLESS the user explicitly specifies a timeframe (e.g., "today", "last week").
-    2. Parallel searches MUST be diverse keyword splits, not just syntax permutations. If the intent is "exam schedule", the array MUST look like: `["exam", "schedule", "\"exam schedule\""]` to maximize the hit rate.
+    1. NEVER use complex restrictive operators like `label:INBOX` unless explicitly asked.
+    2. Prefer broad, simple 1-2 word keywords (e.g. "fyp", "exam") and let the semantic filtering handle the rest.
+    3. Parallel searches MUST be diverse keyword splits, not just syntax permutations.
     """
     try:
         user_id = current_telegram_id.get()
@@ -810,7 +811,7 @@ class AIEngine:
                 "DIRECTIVES (follow strictly, no preambles, call tools immediately):\n"
                 "Rule A (Mandatory Search for Queries): If the user asks ANY question about whether an email arrived, what an email says, or requests a summary (e.g., 'Did I get an email?', 'Exam schedule aa gaya?', 'Check my email'), you MUST invoke the search_gmail_tool FIRST to fetch the data. NEVER answer conversationally without querying the data first.\n"
                 "Rule B (UI Card Rendering): If emails ARE found, or the user explicitly asks to 'show', 'list', 'view', or 'open' emails, output the exact string __SHOW_SEARCH_LIST__ at the end of your response to trigger the native UI dashboard cards. However, if a search returns 'No results', do NOT output this string.\n"
-                "Rule C (Smart Time Filters & Inbox Enforcement): Always use Gmail search operators (e.g., newer_than:4d, after:) inside the tool's query parameter for time-bound requests. For queries targeting 'yesterday', strictly enforce the exact date format `after:YYYY-MM-DD before:YYYY-MM-DD`. If the user asks for 'received' emails or emails sent to them, you MUST append 'label:INBOX' to the query to exclude their own sent messages.\n"
+                "Rule C (Broad Search Strategy): NEVER use complex restrictive operators like `label:INBOX` unless explicitly requested. Always prefer broad, simple 1-2 word keywords (e.g., just 'fyp') and let the backend do the semantic filtering from the larger result pool. Do not append operators unnecessarily.\n"
                 "Rule D (Parallel Hypothesis Testing): Whenever there is slight doubt, ambiguity, or potential for missing emails, you should freely generate multiple parallel search queries in the array (e.g., both broad `exam` and narrow `subject:\"final exam schedule\"`). Do not force parallel searching for simple, explicit requests.\n"
                 "Rule E (Natural Language on Misses & Confirmations): If a tool returns 'No results', you MUST respond in a natural, conversational manner explaining that nothing was found (e.g., 'I couldn't find any emails about that'). Do not dump raw tool output. Conversely, after successful task executions (e.g., saving a draft), provide a natural confirmation while still ensuring UI triggers are appended if applicable.\n"
                 "Rule F (Result Limit Enforcement): If the user asks for a specific number of emails (e.g., 'last 7 emails'), you MUST map that exact number to the `max_results` integer parameter in the search tool.\n"

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS email_cache (
     received_at TIMESTAMP,
     cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     full_body_cached BOOLEAN DEFAULT FALSE,
+    embedding vector(768),
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
     UNIQUE(telegram_id, gmail_message_id)
 );
@@ -156,16 +157,7 @@ CREATE TABLE IF NOT EXISTS stt_usage (
     FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS saved_attachments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_id BIGINT NOT NULL,
-    file_id VARCHAR(255) NOT NULL,
-    file_name VARCHAR(500),
-    context_topic VARCHAR(255), -- (e.g., "Ghous Invoice")
-    sent_to_emails JSONB DEFAULT '[]'::jsonb,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
-);
+
 
 -- Contact Messages Table (Public Contact Form)
 CREATE TABLE IF NOT EXISTS contact_messages (
@@ -188,12 +180,13 @@ CREATE INDEX idx_conversation_summaries_date ON conversation_summaries(conversat
 CREATE INDEX idx_email_cache_telegram_id ON email_cache(telegram_id);
 CREATE INDEX idx_conversation_history_telegram_id ON conversation_history(telegram_id);
 CREATE INDEX idx_blocked_users_value ON blocked_users(block_value);
-CREATE INDEX idx_saved_attachments_telegram_id ON saved_attachments(telegram_id);
+
 CREATE INDEX idx_contact_messages_status ON contact_messages(status);
 CREATE INDEX idx_contact_messages_created_at ON contact_messages(created_at);
 
 -- Trigram text search for ILIKE queries
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE INDEX IF NOT EXISTS idx_contacts_name_trgm ON contacts USING gin (contact_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_contacts_alias_trgm ON contacts USING gin (contact_alias gin_trgm_ops);
@@ -237,7 +230,7 @@ ALTER TABLE auth_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tts_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_emails ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stt_usage ENABLE ROW LEVEL SECURITY;
-ALTER TABLE saved_attachments ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE contact_messages ENABLE ROW LEVEL SECURITY;
 
 -- Tenant Isolation Policy on users (evaluates to FALSE for public/anon/authenticated roles)
@@ -252,7 +245,7 @@ CREATE POLICY "Tenant-Isolation-Policy-History" ON conversation_history FOR ALL 
 CREATE POLICY "Tenant-Isolation-Policy-Preferences" ON user_preferences FOR ALL TO public USING (false);
 CREATE POLICY "Tenant-Isolation-Policy-Cache" ON email_cache FOR ALL TO public USING (false);
 CREATE POLICY "Tenant-Isolation-Policy-Scheduled" ON scheduled_emails FOR ALL TO public USING (false);
-CREATE POLICY "Tenant-Isolation-Policy-SavedAttachments" ON saved_attachments FOR ALL TO public USING (false);
+
 CREATE POLICY "Tenant-Isolation-Policy-STT" ON stt_usage FOR ALL TO public USING (false);
 CREATE POLICY "Tenant-Isolation-Policy-TTS" ON tts_usage FOR ALL TO public USING (false);
 
