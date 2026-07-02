@@ -1489,25 +1489,18 @@ class TelegramBotManager:
                 tasks = getattr(res, "data", []) or []
                 if not tasks:
                     await query.edit_message_text(
-                        "📭 *No Scheduled Emails*
-
-You have no pending scheduled emails.",
+                        "📭 *No Scheduled Emails*\\n\\nYou have no pending scheduled emails.",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="menu_main")]])
                     )
                     return
                 
-                text = "📅 *Your Scheduled Emails:*
-
-"
+                text = "📅 *Your Scheduled Emails:*\\n\\n"
                 kb_rows = []
                 for idx, task in enumerate(tasks, 1):
                     t_time = task.get('scheduled_time', 'Unknown')
                     t_sub = task.get('subject', 'No Subject')
-                    text += f"*{idx}.* `{t_time}`
-    _Sub:_ {t_sub}
-
-"
+                    text += f"*{idx}.* `{t_time}`\\n    _Sub:_ {t_sub}\\n\\n"
                     kb_rows.append([InlineKeyboardButton(f"❌ Cancel #{idx}", callback_data=f"cancel_sch:{task['id']}")])
                 
                 kb_rows.append([InlineKeyboardButton("🔙 Menu", callback_data="menu_main")])
