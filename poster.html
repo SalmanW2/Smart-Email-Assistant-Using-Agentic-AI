@@ -1,293 +1,969 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>24x60 HD Exhibition Poster</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=Space+Grotesk:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <style>
-        /* 
-           HD VECTOR SCALING ENGINE:
-           By adjusting the root font size, Tailwind's default rem-based classes 
-           scale the 800x2000px layout automatically to a physical 24x60 inches.
-           24 inches = 2304px. Scale multiplier = 2304 / 800 = 2.88.
-           16px (base) * 2.88 = 46.08px base size.
-        */
-        html {
-            font-size: 46.08px; 
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Email Assistant — FYP Exhibition Poster</title>
 
-        body {
-            font-family: 'Inter', sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
-            padding: 5rem 0;
-            min-height: 100vh;
-            margin: 0;
-            overflow-x: hidden;
-        }
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
-        .font-header { font-family: 'Space Grotesk', sans-serif; }
-        .font-sora { font-family: 'Sora', sans-serif; }
+  <!-- Premium Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
-        /* EXACT 24x60 INCH HD CANVAS */
-        .stable-banner-canvas {
-            width: 24in;
-            height: 60in;
-            box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.8);
-            flex-shrink: 0;
-            box-sizing: border-box;
-            
-            /* Neon Purple Theme */
-            background: radial-gradient(circle at 50% 0%, #1e1145 0%, #0d0621 60%, #03000a 100%) !important;
-            border: 0.15rem solid rgba(168, 85, 247, 0.2);
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-        }
+  <style>
+    /* =====================================================================
+       SCALING ENGINE
+       Physical target  : 24 in × 60 in  (2 ft × 5 ft standee)
+       DOM canvas size  : 2400 px × 6000 px
+       Screen preview   : scale(0.155) → fits on a typical 1440p monitor
+    ===================================================================== */
 
-        /* Screen Preview Wrapper: Keeps it visible on standard monitors */
-        .screen-preview-wrapper {
-            zoom: 0.15;
-            display: flex;
-            justify-content: center;
-        }
-        
-        /* Firefox Fallback for zoom */
-        @-moz-document url-prefix() {
-            .screen-preview-wrapper {
-                transform: scale(0.15);
-                transform-origin: top center;
-                margin-bottom: -48in; 
-            }
-        }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        /* Upgrade Tailwind Shadows to Scale properly with HD resolution */
-        .shadow-sm { box-shadow: 0 0.1rem 0.2rem rgba(0,0,0,0.1) !important; }
-        .shadow-md { box-shadow: 0 0.25rem 0.5rem -0.1rem rgba(0,0,0,0.1) !important; }
-        .shadow-lg { box-shadow: 0 0.5rem 1rem -0.25rem rgba(0,0,0,0.1) !important; }
-        .shadow-xl { box-shadow: 0 1.25rem 1.5rem -0.5rem rgba(0,0,0,0.1) !important; }
-        .shadow-inner { box-shadow: inset 0 0.125rem 0.25rem rgba(0,0,0,0.1) !important; }
-    </style>
+    :root {
+      /* Brand palette */
+      --bg-deep:    #03050f;
+      --bg-mid:     #060c1e;
+      --bg-surface: #0b1530;
+      --card:       rgba(255,255,255,0.04);
+      --card-hover: rgba(255,255,255,0.07);
+      --border:     rgba(255,255,255,0.07);
+      --border-hi:  rgba(255,255,255,0.14);
+
+      --cyan:   #22d3ee;
+      --violet: #a78bfa;
+      --rose:   #fb7185;
+      --amber:  #fbbf24;
+      --emerald:#34d399;
+      --sky:    #38bdf8;
+
+      --text-1: #f1f5f9;
+      --text-2: #94a3b8;
+      --text-3: #64748b;
+
+      /* Canvas */
+      --W: 2400px;
+      --H: 6000px;
+    }
+
+    html, body {
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── SCREEN PREVIEW SCALER ── */
+    .preview-shell {
+      zoom: 0.155;
+      transform-origin: top center;
+      display: flex;
+      justify-content: center;
+    }
+    @-moz-document url-prefix() {
+      .preview-shell {
+        transform: scale(0.155);
+        transform-origin: top center;
+        margin-bottom: calc(-1 * var(--H) * 0.845);
+      }
+    }
+
+    /* ── CANVAS ── */
+    .canvas {
+      width:  var(--W);
+      height: var(--H);
+      position: relative;
+      overflow: hidden;
+      background: radial-gradient(ellipse 140% 60% at 50% 0%,  #0a1740 0%, var(--bg-deep) 55%),
+                  radial-gradient(ellipse 100% 50% at 80% 100%, #0d0820 0%, transparent 60%);
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      color: var(--text-1);
+    }
+
+    /* ── AMBIENT BLOBS (background decoration) ── */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(220px);
+      pointer-events: none;
+      opacity: 0.35;
+    }
+
+    /* ── TYPOGRAPHY ── */
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .font-grotesk { font-family: 'Space Grotesk', sans-serif; }
+
+    /* ── GLASS CARD ── */
+    .glass {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .glass-hi {
+      background: rgba(255,255,255,0.055);
+      border: 1.5px solid var(--border-hi);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+    }
+
+    /* ── GRADIENT ACCENTS ── */
+    .grad-cyan   { background: linear-gradient(135deg, #22d3ee, #38bdf8); }
+    .grad-violet { background: linear-gradient(135deg, #a78bfa, #818cf8); }
+    .grad-rose   { background: linear-gradient(135deg, #fb7185, #f43f5e); }
+    .grad-warm   { background: linear-gradient(135deg, #fbbf24, #fb923c); }
+    .grad-emerald{ background: linear-gradient(135deg, #34d399, #10b981); }
+
+    .text-grad-cyan   { background: linear-gradient(135deg, #e0f9ff, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .text-grad-violet { background: linear-gradient(135deg, #ede9fe, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .text-grad-hero   { background: linear-gradient(140deg, #ffffff 0%, #e2e8f0 35%, #38bdf8 65%, #a78bfa 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .text-grad-accent { background: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+    /* ── DIVIDER ── */
+    .rule { height: 1px; background: linear-gradient(to right, transparent, var(--border-hi), transparent); }
+
+    /* ── CHIP ── */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      padding: 18px 48px;
+      border-radius: 100px;
+      font-size: 40px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      background: rgba(255,255,255,0.05);
+      border: 1.5px solid var(--border-hi);
+    }
+    .chip-dot {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── STAT NUMBER ── */
+    .stat-num {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 800;
+      font-size: 220px;
+      line-height: 1;
+      letter-spacing: -4px;
+    }
+
+    /* ── ARCHITECTURE FLOW ── */
+    .flow-node {
+      border-radius: 36px;
+      padding: 52px 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 40px;
+      position: relative;
+    }
+    .flow-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      padding: 8px 0;
+    }
+    .flow-arrow-line {
+      width: 4px;
+      height: 72px;
+      border-radius: 2px;
+    }
+    .flow-arrow-head {
+      width: 0; height: 0;
+      border-left: 22px solid transparent;
+      border-right: 22px solid transparent;
+    }
+
+    /* ── BADGE ── */
+    .badge {
+      padding: 12px 36px;
+      border-radius: 12px;
+      font-size: 36px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 1px;
+    }
+
+    /* ── FEATURE PILL ── */
+    .feature-pill {
+      display: flex;
+      align-items: flex-start;
+      gap: 48px;
+      padding: 52px 64px;
+      border-radius: 32px;
+      background: rgba(255,255,255,0.035);
+      border: 1.5px solid var(--border);
+      transition: border-color 0.2s;
+    }
+
+    /* ── PRINT: Hide UI chrome ── */
+    @media print {
+      html, body { background: transparent !important; min-height: unset; }
+      .preview-shell { zoom: 1 !important; transform: none !important; margin: 0 !important; }
+      .download-btn { display: none !important; }
+      .canvas { box-shadow: none !important; }
+    }
+
+    /* ── DOWNLOAD BUTTON (floating) ── */
+    .download-btn {
+      position: fixed;
+      top: 28px;
+      right: 28px;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 28px;
+      border-radius: 14px;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      border: none;
+      background: linear-gradient(135deg, #22d3ee, #818cf8);
+      color: #030712;
+      box-shadow: 0 8px 32px rgba(34,211,238,0.35), 0 2px 8px rgba(0,0,0,0.4);
+      transition: box-shadow 0.2s, transform 0.15s;
+    }
+    .download-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 40px rgba(34,211,238,0.5), 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    /* ── INNER GRID LINES ── */
+    .grid-bg {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+      background-size: 100px 100px;
+      pointer-events: none;
+    }
+
+    /* ── CONNECTORS SVG ── */
+    .connector-svg {
+      position: absolute;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* ── SECTION LABEL ── */
+    .section-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 34px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--text-3);
+    }
+
+    /* ── TECH TAG ── */
+    .tech-tag {
+      padding: 22px 52px;
+      border-radius: 16px;
+      font-size: 42px;
+      font-weight: 600;
+      background: rgba(255,255,255,0.04);
+      border: 1.5px solid var(--border-hi);
+      color: var(--text-1);
+      white-space: nowrap;
+    }
+
+    /* ── BORDER GLOW ── */
+    .glow-cyan  { box-shadow: 0 0 60px rgba(34,211,238,0.12), 0 0 120px rgba(34,211,238,0.05); }
+    .glow-violet{ box-shadow: 0 0 60px rgba(167,139,250,0.12), 0 0 120px rgba(167,139,250,0.05); }
+  </style>
 </head>
 <body>
 
-    <!-- SCREEN SCALER WRAPPER -->
-    <div class="screen-preview-wrapper">
+<!-- ═══════════════════════════════════════════════════════
+     FLOATING DOWNLOAD BUTTON (hidden on print)
+════════════════════════════════════════════════════════════ -->
+<button class="download-btn" onclick="window.print()">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+  Download High-Res PDF
+</button>
 
-        <!-- 24x60 STANDALONE BANNER (HD VECTOR DOM) -->
-        <div class="stable-banner-canvas p-12 flex flex-col justify-between overflow-hidden relative text-white">
-            
-            <!-- Ambient Glow Background Effects -->
-            <div class="absolute -top-12 -left-12 w-64 h-64 bg-sky-500/10 rounded-full blur-[4rem] pointer-events-none"></div>
-            <div class="absolute top-[50rem] -right-12 w-96 h-96 bg-purple-500/10 rounded-full blur-[4rem] pointer-events-none"></div>
-            <div class="absolute bottom-12 -left-12 w-80 h-80 bg-fuchsia-500/5 rounded-full blur-[4rem] pointer-events-none"></div>
+<!-- ═══════════════════════════════════════════════════════
+     SCREEN PREVIEW SCALER
+════════════════════════════════════════════════════════════ -->
+<div class="preview-shell">
 
-            <!-- ================= TOP BRANDING IDENTITY HEADER ================= -->
-            <div class="relative z-10 flex flex-row items-center justify-between pb-6 border-b-[0.15rem] border-white/10">
-                
-                <!-- REFINED VECTOR LOGO (Left Side) -->
-                <div class="w-[22rem] flex-shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180" class="w-full h-auto drop-shadow-xl">
-                        <rect width="600" height="180" fill="#0c3c86" rx="16" />
-                        <rect x="420" y="20" width="160" height="140" fill="#ffffff" rx="8" />
-                        <rect x="428" y="28" width="144" height="124" fill="none" stroke="#0c3c86" stroke-width="4" rx="4" />
-                        <text x="500" y="122" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="110" fill="#0c3c86" text-anchor="middle">IU</text>
-                        <text x="210" y="85" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="62" fill="#ffffff" text-anchor="middle" letter-spacing="14">IQRA</text>
-                        <text x="210" y="142" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="32" fill="#ffffff" text-anchor="middle" letter-spacing="4">UNIVERSITY</text>
-                    </svg>
-                </div>
+<!-- ═══════════════════════════════════════════════════════
+     MASTER CANVAS  (2400 × 6000 px = 24 × 60 in)
+════════════════════════════════════════════════════════════ -->
+<div class="canvas" id="poster">
 
-                <!-- CAMPUS & DEGREE INFO (Right Side) -->
-                <div class="text-right flex flex-col items-end gap-2 group-header">
-                    <h3 class="text-2xl font-bold font-sora tracking-widest text-white leading-none">IQRA UNIVERSITY</h3>
-                    <span class="text-sm text-fuchsia-400 font-bold tracking-wider block uppercase mb-1">Airport (Malir) Campus</span>
-                    
-                    <div class="flex flex-row items-center gap-3">
-                        <span class="px-4 py-1.5 bg-white/5 border-[0.15rem] border-white/10 rounded-full text-[0.75rem] tracking-widest uppercase font-bold text-slate-300 shadow-inner">FYP Exhibition</span>
-                        <span class="text-[0.85rem] font-bold font-header tracking-wider text-fuchsia-400 uppercase bg-fuchsia-950/40 border-[0.15rem] border-fuchsia-500/30 px-4 py-1.5 rounded-full">BS (CS)</span>
-                    </div>
-                </div>
-            </div>
+  <!-- Grid texture -->
+  <div class="grid-bg"></div>
 
-            <!-- ================= MAIN PROJECT CONTENT ================= -->
-            <div class="relative z-10 flex-1 flex flex-col justify-between py-4">
-                
-                <!-- Title Container - Space removed above it -->
-                <div class="text-center space-y-3 flex flex-col items-center mb-2">
-                    <h2 class="text-[2.0rem] font-bold font-header leading-tight text-white tracking-wide w-full drop-shadow-lg">
-                        SMART EMAIL ASSISTANT USING AGENTIC AI
-                    </h2>
-                    <p class="text-[1.35rem] text-slate-300 max-w-4xl font-medium leading-relaxed drop-shadow-md">
-                        A Conversational Email Management Platform Delivered Entirely Through Telegram
-                    </p>
-                </div>
+  <!-- Ambient colour blobs -->
+  <div class="blob" style="width:1400px;height:1000px;background:#0e1f6e;top:-200px;left:-300px;"></div>
+  <div class="blob" style="width:1000px;height:1000px;background:#1a0640;top:1800px;right:-200px;"></div>
+  <div class="blob" style="width:1200px;height:800px;background:#060e30;top:3600px;left:-200px;"></div>
+  <div class="blob" style="width:900px;height:900px;background:#08042a;bottom:400px;right:-100px;"></div>
 
-                <!-- PIPELINE CONTAINER -->
-                <div class="flex justify-center w-full">
-                    <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-8 space-y-6 backdrop-blur-sm shadow-xl w-full box-border">
-                        <h5 class="text-[1.5rem] font-bold text-center uppercase tracking-widest text-fuchsia-400 leading-none mb-4">System Architecture Pipeline</h5>
-                        
-                        <div class="flex flex-col items-center w-full">
-                            <!-- Step 1 -->
-                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
-                                <span class="text-[1.125rem] font-semibold text-slate-200">1. Client Request</span>
-                                <div class="flex-1"></div>
-                                <span class="text-[1rem] bg-sky-500/20 text-sky-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">Telegram</span>
-                            </div>
-                            
-                            <div class="flex justify-center my-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-sky-500">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
-                                </svg>
-                            </div>
-                            
-                            <!-- Step 2 -->
-                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
-                                <span class="text-[1.125rem] font-semibold text-slate-200">2. Processing Layer</span>
-                                <div class="flex-1"></div>
-                                <span class="text-[1rem] bg-fuchsia-500/20 text-fuchsia-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">FastAPI / Python</span>
-                            </div>
-                            
-                            <div class="flex justify-center my-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-fuchsia-500">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
-                                </svg>
-                            </div>
-                            
-                            <!-- Step 3 -->
-                            <div class="w-[36rem] mx-auto border-[0.15rem] border-fuchsia-500/30 rounded-2xl p-6 bg-fuchsia-950/20 text-center shadow-inner box-border">
-                                <span class="text-[1rem] uppercase tracking-widest font-bold text-fuchsia-300 block mb-4">Dual-Node AI Pipeline</span>
-                                <div class="flex justify-between gap-6 w-full">
-                                    <div class="flex-1 bg-fuchsia-500/10 border-[0.15rem] border-fuchsia-500/20 rounded-xl p-4 flex flex-col justify-center items-center box-border">
-                                        <p class="text-[0.875rem] font-bold text-white leading-none uppercase mb-2.5">PRIMARY</p>
-                                        <p class="text-[1.125rem] text-fuchsia-300 font-semibold whitespace-nowrap">Gemini 2.5 Flash</p>
-                                    </div>
-                                    <div class="flex-1 bg-purple-500/10 border-[0.15rem] border-purple-500/20 rounded-xl p-4 flex flex-col justify-center items-center box-border">
-                                        <p class="text-[0.875rem] font-bold text-white leading-none uppercase mb-2.5">FAILOVER</p>
-                                        <p class="text-[1.125rem] text-purple-300 font-semibold whitespace-nowrap">Groq Llama-3</p>
-                                    </div>
-                                </div>
-                            </div>
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 1 — UNIVERSITY HEADER                   ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <header style="padding: 90px 130px 70px; position:relative; z-index:10;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
 
-                            <div class="flex justify-center my-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-purple-500">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
-                                </svg>
-                            </div>
-                            
-                            <!-- Step 4 -->
-                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
-                                <span class="text-[1.125rem] font-semibold text-slate-200">4. Secure Action Delivery</span>
-                                <div class="flex-1"></div>
-                                <span class="text-[1rem] bg-emerald-500/20 text-emerald-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">OAuth / Gmail API</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+      <!-- IU LOGO (SVG — no external asset) -->
+      <div style="display:flex; align-items:center; gap:40px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 160" style="width:420px;height:140px;flex-shrink:0;" aria-label="Iqra University Logo">
+          <defs>
+            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#1e40af"/>
+              <stop offset="100%" stop-color="#1d4ed8"/>
+            </linearGradient>
+          </defs>
+          <rect width="480" height="160" rx="18" fill="url(#logoGrad)"/>
+          <!-- IU badge -->
+          <rect x="320" y="16" width="140" height="128" rx="10" fill="#ffffff"/>
+          <text x="390" y="112" font-family="Georgia,serif" font-weight="bold" font-size="84" fill="#1d4ed8" text-anchor="middle">IU</text>
+          <!-- IQRA UNIVERSITY text -->
+          <text x="155" y="76" font-family="Georgia,serif" font-weight="bold" font-size="54" fill="#ffffff" text-anchor="middle" letter-spacing="10">IQRA</text>
+          <text x="155" y="126" font-family="Georgia,serif" font-weight="bold" font-size="28" fill="#bfdbfe" text-anchor="middle" letter-spacing="5">UNIVERSITY</text>
+        </svg>
 
-                <!-- Empirical Metrics Dashboard - SCALED UP -->
-                <div class="flex justify-between w-full gap-6">
-                    <div class="flex-1 bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-6 text-center shadow-lg box-border">
-                        <p class="text-4xl font-bold font-header text-fuchsia-400">90% Reduction</p>
-                        <p class="text-sm text-slate-300 uppercase tracking-widest mt-2 font-bold">Token Optimization</p>
-                    </div>
-                    <div class="flex-1 bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-6 text-center shadow-lg box-border">
-                        <p class="text-4xl font-bold font-header text-purple-400">99.5% Uptime</p>
-                        <p class="text-sm text-slate-300 uppercase tracking-widest mt-2 font-bold">Dual-Node Availability</p>
-                    </div>
-                </div>
+        <!-- Vertical divider -->
+        <div style="width:3px;height:100px;background:linear-gradient(to bottom, transparent, rgba(255,255,255,0.15), transparent);"></div>
 
-                <!-- Tech Grid Directory - SCALED UP -->
-                <div class="space-y-5 text-center w-full">
-                    <h5 class="text-sm font-bold uppercase tracking-widest text-slate-300 leading-none">Built With Production Tech</h5>
-                    <div class="flex flex-wrap justify-center gap-4 w-full">
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Python 3.12</div>
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">FastAPI</div>
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Supabase DB</div>
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">React Dashboard</div>
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Groq Whisper</div>
-                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Render Cloud</div>
-                    </div>
-                </div>
-
-                <!-- Innovations Content Bullet Block - SCALED UP -->
-                <div class="space-y-4">
-                    <h5 class="text-sm font-bold text-center uppercase tracking-widest text-slate-300 leading-none">Key Innovations</h5>
-                    <div class="space-y-3 text-base text-white">
-                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
-                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
-                            <span class="font-semibold tracking-wide">Agentic Reasoning (Google Gemini 2.5 Flash)</span>
-                        </div>
-                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
-                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
-                            <span class="font-semibold tracking-wide">Automatic Function Calling (AFC) System</span>
-                        </div>
-                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
-                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
-                            <span class="font-semibold tracking-wide">Groq Llama-3-70B Failover Redundancy</span>
-                        </div>
-                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
-                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
-                            <span class="font-semibold tracking-wide">Hands-free Voice Mode (Whisper STT / TTS)</span>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- ================= LAST SECTION: MENTORSHIP & DEVELOPERS DIRECTORY ================= -->
-            <div class="relative z-10 space-y-6 mt-4">
-                <div class="w-full h-0.5 bg-gradient-to-r from-transparent via-fuchsia-500/30 to-transparent"></div>
-                
-                <div class="flex justify-between items-start w-full gap-8">
-                    <div class="flex-1 space-y-4 box-border">
-                        <h5 class="text-xs uppercase tracking-[0.15rem] text-fuchsia-400 font-bold border-b-[0.15rem] border-fuchsia-500/20 pb-2">Project Team</h5>
-                        <div class="space-y-3">
-                            <div>
-                                <p class="font-bold text-white text-lg">Muhammad Salman Wattoo</p>
-                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0322-0152</p>
-                            </div>
-                            <div>
-                                <p class="font-bold text-white text-lg">M Ghulam Ghous</p>
-                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0332-0141</p>
-                            </div>
-                            <div>
-                                <p class="font-bold text-white text-lg">Aqsa Erum</p>
-                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0122-0159</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="flex-1 space-y-4 flex flex-col justify-between h-full box-border">
-                        <div class="space-y-4">
-                            <h5 class="text-xs uppercase tracking-[0.15rem] text-purple-400 font-bold border-b-[0.15rem] border-purple-500/20 pb-2">Mentorship</h5>
-                            <div class="space-y-3">
-                                <div>
-                                    <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Supervisor</p>
-                                    <p class="font-bold text-white text-lg mt-1">Dr. Muhammad Affan Alim</p>
-                                </div>
-                                <div>
-                                    <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Coordinator</p>
-                                    <p class="font-bold text-white text-lg mt-1">Dr. Muhammad Naveed</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="pt-3 border-t-[0.15rem] border-white/10 mt-auto">
-                            <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Session Frame</p>
-                            <p class="text-sm font-semibold text-slate-200 mt-1">Fall 2022 – Spring 2026</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
+        <!-- University info -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:34px;color:var(--text-3);letter-spacing:3px;">DEPARTMENT OF COMPUTER SCIENCE</div>
+          <div style="font-size:50px;font-weight:800;color:var(--text-1);">Airport (Malir) Campus, Karachi</div>
+          <div style="font-size:38px;font-weight:500;color:var(--text-2);">Faculty of Engineering, Science &amp; Technology</div>
         </div>
+      </div>
+
+      <!-- Right: Session badges -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:22px;">
+        <div style="display:flex;gap:20px;align-items:center;">
+          <span style="padding:16px 48px;border-radius:100px;background:rgba(34,211,238,0.1);border:2px solid rgba(34,211,238,0.3);color:var(--cyan);font-size:36px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">FYP Exhibition 2026</span>
+          <span style="padding:16px 40px;border-radius:100px;background:rgba(167,139,250,0.1);border:2px solid rgba(167,139,250,0.3);color:var(--violet);font-size:36px;font-weight:700;letter-spacing:2px;">BS (CS)</span>
+        </div>
+        <div style="font-size:36px;font-weight:500;color:var(--text-3);font-family:'JetBrains Mono',monospace;letter-spacing:1px;">Session: Fall 2022 — Spring 2026</div>
+      </div>
 
     </div>
 
+    <!-- Thin horizontal rule -->
+    <div class="rule" style="margin-top:70px;"></div>
+  </header>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 2 — HERO TITLE                          ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <section style="padding: 80px 130px 90px; text-align:center; position:relative; z-index:10;">
+
+    <!-- Section mono label -->
+    <div class="section-label" style="margin-bottom:48px;">01 / Project Identity</div>
+
+    <!-- Main title -->
+    <h1 class="font-grotesk" style="font-size:165px;font-weight:900;line-height:1.0;letter-spacing:-4px;margin-bottom:50px;" class="text-grad-hero">
+      <span style="background:linear-gradient(140deg,#ffffff 0%,#e2e8f0 35%,#38bdf8 65%,#a78bfa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;display:block;">Smart Email Assistant</span>
+      <span style="background:linear-gradient(140deg,#a78bfa 0%,#38bdf8 50%,#22d3ee 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;display:block;">Using Agentic AI</span>
+    </h1>
+
+    <!-- Subtitle pill -->
+    <div style="display:inline-flex;align-items:center;gap:24px;padding:26px 80px;border-radius:100px;background:rgba(255,255,255,0.05);border:2px solid rgba(255,255,255,0.1);margin-bottom:60px;">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.8 19.79 19.79 0 01.22 1.2 2 2 0 012.22 0h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 7.09a16 16 0 006 6l.66-.66a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92z"/>
+      </svg>
+      <span style="font-size:52px;font-weight:600;color:var(--text-2);">A Conversational, Autonomous Email Management Platform inside Telegram</span>
+    </div>
+
+    <!-- Three top-level pillars -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:40px;margin-top:30px;">
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 50px;text-align:left;border-top:3px solid var(--cyan);position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;right:0;width:200px;height:200px;background:radial-gradient(circle,rgba(34,211,238,0.08),transparent 70%);pointer-events:none;"></div>
+        <svg style="margin-bottom:36px;" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a10 10 0 110 20 10 10 0 010-20zm0 0v10l4.5 4.5"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:58px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Agentic AI</div>
+        <div style="font-size:40px;color:var(--text-2);line-height:1.5;">Gemini 2.5 Flash primary engine with autonomous function calling &amp; reasoning loops</div>
+      </div>
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 50px;text-align:left;border-top:3px solid var(--violet);position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;right:0;width:200px;height:200px;background:radial-gradient(circle,rgba(167,139,250,0.08),transparent 70%);pointer-events:none;"></div>
+        <svg style="margin-bottom:36px;" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+          <path d="M7 8h10M7 12h6"/>
+        </svg>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:58px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Zero-App UX</div>
+        <div style="font-size:40px;color:var(--text-2);line-height:1.5;">Entire Gmail workflow delivered inside Telegram — no new apps to install</div>
+      </div>
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 50px;text-align:left;border-top:3px solid var(--rose);position:relative;overflow:hidden;">
+        <div style="position:absolute;top:0;right:0;width:200px;height:200px;background:radial-gradient(circle,rgba(251,113,133,0.08),transparent 70%);pointer-events:none;"></div>
+        <svg style="margin-bottom:36px;" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/>
+        </svg>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:58px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Voice-Native</div>
+        <div style="font-size:40px;color:var(--text-2);line-height:1.5;">Send voice notes, get audio summaries — Whisper STT + Edge-TTS synthesis</div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="rule" style="margin: 0 130px;"></div>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 3 — PROBLEM vs SOLUTION                 ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <section style="padding:90px 130px;position:relative;z-index:10;">
+    <div class="section-label" style="margin-bottom:56px;">02 / Problem &amp; Solution</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:60px;">
+
+      <!-- Problem -->
+      <div class="glass" style="border-radius:40px;padding:72px;border-left:5px solid var(--rose);position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 0%,rgba(251,113,133,0.06),transparent 60%);pointer-events:none;"></div>
+        <div style="display:flex;align-items:center;gap:28px;margin-bottom:52px;">
+          <div style="width:80px;height:80px;border-radius:20px;background:rgba(251,113,133,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#fb7185" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:800;color:#fb7185;">The Problem</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:36px;">
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#fb7185;font-weight:900;margin-top:4px;flex-shrink:0;">✕</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Information Overload</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Professionals spend 3–4 hours/day reading, sorting &amp; responding to emails across multiple contexts</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#fb7185;font-weight:900;margin-top:4px;flex-shrink:0;">✕</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Context Switching</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Switching between Gmail, calendar, and drafting tools breaks workflow continuity</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#fb7185;font-weight:900;margin-top:4px;flex-shrink:0;">✕</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Mobile Inefficiency</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Composing professional emails on mobile is error-prone and cognitively expensive</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Solution -->
+      <div class="glass" style="border-radius:40px;padding:72px;border-left:5px solid var(--cyan);position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 0%,rgba(34,211,238,0.06),transparent 60%);pointer-events:none;"></div>
+        <div style="display:flex;align-items:center;gap:28px;margin-bottom:52px;">
+          <div style="width:80px;height:80px;border-radius:20px;background:rgba(34,211,238,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:800;color:#22d3ee;">Our Solution</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:36px;">
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#22d3ee;font-weight:900;margin-top:4px;flex-shrink:0;">✓</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Autonomous AI Agent</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Gemini 2.5 Flash executes multi-step email tasks — read, summarize, draft, schedule — autonomously</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#22d3ee;font-weight:900;margin-top:4px;flex-shrink:0;">✓</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Single Interface</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Telegram bot is the only interface needed — inline keyboards, voice notes, and smart callbacks</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:28px;align-items:flex-start;">
+            <span style="font-size:40px;color:#22d3ee;font-weight:900;margin-top:4px;flex-shrink:0;">✓</span>
+            <div>
+              <div style="font-size:44px;font-weight:700;color:var(--text-1);margin-bottom:10px;">Natural Language First</div>
+              <div style="font-size:38px;color:var(--text-2);line-height:1.6;">Just say "Schedule a follow-up to John for tomorrow 9am" — the AI handles everything else</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="rule" style="margin: 0 130px;"></div>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 4 — SYSTEM ARCHITECTURE (SVG FLOWCHART) ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <section style="padding:90px 130px;position:relative;z-index:10;">
+    <div class="section-label" style="margin-bottom:20px;">03 / System Architecture</div>
+    <h2 class="font-grotesk" style="font-size:96px;font-weight:800;margin-bottom:80px;line-height:1.1;">
+      <span style="background:linear-gradient(135deg,#e0f9ff,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Agentic Pipeline</span>
+      <span style="color:var(--text-1);"> Architecture</span>
+    </h2>
+
+    <!-- Full-width SVG Flowchart -->
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2140 1550" style="width:100%;height:auto;display:block;" aria-label="System Architecture Flowchart">
+      <defs>
+        <!-- Arrow marker -->
+        <marker id="arr-cyan" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+        </marker>
+        <marker id="arr-violet" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+        </marker>
+        <marker id="arr-white" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="rgba(255,255,255,0.3)"/>
+        </marker>
+        <marker id="arr-emerald" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+        </marker>
+        <!-- Gradients -->
+        <linearGradient id="nodeGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0f2460" stop-opacity="0.9"/>
+          <stop offset="100%" stop-color="#0a1540" stop-opacity="0.9"/>
+        </linearGradient>
+        <linearGradient id="nodeGradAI" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#1a0e4a"/>
+          <stop offset="100%" stop-color="#0d0628"/>
+        </linearGradient>
+        <linearGradient id="nodeGradOut" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0a2818"/>
+          <stop offset="100%" stop-color="#041508"/>
+        </linearGradient>
+        <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-violet" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="6" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- ── TIER 1: USER INPUT ── -->
+      <text x="1070" y="48" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="28" fill="rgba(255,255,255,0.35)" letter-spacing="4">USER INPUT TIER</text>
+
+      <!-- Node: Telegram UI -->
+      <rect x="60" y="65" width="560" height="180" rx="24" fill="url(#nodeGrad1)" stroke="#38bdf8" stroke-width="2.5"/>
+      <text x="340" y="130" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="42" font-weight="700" fill="#38bdf8">📱 Telegram UI</text>
+      <text x="340" y="182" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.55)">Webhook · Inline Keyboards · Voice OGG</text>
+
+      <!-- Node: Voice Messages -->
+      <rect x="790" y="65" width="560" height="180" rx="24" fill="url(#nodeGrad1)" stroke="#a78bfa" stroke-width="2.5"/>
+      <text x="1070" y="130" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="42" font-weight="700" fill="#a78bfa">🎙️ Voice Messages</text>
+      <text x="1070" y="182" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.55)">Groq Whisper STT · OGG Audio Queries</text>
+
+      <!-- Node: Natural Language -->
+      <rect x="1520" y="65" width="560" height="180" rx="24" fill="url(#nodeGrad1)" stroke="#fb7185" stroke-width="2.5"/>
+      <text x="1800" y="130" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="42" font-weight="700" fill="#fb7185">💬 Text & Commands</text>
+      <text x="1800" y="182" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.55)">Natural Language · Conversational Chat</text>
+
+      <!-- Arrows from inputs down to FastAPI -->
+      <line x1="340" y1="245" x2="340" y2="345" stroke="#38bdf8" stroke-width="3" marker-end="url(#arr-cyan)" stroke-dasharray="8,4"/>
+      <line x1="1070" y1="245" x2="1070" y2="345" stroke="#a78bfa" stroke-width="3" marker-end="url(#arr-violet)" stroke-dasharray="8,4"/>
+      <line x1="1800" y1="245" x2="1800" y2="345" stroke="#fb7185" stroke-width="3" marker-end="url(#arr-white)" stroke-dasharray="8,4"/>
+      <!-- Converging lines to single FastAPI node -->
+      <line x1="340" y1="358" x2="1070" y2="358" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+      <line x1="1800" y1="358" x2="1070" y2="358" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+
+      <!-- ── FastAPI GATEWAY ── -->
+      <text x="1070" y="398" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="28" fill="rgba(255,255,255,0.35)" letter-spacing="4">PROCESSING GATEWAY</text>
+      <rect x="600" y="415" width="940" height="170" rx="24" fill="#0b1a40" stroke="#38bdf8" stroke-width="3"/>
+      <text x="1070" y="483" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="46" font-weight="800" fill="#38bdf8">⚡ FastAPI · Python 3.12</text>
+      <text x="1070" y="542" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="34" fill="rgba(255,255,255,0.55)">Async Webhook Gateway · JWT Auth · APScheduler Cron</text>
+
+      <!-- Arrow FastAPI → AI Engine -->
+      <line x1="1070" y1="585" x2="1070" y2="680" stroke="#a78bfa" stroke-width="4" marker-end="url(#arr-violet)"/>
+
+      <!-- ── AGENTIC AI ENGINE (Central Box) ── -->
+      <text x="1070" y="718" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="28" fill="rgba(255,255,255,0.35)" letter-spacing="4">AGENTIC AI ENGINE</text>
+      <rect x="80" y="736" width="1980" height="510" rx="36" fill="url(#nodeGradAI)" stroke="#a78bfa" stroke-width="3.5" filter="url(#glow-violet)"/>
+      
+      <!-- AI Engine inner label -->
+      <text x="1070" y="808" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="58" font-weight="900" fill="#a78bfa">🧠 Agentic AI Engine</text>
+      <text x="1070" y="858" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="34" fill="rgba(255,255,255,0.5)">Function Calling · HITL Guardrails · Multi-turn Context · Voice Routing</text>
+
+      <!-- PRIMARY: Gemini 2.5 Flash -->
+      <rect x="120" y="890" width="600" height="310" rx="20" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="2"/>
+      <text x="420" y="948" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="26" fill="#22d3ee" letter-spacing="3">PRIMARY NODE</text>
+      <text x="420" y="1010" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="48" font-weight="800" fill="#22d3ee">Gemini 2.5 Flash</text>
+      <text x="420" y="1060" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.5)">Google GenAI SDK</text>
+      <text x="420" y="1100" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.4)">AFC · HITL · Memory · RAG</text>
+      <text x="420" y="1170" text-anchor="middle" font-size="30" font-family="'JetBrains Mono',monospace" fill="rgba(34,211,238,0.7)">gemini-2.5-flash</text>
+
+      <!-- FAILOVER: Groq Llama-3 -->
+      <rect x="760" y="890" width="600" height="310" rx="20" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="2"/>
+      <text x="1060" y="948" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="26" fill="#a78bfa" letter-spacing="3">FAILOVER NODE</text>
+      <text x="1060" y="1010" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="48" font-weight="800" fill="#a78bfa">Groq Llama-3-70B</text>
+      <text x="1060" y="1060" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.5)">Low-latency API</text>
+      <text x="1060" y="1100" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.4)">Whisper STT · TZ Parsing</text>
+      <text x="1060" y="1170" text-anchor="middle" font-size="30" font-family="'JetBrains Mono',monospace" fill="rgba(167,139,250,0.7)">llama-3.3-70b-versatile</text>
+
+      <!-- DB / State -->
+      <rect x="1400" y="890" width="620" height="310" rx="20" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="2"/>
+      <text x="1710" y="948" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="26" fill="#34d399" letter-spacing="3">PERSISTENCE</text>
+      <text x="1710" y="1010" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="48" font-weight="800" fill="#34d399">Supabase</text>
+      <text x="1710" y="1060" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="32" fill="rgba(255,255,255,0.5)">PostgreSQL + RLS</text>
+      <text x="1710" y="1100" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.4)">ui_nav_stack JSONB</text>
+      <text x="1710" y="1170" text-anchor="middle" font-size="30" font-family="'JetBrains Mono',monospace" fill="rgba(52,211,153,0.7)">async PostgREST</text>
+
+      <!-- Failover dashed arrow -->
+      <line x1="720" y1="1045" x2="760" y2="1045" stroke="#a78bfa" stroke-width="2.5" stroke-dasharray="10,5" marker-end="url(#arr-violet)"/>
+      <!-- DB double arrow -->
+      <line x1="1360" y1="1045" x2="1400" y2="1045" stroke="#34d399" stroke-width="2.5" marker-end="url(#arr-emerald)"/>
+
+      <!-- Arrow from AI Engine → Gmail -->
+      <line x1="1070" y1="1246" x2="1070" y2="1340" stroke="#22d3ee" stroke-width="4" marker-end="url(#arr-cyan)"/>
+
+      <!-- ── EXECUTION & OUTPUT TIER ── -->
+      <text x="1070" y="1385" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="28" fill="rgba(255,255,255,0.35)" letter-spacing="4">EXECUTION &amp; OUTPUT TIER</text>
+
+      <!-- Output Node 1: Drafted Email -->
+      <rect x="60" y="1405" width="600" height="160" rx="24" fill="url(#nodeGradOut)" stroke="#34d399" stroke-width="2.5"/>
+      <text x="360" y="1467" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="40" font-weight="700" fill="#34d399">✉️ Drafted Emails</text>
+      <text x="360" y="1520" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.5)">HITL Reviewed · Gmail API Send</text>
+
+      <!-- Output Node 2: Scheduled -->
+      <rect x="770" y="1405" width="600" height="160" rx="24" fill="url(#nodeGradOut)" stroke="#fbbf24" stroke-width="2.5"/>
+      <text x="1070" y="1467" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="40" font-weight="700" fill="#fbbf24">⏰ Scheduled Actions</text>
+      <text x="1070" y="1520" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.5)">dateparser · APScheduler Cron</text>
+
+      <!-- Output Node 3: Voice Note -->
+      <rect x="1480" y="1405" width="620" height="160" rx="24" fill="url(#nodeGradOut)" stroke="#a78bfa" stroke-width="2.5"/>
+      <text x="1790" y="1467" text-anchor="middle" font-family="'Space Grotesk',sans-serif" font-size="40" font-weight="700" fill="#a78bfa">🔊 Voice Summaries</text>
+      <text x="1790" y="1520" text-anchor="middle" font-family="'Plus Jakarta Sans',sans-serif" font-size="30" fill="rgba(255,255,255,0.5)">Edge-TTS · OGG Synthesis</text>
+
+      <!-- Spread lines from 1070 to outputs -->
+      <line x1="1070" y1="1400" x2="360" y2="1400" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+      <line x1="1070" y1="1400" x2="1790" y2="1400" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+      <line x1="360" y1="1400" x2="360" y2="1405" stroke="#34d399" stroke-width="2.5" marker-end="url(#arr-emerald)"/>
+      <line x1="1070" y1="1400" x2="1070" y2="1405" stroke="#fbbf24" stroke-width="2.5"/>
+      <line x1="1790" y1="1400" x2="1790" y2="1405" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#arr-violet)"/>
+
+    </svg>
+  </section>
+
+  <div class="rule" style="margin: 0 130px;"></div>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 5 — KEY ENGINEERING FEATURES            ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <section style="padding:90px 130px;position:relative;z-index:10;">
+    <div class="section-label" style="margin-bottom:20px;">04 / Advanced Engineering Features</div>
+    <h2 class="font-grotesk" style="font-size:96px;font-weight:800;margin-bottom:80px;color:var(--text-1);">What Makes This Different</h2>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:44px;">
+
+      <!-- Feature 1: Stateful Zero-RAM Navigation -->
+      <div class="feature-pill glow-cyan" style="border-left:4px solid var(--cyan);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(34,211,238,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(34,211,238,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Zero-RAM Stateful UI</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;">Navigation breadcrumbs persisted in Supabase <span style="font-family:'JetBrains Mono',monospace;font-size:33px;color:var(--cyan);">ui_nav_stack JSONB</span> column. Survives server restarts and cold-starts completely.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">_db_push_nav_stack / _db_pop_nav_stack</div>
+        </div>
+      </div>
+
+      <!-- Feature 2: Dual-Node Failover -->
+      <div class="feature-pill glow-violet" style="border-left:4px solid var(--violet);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(167,139,250,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(167,139,250,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Dual-Node AI Redundancy</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;"><span style="color:var(--cyan);font-weight:700;">Gemini 2.5 Flash</span> as primary reasoning engine. Automatic 429/quota failover to <span style="color:var(--violet);font-weight:700;">Groq Llama-3-70B</span> with zero user disruption.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">ResourceExhausted → groq_chat_fallback()</div>
+        </div>
+      </div>
+
+      <!-- Feature 3: Smart Voice Routing -->
+      <div class="feature-pill" style="border-left:4px solid var(--rose);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(251,113,133,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(251,113,133,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#fb7185" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 013 3v8a3 3 0 01-6 0V4a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Smart Contextual Voice Routing</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;">AI injects <span class="font-mono" style="font-size:33px;color:var(--rose);">&lt;VOICE_REQUIRED&gt;</span> tags dynamically. System routes to TTS (Edge-TTS synthesis) or text based on content type &amp; user preference.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">voice_pref: text | voice | smart_routing</div>
+        </div>
+      </div>
+
+      <!-- Feature 4: Dynamic Timezone Resolution -->
+      <div class="feature-pill" style="border-left:4px solid var(--amber);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(251,191,36,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(251,191,36,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Dynamic Timezone Resolution</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;">Accepts Telegram <strong style="color:var(--amber);">Location Pin</strong> (via TimezoneFinder) or routes typed text like <em>"Karachi"</em> through <strong style="color:var(--amber);">Groq LLM</strong> → strict IANA string → persisted to DB.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">parse_timezone_with_groq() → Asia/Karachi</div>
+        </div>
+      </div>
+
+      <!-- Feature 5: Natural Language Scheduling -->
+      <div class="feature-pill" style="border-left:4px solid var(--emerald);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(52,211,153,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(52,211,153,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Natural Language Scheduling</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;"><span class="font-mono" style="font-size:33px;color:var(--emerald);">dateparser</span> resolves inputs like <em>"tomorrow morning"</em> or <em>"next Monday at 3pm"</em> into UTC. APScheduler fires automated dispatch crons.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">AWAIT_SCHEDULE_TIME → dateparser.parse()</div>
+        </div>
+      </div>
+
+      <!-- Feature 6: HITL Guardrails -->
+      <div class="feature-pill" style="border-left:4px solid var(--sky);border-radius:36px;position:relative;overflow:hidden;">
+        <div style="position:absolute;inset:0;background:radial-gradient(ellipse at 0% 50%,rgba(56,189,248,0.05),transparent 55%);pointer-events:none;"></div>
+        <div style="width:88px;height:88px;border-radius:24px;background:rgba(56,189,248,0.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);margin-bottom:18px;">Human-In-The-Loop (HITL)</div>
+          <div style="font-size:36px;color:var(--text-2);line-height:1.6;margin-bottom:22px;">Before any email send, AI autonomously detects missing fields (e.g., recipient email) and prompts user for confirmation via inline keyboard — no hallucinated sends.</div>
+          <div class="font-mono" style="font-size:32px;color:var(--text-3);">[Specify Recipient Email] sentinel pattern</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="rule" style="margin: 0 130px;"></div>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 6 — STATS & TECH STACK                  ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <section style="padding:90px 130px;position:relative;z-index:10;">
+    <div class="section-label" style="margin-bottom:60px;">05 / Performance &amp; Stack</div>
+
+    <!-- Stats row -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:44px;margin-bottom:90px;">
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 44px;text-align:center;border-top:3px solid var(--cyan);">
+        <div class="font-grotesk" style="font-size:160px;font-weight:900;line-height:1;background:linear-gradient(135deg,#22d3ee,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:18px;">90<span style="font-size:100px;">%</span></div>
+        <div style="font-size:42px;font-weight:700;color:var(--text-1);margin-bottom:12px;">Token Reduction</div>
+        <div style="font-size:32px;color:var(--text-2);">Groq compression of raw email data before Gemini AFC ingestion</div>
+      </div>
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 44px;text-align:center;border-top:3px solid var(--violet);">
+        <div class="font-grotesk" style="font-size:130px;font-weight:900;line-height:1;background:linear-gradient(135deg,#a78bfa,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:18px;">100<span style="font-size:90px;">%</span></div>
+        <div style="font-size:42px;font-weight:700;color:var(--text-1);margin-bottom:12px;">Async Pipeline</div>
+        <div style="font-size:32px;color:var(--text-2);">Non-blocking FastAPI + Supabase async PostgREST throughout</div>
+      </div>
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 44px;text-align:center;border-top:3px solid var(--emerald);">
+        <div class="font-grotesk" style="font-size:130px;font-weight:900;line-height:1;background:linear-gradient(135deg,#34d399,#10b981);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:18px;">0<span style="font-size:90px;"> MB</span></div>
+        <div style="font-size:42px;font-weight:700;color:var(--text-1);margin-bottom:12px;">RAM State Usage</div>
+        <div style="font-size:32px;color:var(--text-2);">All UI nav state in Supabase JSONB — zero in-memory dictionaries</div>
+      </div>
+
+      <div class="glass-hi" style="border-radius:36px;padding:60px 44px;text-align:center;border-top:3px solid var(--rose);">
+        <div class="font-grotesk" style="font-size:130px;font-weight:900;line-height:1;background:linear-gradient(135deg,#fb7185,#f43f5e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:18px;">2<span style="font-size:90px;"> AI</span></div>
+        <div style="font-size:42px;font-weight:700;color:var(--text-1);margin-bottom:12px;">Model Redundancy</div>
+        <div style="font-size:32px;color:var(--text-2);">Gemini 2.5 Flash + Groq Llama-3 dual-failover pipeline</div>
+      </div>
+    </div>
+
+    <!-- Tech Stack Grid -->
+    <h3 class="font-grotesk" style="font-size:70px;font-weight:800;color:var(--text-1);margin-bottom:50px;">Production Technology Stack</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:28px;">
+      <div class="tech-tag" style="border-color:rgba(34,211,238,0.3);color:var(--cyan);">🐍 Python 3.12</div>
+      <div class="tech-tag" style="border-color:rgba(56,189,248,0.3);color:var(--sky);">⚡ FastAPI</div>
+      <div class="tech-tag" style="border-color:rgba(52,211,153,0.3);color:var(--emerald);">🗄️ Supabase PostgreSQL</div>
+      <div class="tech-tag" style="border-color:rgba(34,211,238,0.3);color:var(--cyan);">🧠 Google Gemini 2.5 Flash</div>
+      <div class="tech-tag" style="border-color:rgba(167,139,250,0.3);color:var(--violet);">🦙 Groq Llama-3-70B</div>
+      <div class="tech-tag" style="border-color:rgba(251,113,133,0.3);color:var(--rose);">🎙️ Groq Whisper STT</div>
+      <div class="tech-tag" style="border-color:rgba(251,191,36,0.3);color:var(--amber);">🔊 Edge-TTS Synthesis</div>
+      <div class="tech-tag" style="border-color:rgba(56,189,248,0.3);color:var(--sky);">📱 python-telegram-bot v22</div>
+      <div class="tech-tag" style="border-color:rgba(52,211,153,0.3);color:var(--emerald);">📧 Gmail API + OAuth 2.0</div>
+      <div class="tech-tag" style="border-color:rgba(167,139,250,0.3);color:var(--violet);">⏰ APScheduler</div>
+      <div class="tech-tag" style="border-color:rgba(251,191,36,0.3);color:var(--amber);">📅 dateparser</div>
+      <div class="tech-tag" style="border-color:rgba(34,211,238,0.3);color:var(--cyan);">⚛️ React Admin Dashboard</div>
+      <div class="tech-tag" style="border-color:rgba(251,113,133,0.3);color:var(--rose);">☁️ Render Cloud Deploy</div>
+      <div class="tech-tag" style="border-color:rgba(52,211,153,0.3);color:var(--emerald);">🌍 TimezoneFinder</div>
+    </div>
+  </section>
+
+  <div class="rule" style="margin: 0 130px;"></div>
+
+  <!-- ╔═══════════════════════════════════════════════════╗
+       ║  SECTION 7 — FOOTER: TEAM & MENTORSHIP           ║
+       ╚═══════════════════════════════════════════════════╝ -->
+  <footer style="padding:90px 130px 100px;position:relative;z-index:10;">
+    <div class="section-label" style="margin-bottom:70px;">06 / Project Identity &amp; Mentorship</div>
+
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 0.9fr;gap:80px;align-items:start;">
+
+      <!-- Developer -->
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:600;letter-spacing:3px;color:var(--text-3);text-transform:uppercase;margin-bottom:36px;">Primary Developer</div>
+        <div style="display:flex;align-items:center;gap:40px;margin-bottom:44px;">
+          <!-- Avatar placeholder -->
+          <div style="width:160px;height:160px;border-radius:50%;background:linear-gradient(135deg,rgba(34,211,238,0.2),rgba(167,139,250,0.2));border:3px solid rgba(34,211,238,0.4);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:800;color:var(--text-1);line-height:1.1;">Abdullah Khan</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:36px;color:var(--cyan);margin-top:14px;">Lead Developer &amp; AI Architect</div>
+          </div>
+        </div>
+        <div class="glass" style="border-radius:24px;padding:36px 48px;">
+          <div style="font-size:36px;color:var(--text-2);line-height:1.7;">Designed and engineered the full agentic AI pipeline, Telegram bot interface, dual-node failover, DB-backed navigation, and voice routing system end-to-end.</div>
+        </div>
+      </div>
+
+      <!-- Mentorship -->
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:600;letter-spacing:3px;color:var(--text-3);text-transform:uppercase;margin-bottom:36px;">Mentorship</div>
+        <div style="display:flex;flex-direction:column;gap:44px;">
+          <div class="glass" style="border-radius:24px;padding:44px 48px;border-left:4px solid var(--cyan);">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:30px;color:var(--text-3);letter-spacing:3px;text-transform:uppercase;margin-bottom:16px;">Supervisor</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);">Dr. Muhammad Affan Alim</div>
+          </div>
+          <div class="glass" style="border-radius:24px;padding:44px 48px;border-left:4px solid var(--violet);">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:30px;color:var(--text-3);letter-spacing:3px;text-transform:uppercase;margin-bottom:16px;">Coordinator</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:800;color:var(--text-1);">Dr. Muhammad Naveed</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- QR Code area -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:36px;">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:600;letter-spacing:3px;color:var(--text-3);text-transform:uppercase;">Scan to Try the Bot</div>
+
+        <!-- Smartphone mockup with QR inside -->
+        <div style="position:relative;width:380px;">
+          <!-- Phone body -->
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 360" style="width:100%;height:auto;filter:drop-shadow(0 30px 60px rgba(34,211,238,0.2));">
+            <rect x="8" y="2" width="184" height="356" rx="28" fill="#0d1526" stroke="#22d3ee" stroke-width="2.5"/>
+            <rect x="14" y="8" width="172" height="344" rx="22" fill="#030810"/>
+            <!-- Notch -->
+            <rect x="72" y="10" width="56" height="8" rx="4" fill="#0d1526"/>
+            <!-- Screen -->
+            <rect x="20" y="30" width="160" height="300" rx="8" fill="#080f20"/>
+            <!-- Telegram interface mockup inside screen -->
+            <rect x="24" y="34" width="152" height="40" rx="4" fill="#0e6bbd" opacity="0.8"/>
+            <text x="100" y="59" text-anchor="middle" font-size="14" font-weight="bold" fill="white" font-family="sans-serif">Smart Email Bot</text>
+            <!-- QR placeholder box -->
+            <rect x="34" y="84" width="132" height="132" rx="6" fill="white"/>
+            <!-- QR pattern mock -->
+            <rect x="38" y="88" width="28" height="28" rx="3" fill="#000"/>
+            <rect x="70" y="88" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="82" y="88" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="94" y="88" width="24" height="8" rx="1" fill="#000"/>
+            <rect x="134" y="88" width="28" height="28" rx="3" fill="#000"/>
+            <rect x="38" y="120" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="54" y="120" width="16" height="8" rx="1" fill="#000"/>
+            <rect x="74" y="120" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="88" y="120" width="16" height="8" rx="1" fill="#000"/>
+            <rect x="38" y="132" width="28" height="28" rx="3" fill="#000"/>
+            <rect x="70" y="134" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="82" y="134" width="24" height="8" rx="1" fill="#000"/>
+            <rect x="110" y="120" width="8" height="8" rx="1" fill="#000"/>
+            <rect x="124" y="128" width="16" height="16" rx="2" fill="#000"/>
+            <rect x="144" y="120" width="18" height="8" rx="1" fill="#000"/>
+            <rect x="38" y="166" width="8" height="8" fill="#000"/>
+            <rect x="52" y="166" width="16" height="8" fill="#000"/>
+            <rect x="74" y="166" width="8" height="8" fill="#000"/>
+            <rect x="88" y="166" width="8" height="8" fill="#000"/>
+            <rect x="100" y="166" width="24" height="8" fill="#000"/>
+            <rect x="130" y="166" width="8" height="8" fill="#000"/>
+            <rect x="144" y="166" width="18" height="8" fill="#000"/>
+            <rect x="134" y="132" width="28" height="28" rx="3" fill="#000"/>
+            <!-- Replace QR text -->
+            <text x="100" y="232" text-anchor="middle" font-size="9" fill="#22d3ee" font-family="monospace" font-weight="bold">REPLACE WITH</text>
+            <text x="100" y="244" text-anchor="middle" font-size="9" fill="#22d3ee" font-family="monospace" font-weight="bold">YOUR BOT QR</text>
+            <!-- Chat bubbles -->
+            <rect x="28" y="252" width="110" height="26" rx="8" fill="#1a3a6e" opacity="0.9"/>
+            <text x="83" y="269" text-anchor="middle" font-size="10" fill="#94a3b8" font-family="sans-serif">Summarize my inbox</text>
+            <rect x="68" y="284" width="90" height="26" rx="8" fill="#0e6bbd" opacity="0.9"/>
+            <text x="113" y="301" text-anchor="middle" font-size="10" fill="white" font-family="sans-serif">✅ Done! 3 emails...</text>
+            <!-- Home indicator -->
+            <rect x="82" y="342" width="36" height="4" rx="2" fill="rgba(255,255,255,0.2)"/>
+          </svg>
+        </div>
+
+        <div style="text-align:center;">
+          <div style="font-size:38px;font-weight:600;color:var(--text-2);margin-bottom:12px;">@YourBotName</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:30px;color:var(--text-3);">t.me/SmartEmailBot</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Bottom strip -->
+    <div class="rule" style="margin: 80px 0 50px;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:34px;color:var(--text-3);">
+        Department of Computer Science · Iqra University · Airport (Malir) Campus · 2026
+      </div>
+      <div style="display:flex;align-items:center;gap:28px;">
+        <div style="width:16px;height:16px;border-radius:50%;background:var(--cyan);"></div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:40px;font-weight:700;color:var(--text-2);">Smart Email Assistant</div>
+        <div style="width:16px;height:16px;border-radius:50%;background:var(--violet);"></div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:40px;font-weight:700;color:var(--text-2);">Agentic AI</div>
+        <div style="width:16px;height:16px;border-radius:50%;background:var(--rose);"></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:34px;color:var(--text-3);">FYP 2026</div>
+      </div>
+    </div>
+
+  </footer>
+
+</div><!-- end .canvas -->
+</div><!-- end .preview-shell -->
+
+<script>
+  // The download button calls window.print()
+  // @media print CSS hides the button and
+  // prints the canvas exactly at 24x60 inches.
+  // To export: Click the button → choose "Save as PDF" in the print dialog.
+  // Recommended: Set paper to Custom 24x60 in, scale 100%, no margins.
+  console.log("Smart Email Assistant FYP Poster — Loaded Successfully.");
+</script>
 </body>
 </html>
