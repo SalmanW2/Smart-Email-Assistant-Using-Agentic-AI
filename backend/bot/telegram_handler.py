@@ -18,6 +18,8 @@ import asyncio
 import tempfile
 import uuid
 import re
+import dateparser
+from datetime import datetime, timedelta
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -269,18 +271,19 @@ def kb_draft(has_files: bool = False) -> InlineKeyboardMarkup:
     """Enhanced Draft UI with Dynamic Edit capabilities."""
     rows = [
         [InlineKeyboardButton("🚀 Send",       callback_data="send_draft"),
-         InlineKeyboardButton("✏️ Edit",    callback_data="edit_draft_hub")],
-        [InlineKeyboardButton("📎 Attach", callback_data="attach_hint"),
-         InlineKeyboardButton("❌ Cancel",          callback_data="cancel")]
+         InlineKeyboardButton("📅 Schedule",   callback_data="schedule_draft_manual")],
+        [InlineKeyboardButton("✏️ Edit",       callback_data="edit_draft_hub"),
+         InlineKeyboardButton("📎 Attach",     callback_data="attach_hint")],
+        [InlineKeyboardButton("❌ Cancel",      callback_data="cancel")]
     ]
     if has_files:
-        rows.insert(2, [InlineKeyboardButton("🗑️ Clear", callback_data="clear_att")])
+        rows.insert(2, [InlineKeyboardButton("🗑️ Clear Files", callback_data="clear_att")])
         
     return InlineKeyboardMarkup(rows)
 
 def kb_settings(ai_on: bool, voice: str, auto_on: bool, pag_limit: int = 2, draft_style: str = "Detailed") -> InlineKeyboardMarkup:
     """User preferences keyboard."""
-    v_map = {"text": "📝 Text Only", "voice": "🎙️ Voice Only", "both": "📝+🎙️ Both"}
+    v_map = {"text": "📝 Text Only", "voice": "🎙️ Voice Only", "smart": "🧠 Smart Routing"}
     pag_label = "📄 View: Compact (2/pg)" if pag_limit == 2 else "📄 View: Standard (5/pg)"
     draft_label = "✍️ Draft: Detailed" if draft_style == "Detailed" else "✍️ Draft: Concise"
     return InlineKeyboardMarkup([
@@ -814,6 +817,29 @@ class TelegramBotManager:
                 if handled is not False:
                     return
 
+            
+            if uid in self.compose_states and self.compose_states[uid].get("step") == "AWAIT_SCHEDULE_TIME":
+                parsed = dateparser.parse(text, settings={'PREFER_DATES_FROM': 'future'})
+                if not parsed:
+                    await update.message.reply_text("I couldn't understand that time format. Please try again (e.g., 'tomorrow at 3pm' or '2026-07-03 15:00').")
+                    return
+                    
+                state = self.compose_states[uid]
+                try:
+                    await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").insert({
+                        "telegram_id": uid,
+                        "to_email": state["to"],
+                        "subject": state.get("subj", "No Subject"),
+                        "body": state.get("body", ""),
+                        "scheduled_time": parsed.strftime("%Y-%m-%d %H:%M:%S")
+                    }).execute())
+                    self.compose_states.pop(uid, None)
+                    await update.message.reply_text("✅ *Email Scheduled Successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
+                except Exception as e:
+                    logger.error(f"Manual schedule error: {e}")
+                    await update.message.reply_text("❌ Failed to schedule.")
+                return
+
             if self.search_states.get(uid) == "AWAIT_QUERY":
                 self.search_states.pop(uid)
                 self.current_queries[uid] = text
@@ -829,6 +855,13 @@ class TelegramBotManager:
             if not acc["user"].get("ai_allowed", True):
                 await update.message.reply_text("🚫 *AI access restricted* for your account.",
                                                  parse_mode="Markdown")
+                return
+
+            
+            # --- AI Strict Manual Fallback Guard ---
+            prefs = await self._prefs(uid)
+            if not prefs.get("ai_mode_enabled", True) and uid not in self.compose_states and not self.search_states.get(uid):
+                await update.message.reply_text("🤖 *AI Mode is currently OFF.*\\n\\nPlease use the /menu buttons to navigate manually, or turn on AI Mode in Settings to chat naturally.", parse_mode="Markdown")
                 return
 
             msg = await update.message.reply_text("✨ *Thinking...*", parse_mode="Markdown")
@@ -955,6 +988,13 @@ class TelegramBotManager:
             
         if not acc["user"].get("voice_allowed", True):
             await update.message.reply_text("🚫 *Voice access restricted.*", parse_mode="Markdown")
+            return
+
+        
+        # --- AI Strict Manual Fallback Guard ---
+        prefs = await self._prefs(uid)
+        if not prefs.get("ai_mode_enabled", True) and uid not in self.compose_states:
+            await update.message.reply_text("🤖 *AI Mode is currently OFF.*\\n\\nPlease use the /menu buttons to navigate manually, or turn on AI Mode in Settings to chat naturally.", parse_mode="Markdown")
             return
 
         msg = await update.message.reply_text("🎙️ *Processing voice note...*", parse_mode="Markdown")
@@ -1617,6 +1657,43 @@ class TelegramBotManager:
                 reply_markup=kb_draft(False))
             return
 
+
+        if action == "schedule_draft_manual":
+            self.compose_states[uid]["step"] = "AWAIT_SCHEDULE_TIME"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏳ In 1 Hour", callback_data="sch_time_1h"),
+                 InlineKeyboardButton("🌅 Tomorrow Morning", callback_data="sch_time_tmrw")],
+                [InlineKeyboardButton("🔙 Back to Draft", callback_data="restore_draft_view")]
+            ])
+            await query.edit_message_text(
+                "📅 *Schedule Email*\\n\\nWhen would you like to send this? Type a time (e.g. 'tomorrow at 3pm') or use a quick button below:",
+                parse_mode="Markdown", reply_markup=kb)
+            return
+            
+        if action.startswith("sch_time_"):
+            if uid not in self.compose_states: return
+            if action == "sch_time_1h":
+                t = datetime.now() + timedelta(hours=1)
+            elif action == "sch_time_tmrw":
+                t = datetime.now() + timedelta(days=1)
+                t = t.replace(hour=9, minute=0, second=0)
+            
+            state = self.compose_states[uid]
+            try:
+                await self.db.db.run(lambda: self.db.db.client.table("scheduled_emails").insert({
+                    "telegram_id": uid,
+                    "to_email": state["to"],
+                    "subject": state.get("subj", "No Subject"),
+                    "body": state.get("body", ""),
+                    "scheduled_time": t.strftime("%Y-%m-%d %H:%M:%S")
+                }).execute())
+                self.compose_states.pop(uid, None)
+                await query.edit_message_text("✅ *Email Scheduled Successfully!*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu", callback_data="menu_main")]]))
+            except Exception as e:
+                logger.error(f"Manual schedule error: {e}")
+                await query.answer("❌ Failed to schedule.", show_alert=True)
+            return
+
         if action == "send_draft":
             await self._do_send_draft(query, uid, context)
             return
@@ -1736,7 +1813,7 @@ class TelegramBotManager:
             elif action == "toggle_auto":
                 await self.db.update_user_preferences(uid, {"auto_check_enabled": not prefs.get("auto_check_enabled", True)})
             elif action == "cycle_voice":
-                cycle   = {"text": "voice", "voice": "both", "both": "text"}
+                cycle   = {"text": "voice", "voice": "smart", "smart": "text"}
                 await self.db.update_user_preferences(uid, {"voice_preference": cycle.get(prefs.get("voice_preference", "text"), "text")})
             elif action == "cycle_pagination":
                 current_limit = prefs.get("pagination_limit", 2)
