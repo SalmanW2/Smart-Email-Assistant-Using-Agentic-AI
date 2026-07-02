@@ -1246,11 +1246,11 @@ class TelegramBotManager:
         text_content = raw.replace("__SHOW_SEARCH_LIST__", "").strip()
         draft_data   = None
 
-        # ── 1. TAG INTERCEPTOR: Detect and Clean [VOICE] ──
+        # ── 1. TAG INTERCEPTOR: Detect and Clean [VOICE] / <VOICE_REQUIRED> ──
         is_voice_type = False
-        if "[VOICE]" in text_content:
+        if "[VOICE]" in text_content or "<VOICE_REQUIRED>" in text_content:
             is_voice_type = True
-            text_content = text_content.replace("[VOICE]", "").strip()
+            text_content = text_content.replace("[VOICE]", "").replace("<VOICE_REQUIRED>", "").strip()
 
         # ── 1b. SHOW_EMAIL INTERCEPTOR: Detect [SHOW_EMAIL:<id>] and render card ──
         show_email_match = re.search(r'\[SHOW_EMAIL:([^\]]+)\]', text_content)

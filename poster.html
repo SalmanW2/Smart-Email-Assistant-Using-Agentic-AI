@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>24x60 HD Exhibition Poster</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=Space+Grotesk:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* 
+           HD VECTOR SCALING ENGINE:
+           By adjusting the root font size, Tailwind's default rem-based classes 
+           scale the 800x2000px layout automatically to a physical 24x60 inches.
+           24 inches = 2304px. Scale multiplier = 2304 / 800 = 2.88.
+           16px (base) * 2.88 = 46.08px base size.
+        */
+        html {
+            font-size: 46.08px; 
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 5rem 0;
+            min-height: 100vh;
+            margin: 0;
+            overflow-x: hidden;
+        }
+
+        .font-header { font-family: 'Space Grotesk', sans-serif; }
+        .font-sora { font-family: 'Sora', sans-serif; }
+
+        /* EXACT 24x60 INCH HD CANVAS */
+        .stable-banner-canvas {
+            width: 24in;
+            height: 60in;
+            box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.8);
+            flex-shrink: 0;
+            box-sizing: border-box;
+            
+            /* Neon Purple Theme */
+            background: radial-gradient(circle at 50% 0%, #1e1145 0%, #0d0621 60%, #03000a 100%) !important;
+            border: 0.15rem solid rgba(168, 85, 247, 0.2);
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        /* Screen Preview Wrapper: Keeps it visible on standard monitors */
+        .screen-preview-wrapper {
+            zoom: 0.15;
+            display: flex;
+            justify-content: center;
+        }
+        
+        /* Firefox Fallback for zoom */
+        @-moz-document url-prefix() {
+            .screen-preview-wrapper {
+                transform: scale(0.15);
+                transform-origin: top center;
+                margin-bottom: -48in; 
+            }
+        }
+
+        /* Upgrade Tailwind Shadows to Scale properly with HD resolution */
+        .shadow-sm { box-shadow: 0 0.1rem 0.2rem rgba(0,0,0,0.1) !important; }
+        .shadow-md { box-shadow: 0 0.25rem 0.5rem -0.1rem rgba(0,0,0,0.1) !important; }
+        .shadow-lg { box-shadow: 0 0.5rem 1rem -0.25rem rgba(0,0,0,0.1) !important; }
+        .shadow-xl { box-shadow: 0 1.25rem 1.5rem -0.5rem rgba(0,0,0,0.1) !important; }
+        .shadow-inner { box-shadow: inset 0 0.125rem 0.25rem rgba(0,0,0,0.1) !important; }
+    </style>
+</head>
+<body>
+
+    <!-- SCREEN SCALER WRAPPER -->
+    <div class="screen-preview-wrapper">
+
+        <!-- 24x60 STANDALONE BANNER (HD VECTOR DOM) -->
+        <div class="stable-banner-canvas p-12 flex flex-col justify-between overflow-hidden relative text-white">
+            
+            <!-- Ambient Glow Background Effects -->
+            <div class="absolute -top-12 -left-12 w-64 h-64 bg-sky-500/10 rounded-full blur-[4rem] pointer-events-none"></div>
+            <div class="absolute top-[50rem] -right-12 w-96 h-96 bg-purple-500/10 rounded-full blur-[4rem] pointer-events-none"></div>
+            <div class="absolute bottom-12 -left-12 w-80 h-80 bg-fuchsia-500/5 rounded-full blur-[4rem] pointer-events-none"></div>
+
+            <!-- ================= TOP BRANDING IDENTITY HEADER ================= -->
+            <div class="relative z-10 flex flex-row items-center justify-between pb-6 border-b-[0.15rem] border-white/10">
+                
+                <!-- REFINED VECTOR LOGO (Left Side) -->
+                <div class="w-[22rem] flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180" class="w-full h-auto drop-shadow-xl">
+                        <rect width="600" height="180" fill="#0c3c86" rx="16" />
+                        <rect x="420" y="20" width="160" height="140" fill="#ffffff" rx="8" />
+                        <rect x="428" y="28" width="144" height="124" fill="none" stroke="#0c3c86" stroke-width="4" rx="4" />
+                        <text x="500" y="122" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="110" fill="#0c3c86" text-anchor="middle">IU</text>
+                        <text x="210" y="85" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="62" fill="#ffffff" text-anchor="middle" letter-spacing="14">IQRA</text>
+                        <text x="210" y="142" font-family="'Times New Roman', Times, serif" font-weight="bold" font-size="32" fill="#ffffff" text-anchor="middle" letter-spacing="4">UNIVERSITY</text>
+                    </svg>
+                </div>
+
+                <!-- CAMPUS & DEGREE INFO (Right Side) -->
+                <div class="text-right flex flex-col items-end gap-2 group-header">
+                    <h3 class="text-2xl font-bold font-sora tracking-widest text-white leading-none">IQRA UNIVERSITY</h3>
+                    <span class="text-sm text-fuchsia-400 font-bold tracking-wider block uppercase mb-1">Airport (Malir) Campus</span>
+                    
+                    <div class="flex flex-row items-center gap-3">
+                        <span class="px-4 py-1.5 bg-white/5 border-[0.15rem] border-white/10 rounded-full text-[0.75rem] tracking-widest uppercase font-bold text-slate-300 shadow-inner">FYP Exhibition</span>
+                        <span class="text-[0.85rem] font-bold font-header tracking-wider text-fuchsia-400 uppercase bg-fuchsia-950/40 border-[0.15rem] border-fuchsia-500/30 px-4 py-1.5 rounded-full">BS (CS)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= MAIN PROJECT CONTENT ================= -->
+            <div class="relative z-10 flex-1 flex flex-col justify-between py-4">
+                
+                <!-- Title Container - Space removed above it -->
+                <div class="text-center space-y-3 flex flex-col items-center mb-2">
+                    <h2 class="text-[2.0rem] font-bold font-header leading-tight text-white tracking-wide w-full drop-shadow-lg">
+                        SMART EMAIL ASSISTANT USING AGENTIC AI
+                    </h2>
+                    <p class="text-[1.35rem] text-slate-300 max-w-4xl font-medium leading-relaxed drop-shadow-md">
+                        A Conversational Email Management Platform Delivered Entirely Through Telegram
+                    </p>
+                </div>
+
+                <!-- PIPELINE CONTAINER -->
+                <div class="flex justify-center w-full">
+                    <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-8 space-y-6 backdrop-blur-sm shadow-xl w-full box-border">
+                        <h5 class="text-[1.5rem] font-bold text-center uppercase tracking-widest text-fuchsia-400 leading-none mb-4">System Architecture Pipeline</h5>
+                        
+                        <div class="flex flex-col items-center w-full">
+                            <!-- Step 1 -->
+                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
+                                <span class="text-[1.125rem] font-semibold text-slate-200">1. Client Request</span>
+                                <div class="flex-1"></div>
+                                <span class="text-[1rem] bg-sky-500/20 text-sky-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">Telegram</span>
+                            </div>
+                            
+                            <div class="flex justify-center my-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-sky-500">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+                                </svg>
+                            </div>
+                            
+                            <!-- Step 2 -->
+                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
+                                <span class="text-[1.125rem] font-semibold text-slate-200">2. Processing Layer</span>
+                                <div class="flex-1"></div>
+                                <span class="text-[1rem] bg-fuchsia-500/20 text-fuchsia-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">FastAPI / Python</span>
+                            </div>
+                            
+                            <div class="flex justify-center my-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-fuchsia-500">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+                                </svg>
+                            </div>
+                            
+                            <!-- Step 3 -->
+                            <div class="w-[36rem] mx-auto border-[0.15rem] border-fuchsia-500/30 rounded-2xl p-6 bg-fuchsia-950/20 text-center shadow-inner box-border">
+                                <span class="text-[1rem] uppercase tracking-widest font-bold text-fuchsia-300 block mb-4">Dual-Node AI Pipeline</span>
+                                <div class="flex justify-between gap-6 w-full">
+                                    <div class="flex-1 bg-fuchsia-500/10 border-[0.15rem] border-fuchsia-500/20 rounded-xl p-4 flex flex-col justify-center items-center box-border">
+                                        <p class="text-[0.875rem] font-bold text-white leading-none uppercase mb-2.5">PRIMARY</p>
+                                        <p class="text-[1.125rem] text-fuchsia-300 font-semibold whitespace-nowrap">Gemini 2.5 Flash</p>
+                                    </div>
+                                    <div class="flex-1 bg-purple-500/10 border-[0.15rem] border-purple-500/20 rounded-xl p-4 flex flex-col justify-center items-center box-border">
+                                        <p class="text-[0.875rem] font-bold text-white leading-none uppercase mb-2.5">FAILOVER</p>
+                                        <p class="text-[1.125rem] text-purple-300 font-semibold whitespace-nowrap">Groq Llama-3</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex justify-center my-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 text-purple-500">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />
+                                </svg>
+                            </div>
+                            
+                            <!-- Step 4 -->
+                            <div class="w-[36rem] mx-auto flex items-center bg-[#0d0621]/90 border-[0.15rem] border-fuchsia-500/20 rounded-2xl px-6 py-4 shadow-md box-border">
+                                <span class="text-[1.125rem] font-semibold text-slate-200">4. Secure Action Delivery</span>
+                                <div class="flex-1"></div>
+                                <span class="text-[1rem] bg-emerald-500/20 text-emerald-300 px-4 py-1.5 rounded-md font-bold font-sora whitespace-nowrap">OAuth / Gmail API</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Empirical Metrics Dashboard - SCALED UP -->
+                <div class="flex justify-between w-full gap-6">
+                    <div class="flex-1 bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-6 text-center shadow-lg box-border">
+                        <p class="text-4xl font-bold font-header text-fuchsia-400">90% Reduction</p>
+                        <p class="text-sm text-slate-300 uppercase tracking-widest mt-2 font-bold">Token Optimization</p>
+                    </div>
+                    <div class="flex-1 bg-white/5 border-[0.15rem] border-white/10 rounded-2xl p-6 text-center shadow-lg box-border">
+                        <p class="text-4xl font-bold font-header text-purple-400">99.5% Uptime</p>
+                        <p class="text-sm text-slate-300 uppercase tracking-widest mt-2 font-bold">Dual-Node Availability</p>
+                    </div>
+                </div>
+
+                <!-- Tech Grid Directory - SCALED UP -->
+                <div class="space-y-5 text-center w-full">
+                    <h5 class="text-sm font-bold uppercase tracking-widest text-slate-300 leading-none">Built With Production Tech</h5>
+                    <div class="flex flex-wrap justify-center gap-4 w-full">
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Python 3.12</div>
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">FastAPI</div>
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Supabase DB</div>
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">React Dashboard</div>
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Groq Whisper</div>
+                        <div class="bg-white/5 border-[0.15rem] border-white/10 rounded-xl py-3 px-5 text-white shadow-md text-sm font-bold box-border">Render Cloud</div>
+                    </div>
+                </div>
+
+                <!-- Innovations Content Bullet Block - SCALED UP -->
+                <div class="space-y-4">
+                    <h5 class="text-sm font-bold text-center uppercase tracking-widest text-slate-300 leading-none">Key Innovations</h5>
+                    <div class="space-y-3 text-base text-white">
+                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
+                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
+                            <span class="font-semibold tracking-wide">Agentic Reasoning (Google Gemini 2.5 Flash)</span>
+                        </div>
+                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
+                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
+                            <span class="font-semibold tracking-wide">Automatic Function Calling (AFC) System</span>
+                        </div>
+                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
+                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
+                            <span class="font-semibold tracking-wide">Groq Llama-3-70B Failover Redundancy</span>
+                        </div>
+                        <div class="flex items-center gap-4 bg-white/5 rounded-xl px-6 py-4 border-[0.15rem] border-white/10 shadow-sm box-border">
+                            <span class="w-3 h-3 rounded-full bg-fuchsia-500 shrink-0"></span>
+                            <span class="font-semibold tracking-wide">Hands-free Voice Mode (Whisper STT / TTS)</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ================= LAST SECTION: MENTORSHIP & DEVELOPERS DIRECTORY ================= -->
+            <div class="relative z-10 space-y-6 mt-4">
+                <div class="w-full h-0.5 bg-gradient-to-r from-transparent via-fuchsia-500/30 to-transparent"></div>
+                
+                <div class="flex justify-between items-start w-full gap-8">
+                    <div class="flex-1 space-y-4 box-border">
+                        <h5 class="text-xs uppercase tracking-[0.15rem] text-fuchsia-400 font-bold border-b-[0.15rem] border-fuchsia-500/20 pb-2">Project Team</h5>
+                        <div class="space-y-3">
+                            <div>
+                                <p class="font-bold text-white text-lg">Muhammad Salman Wattoo</p>
+                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0322-0152</p>
+                            </div>
+                            <div>
+                                <p class="font-bold text-white text-lg">M Ghulam Ghous</p>
+                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0332-0141</p>
+                            </div>
+                            <div>
+                                <p class="font-bold text-white text-lg">Aqsa Erum</p>
+                                <p class="text-xs text-slate-300 font-semibold tracking-wide mt-1">IU05-0122-0159</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 space-y-4 flex flex-col justify-between h-full box-border">
+                        <div class="space-y-4">
+                            <h5 class="text-xs uppercase tracking-[0.15rem] text-purple-400 font-bold border-b-[0.15rem] border-purple-500/20 pb-2">Mentorship</h5>
+                            <div class="space-y-3">
+                                <div>
+                                    <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Supervisor</p>
+                                    <p class="font-bold text-white text-lg mt-1">Dr. Muhammad Affan Alim</p>
+                                </div>
+                                <div>
+                                    <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Coordinator</p>
+                                    <p class="font-bold text-white text-lg mt-1">Dr. Muhammad Naveed</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="pt-3 border-t-[0.15rem] border-white/10 mt-auto">
+                            <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Session Frame</p>
+                            <p class="text-sm font-semibold text-slate-200 mt-1">Fall 2022 – Spring 2026</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+</body>
+</html>

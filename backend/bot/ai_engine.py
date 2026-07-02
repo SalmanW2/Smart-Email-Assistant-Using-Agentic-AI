@@ -8,7 +8,7 @@ Features:
 2. Dynamic Server-Side Chat Session Mappings via active multi-turn message trackers.
 3. Token Exhaustion Management via strict chronological context history pruning.
 4. Human-In-The-Loop (HITL) guardrails injected into Drafting and Scheduling logic.
-5. Token-Efficient Utility Calls: summarize_email / generate_tts_summary are single-turn
+5. Token-Efficient Utility Calls: summarize_email is a single-turn
    direct LLM calls that do NOT pollute the multi-turn chat history or cost tool-setup tokens.
 6. Integrated fallback logic for Speech-to-Text (STT) conversions using Groq and Gemini.
 7. Identity Locked: Enforces "Smart Email Assistant" persona, blocking generic LLM preambles.
